@@ -1,0 +1,1 @@
+This is where all kernel drivers and such that need to be accessed before the services exit are stored.

@@ -1,0 +1,18 @@
+[Defines]
+  INF_VERSION = 0x00010005
+  BASE_NAME = Kernel
+  FILE_GUID = 11111111-2222-3333-4444-555555555555
+  MODULE_TYPE = UEFI_APPLICATION
+  VERSION_STRING = 1.0
+  ENTRY_POINT = _ModuleEntryPoint
+
+[Sources]
+  kernel.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  OS/OS.dec
+
+[LibraryClasses]
+  KernelMemory
+  KernelLoader
