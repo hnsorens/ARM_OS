@@ -15,6 +15,3 @@
   OS/kernel/kernel.inf
 
 [LibraryClasses]
-  KernelMemory|OS/memory/memory.inf
-  KernelLoader|OS/kernelLoader/kernelLoader.inf
-  KernelDataStructures|OS/data_structures/data_structures.inf

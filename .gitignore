@@ -1,1 +1,5 @@
 build/
+edk2/
+compile_commands.json
+QEMU_EFI.fd
+.cache/

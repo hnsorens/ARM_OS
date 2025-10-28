@@ -14,5 +14,3 @@
   OS/OS.dec
 
 [LibraryClasses]
-  KernelMemory
-  KernelLoader
