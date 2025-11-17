@@ -9,8 +9,12 @@ build: # MAKE SURE TO USE -E SUDO
 	cd edk2 &&	\
 	. ./edksetup.sh &&	\
 	cd ..	&& \
-	ln -sf $(PWD)/OS edk2/OS && \
-	bear -- build -a AARCH64 -p OS/OS.dsc -t GCC5
+	ln -sf $(PWD)/boot edk2/boot && \
+	build -a AARCH64 -p boot/boot.dsc -t GCC5
+
+	mkdir -p module_executables
+
+	make -C modules
 	
 	mkdir -p build
 
@@ -26,15 +30,16 @@ build: # MAKE SURE TO USE -E SUDO
 	sudo mount "$${LOOPDEV}p1" mnt1; \
 	sudo mount "$${LOOPDEV}p2" mnt2; \
 	sudo mkdir -p mnt1/efi/boot; \
-	sudo cp -f -n edk2/Build/OS/DEBUG_GCC5/AARCH64/Kernel.efi mnt1/efi/boot/BOOTAA64.EFI; \
-	sudo cp -r -n boot/* mnt1; \
+	sudo cp -f -n edk2/Build/Bootloader/DEBUG_GCC5/AARCH64/BootLoader.efi mnt1/efi/boot/BOOTAA64.EFI; \
+	sudo cp -r -n module_executables/* mnt1; \
 	sudo cp -r filesystem/* mnt2; \
 	sudo umount mnt1 mnt2; \
 	sudo rm -rf mnt1 mnt2; \
 	sudo losetup -d "$${LOOPDEV}"
 	sudo chmod 666 build/disk.img
+	# sudo rm -rf module_executables
 
 run: 
-	qemu-system-aarch64 -bios QEMU_EFI.fd -drive file=build/disk.img,format=raw,if=virtio -M virt -cpu cortex-a72 -serial stdio -smp 1 -m 16G -device virtio-gpu-pci -display sdl
+	qemu-system-aarch64 -bios QEMU_EFI.fd -drive file=build/disk.img,format=raw,if=virtio -M virt -cpu cortex-a72 -serial mon:stdio -smp 1 -m 16G -device virtio-gpu-pci -display sdl -gdb tcp::1234
 
 .PHONY: all clean run
