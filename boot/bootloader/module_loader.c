@@ -59,14 +59,16 @@ LoadModule(
     return Status;
   }
 
-  EFI_PHYSICAL_ADDRESS ModuleWriteLocation = ModuleMemory;
+  EFI_PHYSICAL_ADDRESS ModuleWriteLocation;
   for (int i = 0; i < Count; i++) {
     File = Modules[i].File;
     UINTN FileSize = Modules[i].Info->FileSize;
 
+    Status = SystemTable->BootServices->AllocatePages(
+      AllocateAnyPages, EfiRuntimeServicesData, ((Modules[i].Info->FileSize + 4095) / 4096), &ModuleWriteLocation);
+
     Modules[i].ModuleBase = ModuleWriteLocation;
     Status = File->Read(File, &FileSize, (VOID *)ModuleWriteLocation);
-    ModuleWriteLocation += (((Modules[i].Info->FileSize + 4095) / 4096) * 4096);
 
     SystemTable->BootServices->FreePool(Modules[i].Info);
     File->Close(File);
@@ -123,7 +125,7 @@ LoadModules(EFI_SYSTEM_TABLE *SystemTable, MODULE_TABLE* ModuleTable)
       NameSrc++;
       NameDst++;
     }while (*NameSrc);
-
+    
     ModuleList[i].ModuleBase = Modules[i].ModuleBase;
     ModuleList[i].VTable = Modules[i].VTable;
     ModuleList[i].Size = Modules[i].Info->FileSize;

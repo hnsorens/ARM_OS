@@ -12,15 +12,43 @@
 
 #include "module_loader.h"
 
+#define DEBUG
+
+
+
+#ifdef DEBUG
+
+#define BREAK while(1);
+#define LOG(reg, val) __asm__ volatile("mov " #reg ", %0" :: "r"((unsigned long)val));
+
+#define DISPLAY_MEMORY_MAP
+#define PRINT_EFI_MEMORY_MAP
+#define PRINT_EFI_MEMORY_MAP_ENTRY_COUNT
+#define PRINT_EFI_MEMORY_MAP_PHYS_ADDR
+#define PRINT_KERNEL_MEMORY_MAP_PHYS_ADDR
+
+#define PRINT_VALUE(string, value)  \
+PRINT(L##string);                   \
+PRINT(L": ");                       \
+PrintNumber(SystemTable, value);    \
+PRINT(L"\n"); 
+#else
+#define BREAK
+#define LOG(reg, val)
+#endif
+
+typedef enum MEMORY_TYPE
+{
+  MEMORY_UNKNOWN,
+  MEMORY_FREE,
+  MEMORY_USED,
+} MEMORY_TYPE;
+
 typedef struct MEMORY_REGION
 {
   PHYSICAL_ADDRESS Start;
   UINTN PageCount;
-  enum
-  {
-    MEMORY_FREE,
-    MEMORY_USED,
-  } Type;
+  MEMORY_TYPE Type;
 } MEMORY_REGION;
 
 typedef MEMORY_REGION *MEMORY_MAP;
@@ -29,6 +57,7 @@ typedef struct KERNEL_ENTRY
 {
   MODULE_TABLE ModuleTable;
   MEMORY_MAP MemoryMap;
+  UINTN RegionCount;
   UINTN TotalMemory;
   EFI_RUNTIME_SERVICES *RuntimeServices;
 } KERNEL_ENTRY;
@@ -48,6 +77,7 @@ EFI_GUID gEfiFileInfoGuid = {0x09576e92,
                              0x11d2,
                              {0x8e, 0x39, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b}};
 
+#ifdef DEBUG
 #define PRINT(str) SystemTable->ConOut->OutputString(SystemTable->ConOut, str);
 void PrintNumber(EFI_SYSTEM_TABLE *SystemTable, UINT64 number) {
   CHAR16 buffer[64];
@@ -71,6 +101,7 @@ void PrintNumber(EFI_SYSTEM_TABLE *SystemTable, UINT64 number) {
     SystemTable->ConOut->OutputString(SystemTable->ConOut, digit);
   }
 }
+#endif
 
 typedef struct EFI_MEMORY_MAP {
   UINTN MemoryMapSize;
@@ -80,42 +111,197 @@ typedef struct EFI_MEMORY_MAP {
   UINT32 DescriptorVersion;
 } EFI_MEMORY_MAP;
 
+#define MEMORY_MAP_ENTRY_INDEX(Index) ((EFI_MEMORY_DESCRIPTOR*)((char*)EfiMemoryMap + RegionSize * Index))
+static
+VOID
+SwapEfiMemoryRegions(
+  IN OUT EFI_MEMORY_DESCRIPTOR   *EfiMemoryMap,
+  IN UINTN                        RegionSize,
+  IN UINTN                        i,
+  IN UINTN                        j
+)
+{
+  EFI_MEMORY_DESCRIPTOR TempDescriptor = *MEMORY_MAP_ENTRY_INDEX(i);
+  EFI_MEMORY_DESCRIPTOR *DstDescriptor = MEMORY_MAP_ENTRY_INDEX(i);
+  EFI_MEMORY_DESCRIPTOR *SrcDescriptor = MEMORY_MAP_ENTRY_INDEX(j);
+  DstDescriptor->Attribute = SrcDescriptor->Attribute;
+  DstDescriptor->NumberOfPages = SrcDescriptor->NumberOfPages;
+  DstDescriptor->PhysicalStart = SrcDescriptor->PhysicalStart;
+  DstDescriptor->VirtualStart = SrcDescriptor->VirtualStart;
+  DstDescriptor->Type = SrcDescriptor->Type;
+
+  SrcDescriptor->Attribute = TempDescriptor.Attribute;
+  SrcDescriptor->NumberOfPages = TempDescriptor.NumberOfPages;
+  SrcDescriptor->PhysicalStart = TempDescriptor.PhysicalStart;
+  SrcDescriptor->VirtualStart = TempDescriptor.VirtualStart;
+  SrcDescriptor->Type = TempDescriptor.Type;
+}
+
+static 
+UINTN 
+Partition(
+  IN OUT EFI_MEMORY_DESCRIPTOR   *EfiMemoryMap,
+  IN UINTN                        RegionSize,
+  IN UINTN                        Low,
+  IN UINTN                        High
+)
+{
+  UINTN Pivot = MEMORY_MAP_ENTRY_INDEX(High)->PhysicalStart;
+  UINTN i = (Low - 1);
+
+  for (UINTN j = Low; j < High; j++)
+  {
+    if (MEMORY_MAP_ENTRY_INDEX(j)->PhysicalStart <= Pivot)
+    {
+      i++;
+      SwapEfiMemoryRegions(EfiMemoryMap, RegionSize, i, j);
+    }
+  }
+  SwapEfiMemoryRegions(EfiMemoryMap, RegionSize, i+1, High);
+  return (i + 1);
+}
+
+static 
+VOID 
+SortEfiMemoryMap(
+  IN OUT EFI_MEMORY_DESCRIPTOR   *EfiMemoryMap,
+  IN UINTN                        RegionSize,
+  IN UINTN                        Low,
+  IN UINTN                        High
+)
+{
+  if (Low < High)
+  {
+    UINTN PartitionIndex = Partition(EfiMemoryMap, RegionSize, Low, High);
+    
+    SortEfiMemoryMap(EfiMemoryMap, RegionSize, Low, PartitionIndex - 1);
+    SortEfiMemoryMap(EfiMemoryMap, RegionSize, PartitionIndex + 1, High);
+  }
+}
+
+#undef MEMORY_MAP_ENTRY_INDEX
+
 static EFI_STATUS GetKernelMemoryMap(
   IN  EFI_SYSTEM_TABLE  *SystemTable,
   IN  EFI_MEMORY_MAP    *EfiMemoryMap,
-  OUT MEMORY_MAP        *KernelMemoryMap
+  OUT MEMORY_MAP        *KernelMemoryMap,
+  OUT UINTN             *MemoryMapRegionCount
 )
 {
+  #ifdef PRINT_EFI_MEMORY_MAP_PHYS_ADDR
+  PRINT_VALUE("EFI_MEMORY_MAP", (unsigned long)EfiMemoryMap);
+  #endif
+  
   UINTN MemoryMapEntryCount = EfiMemoryMap->MemoryMapSize / EfiMemoryMap->DescriptorSize;
-  
-  PHYSICAL_ADDRESS MemoryMapAddr;
+  #ifdef PRINT_EFI_MEMORY_MAP_ENTRY_COUNT
+  PRINT_VALUE("EFI_MEMORY_MAP_ENTRY_COUNT", MemoryMapEntryCount);
+  #endif
 
+  SortEfiMemoryMap(
+    EfiMemoryMap->MemoryMap,
+    EfiMemoryMap->DescriptorSize,
+    0,
+    MemoryMapEntryCount - 1
+  );
+
+  PHYSICAL_ADDRESS MemoryMapAddr;
   
-  EFI_MEMORY_DESCRIPTOR* current = EfiMemoryMap->MemoryMap;
+  EFI_MEMORY_DESCRIPTOR* Current = EfiMemoryMap->MemoryMap;
+
+  #ifdef PRINT_EFI_MEMORY_MAP
+  PRINT(L"\nEFI_MEMORY_MAP\n");
+  for (int i = 0; i < MemoryMapEntryCount; i++)
+  {
+    PRINT(L"MEMORY REGION: ");
+    PrintNumber(SystemTable, i);
+    PRINT(L" PHYS_ADDR: ");
+    PrintNumber(SystemTable, Current->PhysicalStart);
+    PRINT(L" PAGE_COUNT: ");
+    PrintNumber(SystemTable, Current->NumberOfPages);
+    PRINT(L" STATUS: ");
+    switch (Current->Type) {
+      case EfiReservedMemoryType:
+        PRINT(L"EfiReservedMemoryType");
+        break;
+      case EfiLoaderCode:
+        PRINT(L"EfiLoaderCode");
+        break;
+      case EfiLoaderData:
+        PRINT(L"EfiLoaderData");
+        break;
+      case EfiBootServicesCode:
+        PRINT(L"EfiBootServicesCode");
+        break;
+      case EfiBootServicesData:
+        PRINT(L"EfiBootServicesData");
+        break;
+      case EfiRuntimeServicesCode:
+        PRINT(L"EfiRuntimeServicesCode");
+        break;
+      case EfiRuntimeServicesData:
+        PRINT(L"EfiRuntimeServicesData");
+        break;
+      case EfiConventionalMemory:
+        PRINT(L"EfiConventionalMemory");
+        break;
+      case EfiUnusableMemory:
+        PRINT(L"EfiUnusableMemory");
+        break;
+      case EfiACPIReclaimMemory:
+        PRINT(L"EfiACPIReclaimMemory");
+        break;
+      case EfiACPIMemoryNVS:
+        PRINT(L"EfiACPIMemoryNVS");
+        break;
+      case EfiMemoryMappedIO:
+        PRINT(L"EfiMemoryMappedIO");
+        break;
+      case EfiMemoryMappedIOPortSpace:
+        PRINT(L"EfiMemoryMappedIOPortSpace");
+        break;
+      case EfiPalCode:
+        PRINT(L"EfiPalCode");
+        break;
+      case EfiPersistentMemory:
+        PRINT(L"EfiPersistentMemory");
+        break;
+      default:
+        PRINT(L"Unknown Memory Type");
+        break;
+    }
+    PRINT(L"\n");
+    Current = (EFI_MEMORY_DESCRIPTOR*)((char*)Current + EfiMemoryMap->DescriptorSize);
+  }
+  Current = EfiMemoryMap->MemoryMap;
+  #endif
 
   UINTN MemoryMapPageCount = 1;
   for (int i = 0; i < MemoryMapEntryCount; i++)
   {
-    if (current->Type == EfiConventionalMemory && current->NumberOfPages >= MemoryMapPageCount)
+    if (Current->Type == EfiConventionalMemory && Current->NumberOfPages >= MemoryMapPageCount)
     {
-      current->NumberOfPages -= MemoryMapPageCount;
-      MemoryMapAddr = current->PhysicalStart;
-      current->PhysicalStart += MemoryMapPageCount * 4096;
+      Current->NumberOfPages -= MemoryMapPageCount;
+      MemoryMapAddr = Current->PhysicalStart;
+      Current->PhysicalStart += MemoryMapPageCount * 4096;
     }
 
 
-    current = (EFI_MEMORY_DESCRIPTOR*)((char*)current + EfiMemoryMap->DescriptorSize);
+    Current = (EFI_MEMORY_DESCRIPTOR*)((char*)Current + EfiMemoryMap->DescriptorSize);
   }
 
   MEMORY_MAP MemoryMap = (MEMORY_MAP)MemoryMapAddr;
-  current = EfiMemoryMap->MemoryMap;
+  Current = EfiMemoryMap->MemoryMap;
+
+  #ifdef PRINT_KERNEL_MEMORY_MAP_PHYS_ADDR
+  PRINT_VALUE("KERNEL_MEMORY_MAP_PHYS_ADDR", MemoryMapAddr);
+  #endif
+
+  int CurrentRegion = 0;
+  MEMORY_TYPE LastType = MEMORY_UNKNOWN;
 
   for (int i = 0; i < MemoryMapEntryCount; i++)
   {
-    MemoryMap[i].Start = current->PhysicalStart;
-    MemoryMap[i].PageCount = current->NumberOfPages;
-
-    switch (current->Type)
+    switch (Current->Type)
     {
       case EfiReservedMemoryType:
       case EfiRuntimeServicesCode:
@@ -127,25 +313,70 @@ static EFI_STATUS GetKernelMemoryMap(
       case EfiPersistentMemory:
       case EfiUnusableMemory:
       case EfiACPIReclaimMemory:
-        MemoryMap[i].Type = MEMORY_USED;
+        MemoryMap[CurrentRegion].Type = MEMORY_USED;
         break;
       case EfiBootServicesCode:
       case EfiBootServicesData:
       case EfiLoaderData:
       case EfiLoaderCode:
       case EfiConventionalMemory:
-        MemoryMap[i].Type = MEMORY_FREE;
+        MemoryMap[CurrentRegion].Type = MEMORY_FREE;
         break;
       default:
-        MemoryMap[i].Type = MEMORY_USED;
+        MemoryMap[CurrentRegion].Type = MEMORY_USED;
         break;
     }
 
+    if (MemoryMap[CurrentRegion].Type == LastType)
+    {
+      CurrentRegion--;
+      MemoryMap[CurrentRegion].PageCount += Current->NumberOfPages;
+      LastType = MemoryMap[CurrentRegion].Type;
+    }
+    else 
+    {
+      MemoryMap[CurrentRegion].Start = Current->PhysicalStart;
+      MemoryMap[CurrentRegion].PageCount = Current->NumberOfPages;
+      LastType = MemoryMap[CurrentRegion].Type;
+    }
 
-    current = (EFI_MEMORY_DESCRIPTOR*)((char*)current + EfiMemoryMap->DescriptorSize);
+    CurrentRegion++;
+    Current = (EFI_MEMORY_DESCRIPTOR*)((char*)Current + EfiMemoryMap->DescriptorSize);
   }
+
+  #ifdef DISPLAY_MEMORY_MAP
+  PRINT(L"\nKERNEL_MEMORY_MAP\n");
+  PRINT(L"REGION COUNT: ");
+  PrintNumber(SystemTable, CurrentRegion);
+  PRINT(L"\n");
+  for (int i = 0; i < CurrentRegion; i++)
+  {
+    PRINT(L"MEMORY REGION: ");
+    PrintNumber(SystemTable, i);
+    PRINT(L" PHYS_ADDR: ");
+    PrintNumber(SystemTable, MemoryMap[i].Start);
+    PRINT(L" PAGE_COUNT: ");
+    PrintNumber(SystemTable, MemoryMap[i].PageCount);
+    PRINT(L" STATUS: ");
+    switch (MemoryMap[i].Type) {
+      case MEMORY_USED:
+        PRINT(L"MEMORY_USED");
+        break;
+      case MEMORY_FREE:
+        PRINT(L"MEMORY_FREE");
+        break;
+      case MEMORY_UNKNOWN:
+      default:
+        PRINT(L"MEMORY_UNKNOWN");
+        break;
+    }
+    PRINT(L"\n");
+  }
+
+  #endif
   
   *KernelMemoryMap = MemoryMap;
+  *MemoryMapRegionCount = CurrentRegion;
 
   return EFI_SUCCESS;
 }
@@ -153,7 +384,8 @@ static EFI_STATUS GetKernelMemoryMap(
 [[gnu::unused]]
 static EFI_STATUS ExitBootServices(IN EFI_HANDLE ImageHandle,
                                    IN EFI_SYSTEM_TABLE *SystemTable,
-                                   IN MEMORY_MAP *KernelMemoryMap) {
+                                   OUT MEMORY_MAP *KernelMemoryMap,
+                                   OUT UINTN *RegionCount) {
   EFI_MEMORY_MAP MemoryMap;
 
   MemoryMap.MemoryMapSize = 0;
@@ -195,7 +427,8 @@ static EFI_STATUS ExitBootServices(IN EFI_HANDLE ImageHandle,
   GetKernelMemoryMap(
     SystemTable,
     &MemoryMap,
-    KernelMemoryMap
+    KernelMemoryMap,
+    RegionCount
   );
 
   // exit boot services
@@ -216,7 +449,8 @@ static EFI_STATUS ExitBootServices(IN EFI_HANDLE ImageHandle,
     GetKernelMemoryMap(
       SystemTable,
       &MemoryMap,
-      KernelMemoryMap
+      KernelMemoryMap,
+      RegionCount
     );
 
     Status = SystemTable->BootServices->ExitBootServices(ImageHandle,
@@ -244,9 +478,15 @@ EFI_STATUS EFIAPI _ModuleEntryPoint(IN EFI_HANDLE ImageHandle,
   Status = LoadModules(SystemTable, &ModuleTable);
   MODULE* Modules = ModuleTable.Modules;
 
-  MEMORY_MAP MemoryMap;
-  ExitBootServices(ImageHandle, SystemTable, &MemoryMap);
+  PRINT_VALUE("MODULE0", ModuleTable.Modules[0].ModuleBase);
+  PRINT_VALUE("MODULE1", ModuleTable.Modules[1].ModuleBase);
+  PRINT_VALUE("MODULE2", ModuleTable.Modules[2].ModuleBase);
+  // BREAK
 
+  MEMORY_MAP MemoryMap;
+  UINTN MemoryMapRegionsCount;
+  ExitBootServices(ImageHandle, SystemTable, &MemoryMap, &MemoryMapRegionsCount);
+  
   for (int i = 0; i < ModuleTable.ModuleCount; i++) {
     VOID *ModuleEntry = (VOID *)Modules[i].ModuleBase;
     Modules[i].VTable = ((UINTN(*)(VOID))ModuleEntry)();
@@ -255,6 +495,7 @@ EFI_STATUS EFIAPI _ModuleEntryPoint(IN EFI_HANDLE ImageHandle,
   KERNEL_ENTRY KernelEntry;
   KernelEntry.MemoryMap = MemoryMap;
   KernelEntry.ModuleTable = ModuleTable;
+  KernelEntry.RegionCount = MemoryMapRegionsCount;
   KernelEntry.TotalMemory = 0;
   KernelEntry.RuntimeServices = SystemTable->RuntimeServices;
 
