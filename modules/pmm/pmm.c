@@ -4,7 +4,7 @@
 #include "../module_debug.h"
 
 vtable(ppm_vtable_t);
-start(init);
+start(init, ppm_init);
 
 buddy_allocator_t allocator;
 vmm_vtable_t* vmm = 0;
@@ -19,13 +19,17 @@ unsigned long calculate_total_memory(memory_region_t* regions, unsigned long reg
   return total_memory * 4096;
 }
 
-void ppm_init(memory_region_t* regions, unsigned long region_count)
+void ppm_init(kernel_vtable_t* kvtable)
 {
+  vmm = (vmm_vtable_t*)kvtable->find_module_vtable_by_type(MODULE_VMM);
+
+  unsigned long region_count = kvtable->memory_regions_count();
+  memory_region_t* regions = kvtable->memory_regions();
+
   unsigned long total_memory = calculate_total_memory(regions, region_count);
 
   unsigned long buddy_allocator_size = buddy_get_memory_size(total_memory);
   unsigned long buddy_allocator_page_count = (buddy_allocator_size / 4096) + 1;
- 
 
   unsigned long buddy_memory = 0;
   for (int i = 0; i < region_count; i++)
@@ -74,8 +78,6 @@ unsigned long memory_available()
 
 void init(ppm_vtable_t *vtable)
 {
-  vtable->ppm_init = ppm_init;
-  vtable->set_vmm = set_vmm;
   vtable->alloc_virt_kernel = page_alloc_kernel;
   vtable->free_virt_kernel = page_free_kernel;
   vtable->alloc_phys = alloc_phys;

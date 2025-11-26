@@ -1,47 +1,81 @@
 #include "../module.h"
 #include "../module_vtables.h"
 #include "../module_debug.h"
+#include <stdint.h>
 
 vtable(kernel_vtable_t);
-start(init);
+kernel_start(init, kernel_entry);
 
-typedef struct module_t
-{
-  char moduleName[32];
-  unsigned long size;
-  void* base;
-  void* vtable;
-} Module;
+kernel_entry_t kentry;
 
-typedef struct module_table_t
+void kernel_entry(kernel_entry_t* entry)
 {
-  unsigned long size;
-  Module* modules;
-} module_table_t;
+  kentry = *entry;
 
-typedef struct kernel_entry_t
-{
-  module_table_t module_table;
-  memory_region_t *memory_map;
-  unsigned long memory_map_entry_count;
-  unsigned long total_memory;
-  void* runtime_services;
-} kernel_entry_t;
+  kernel_vtable_t* vtable = kentry.module_table.modules[0].vtable;
 
-typedef struct kernel_vtable_t
-{
-  void (*kernel_entry)(kernel_entry_t);
-} kernel_vtable_t;
+  // SKIP KERNEL CORE
+  for (int i = 1; i < kentry.module_table.size; i++)
+  {
+    ((vtable_init_t*)(kentry.module_table.modules[i].vtable))->init(vtable);
+  }
 
-void kernel_entry(kernel_entry_t entry)
+  LOG(x9, 0x123123);
+  BREAK
+}
+
+uintptr_t find_module_vtable_by_type(module_type_t type)
 {
-  ((ppm_vtable_t*)(entry.module_table.modules[1].vtable))->ppm_init(entry.memory_map, entry.memory_map_entry_count);
-  ((vmm_vtable_t*)(entry.module_table.modules[2].vtable))->vmm_init((ppm_vtable_t*)(entry.module_table.modules[1].vtable), 17179869184);
-  ((ppm_vtable_t*)(entry.module_table.modules[1].vtable))->set_vmm((vmm_vtable_t*)(entry.module_table.modules[2].vtable));
+  for (int i = 0; i < kentry.module_table.size; i++)
+  {
+    if (kentry.module_table.modules[i].type == type)
+    {
+      return (unsigned long)kentry.module_table.modules[i].vtable;
+    }
+  }
+  return 0;
+}
+
+int strcmp(const char *s1, const char *s2) {
+    while (*s1 && (*s1 == *s2)) {
+        s1++;
+        s2++;
+    }
+    return *(unsigned char *)s1 - *(unsigned char *)s2;
+}
+
+uintptr_t find_module_vtable_by_name(char* name)
+{
+  for (int i = 0; i < kentry.module_table.size; i++)
+  {
+    if (strcmp(kentry.module_table.modules[i].moduleName, name) == 0)
+    {
+      return (unsigned long)kentry.module_table.modules[i].vtable;
+    }
+  }
+  return 0;
+}
+
+unsigned long total_system_memory()
+{
+  return kentry.total_memory;
+}
+
+memory_region_t* memory_regions()
+{
+  return kentry.memory_map;
+}
+
+unsigned long memory_regions_count()
+{
+  return kentry.memory_map_entry_count;
 }
 
 void init(kernel_vtable_t *table)
 {
-  table->kernel_entry = kernel_entry;
+  table->find_module_vtable_by_type = find_module_vtable_by_type;
+  table->find_module_vtable_by_name = find_module_vtable_by_name;
+  table->total_system_memory = total_system_memory;
+  table->memory_regions = memory_regions;
+  table->memory_regions_count = memory_regions_count;
 }
-

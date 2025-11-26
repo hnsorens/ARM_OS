@@ -3,9 +3,18 @@
 #include "ProcessorBind.h"
 #include "Protocol/SimpleFileSystem.h"
 
+typedef enum MODULE_TYPE
+{
+  ModuleKernelCore,
+  ModuleVmm,
+  ModulePmm,
+  ModuleKmm
+} MODULE_TYPE;
+
 typedef struct MODULE_LOAD {
   CHAR16 *ModulePath;
   CHAR16 *ModuleName;
+  MODULE_TYPE Type;
   EFI_FILE_INFO *Info;
   EFI_FILE_PROTOCOL *File;
   UINTN ModuleBase;
@@ -18,6 +27,7 @@ typedef struct MODULE
   UINTN Size;
   UINTN ModuleBase;
   UINTN VTable;
+  MODULE_TYPE Type;
 } MODULE;
 
 typedef struct MODULE_TABLE

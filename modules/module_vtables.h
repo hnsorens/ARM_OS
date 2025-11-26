@@ -1,12 +1,27 @@
 #include "module.h"
+#include "module_types.h"
 
-struct ppm_vtable_t;
-struct vmm_vtable_t;
+#ifndef MODULE_VTABLES_H
+#define MODULE_VTABLES_H
+
+typedef struct kernel_vtable_t
+{
+  void (*init)(kernel_entry_t*);
+  unsigned long (*find_module_vtable_by_type)(module_type_t type);
+  unsigned long (*find_module_vtable_by_name)(char* name);
+  unsigned long (*total_system_memory)();
+  memory_region_t* (*memory_regions)();
+  unsigned long (*memory_regions_count)();
+} kernel_vtable_t;
+
+typedef struct vtable_init_t
+{
+  void (*init)(kernel_vtable_t*);
+} vtable_init_t;
 
 typedef struct ppm_vtable_t
 {
-  void (*ppm_init)(memory_region_t*, unsigned long);
-  void (*set_vmm)(struct vmm_vtable_t*);
+  vtable_def
   void* (*alloc_virt_kernel)(unsigned long, unsigned long);
   void (*free_virt_kernel)(unsigned long, unsigned long);
   void* (*alloc_phys)(unsigned long);
@@ -16,7 +31,18 @@ typedef struct ppm_vtable_t
 
 typedef struct vmm_vtable_t
 {
-  void (*vmm_init)(ppm_vtable_t*, unsigned long);
+  vtable_def
   void (*pages_map_kernel)(unsigned long, unsigned long, unsigned long, unsigned long);
   unsigned long (*virt_to_phys_kernel)(unsigned long);
 } vmm_vtable_t;
+
+typedef struct kmm_vtable_t
+{
+  vtable_def
+  virt_addr_t (*kmalloc)(unsigned long);
+  virt_addr_t (*kcalloc)(unsigned long, unsigned long);
+  virt_addr_t (*krealloc)(virt_addr_t, unsigned long);
+  void (*kfree)(virt_addr_t vaddr);
+} kmm_vtable_t;
+
+#endif

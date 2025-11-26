@@ -77,12 +77,13 @@ LoadModule(
   return EFI_SUCCESS;
 }
 
-#define MODULE_ENTRY(Path, Name) {Path, Name, 0, 0, 0, 0}
+#define MODULE_ENTRY(Path, Name, Type) {Path, Name, Type, 0, 0, 0, 0}
 
 MODULE_LOAD Modules[] = {
-  MODULE_ENTRY(L"\\kernel_core.efi", L"Kernel"),
-  MODULE_ENTRY(L"\\pmm.efi", L"PhysicalMemoryManager"),
-  MODULE_ENTRY(L"\\vmm.efi", L"VirtualMemoryManager")
+  MODULE_ENTRY(L"\\kernel_core.efi", L"Kernel", ModuleKernelCore),
+  MODULE_ENTRY(L"\\pmm.efi", L"PhysicalMemoryManager", ModulePmm),
+  MODULE_ENTRY(L"\\vmm.efi", L"VirtualMemoryManager", ModuleVmm),
+  MODULE_ENTRY(L"\\kmm.efi", L"KernelMemoryManager", ModuleKmm)
 };
 
 EFI_STATUS
@@ -129,6 +130,7 @@ LoadModules(EFI_SYSTEM_TABLE *SystemTable, MODULE_TABLE* ModuleTable)
     ModuleList[i].ModuleBase = Modules[i].ModuleBase;
     ModuleList[i].VTable = Modules[i].VTable;
     ModuleList[i].Size = Modules[i].Info->FileSize;
+    ModuleList[i].Type = Modules[i].Type;
   }
 
   ModuleTable->ModuleCount = ModuleCount;

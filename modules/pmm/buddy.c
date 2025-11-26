@@ -4,6 +4,33 @@
 
 #include "../module_debug.h"
 
+static size_t find_max_block_size(uintptr_t addr, uintptr_t end) {
+    size_t max_size = end - addr;
+    size_t block_size = 4096;
+    size_t best_size = 4096;
+    
+    while (block_size <= max_size) {
+        if ((addr & (block_size - 1)) == 0) {
+            best_size = block_size;
+        }
+        if (block_size > max_size / 2) break;
+        block_size *= 2;
+    }
+    return best_size;
+}
+
+static void add_block_to_freelist(buddy_section_t *section, uintptr_t addr, size_t order)
+{
+  if (section->top) *((unsigned long*)section->top + 8) = addr;
+  *((unsigned long*)addr) = section->top;
+  section->top = addr;
+  section->block_count++;
+
+  size_t block_size = (1UL << order) * 4096;
+  size_t bitmap_index = addr / block_size;
+  bitmap_set(section->bitmap, bitmap_index);
+}
+
 size_t buddy_get_memory_size(size_t total_memory)
 {
   size_t buddy_size = 0;
@@ -14,29 +41,11 @@ size_t buddy_get_memory_size(size_t total_memory)
     size_t block_count = (total_memory / block_size) + 1;
     buddy_size += bitmap_memory_size(block_count);
 
-    // Double the block size for next level
     if (block_size > total_memory / 2) break;
     block_size *= 2;
   }
 
   return buddy_size;
-}
-
-size_t find_max_block_size(uintptr_t addr, uintptr_t end) {
-    // Find largest power-of-2 block that fits within [addr, end)
-    // and is aligned to the block size
-    size_t max_size = end - addr;
-    size_t block_size = 4096;
-    size_t best_size = 4096;
-    
-    while (block_size <= max_size) {
-        if ((addr & (block_size - 1)) == 0) { // Check alignment
-            best_size = block_size;
-        }
-        if (block_size > max_size / 2) break;
-        block_size *= 2;
-    }
-    return best_size;
 }
 
 void buddy_init(memory_region_t* memory_map, size_t region_count, buddy_allocator_t *allocator, uintptr_t buddy_memory, size_t total_memory)
@@ -93,18 +102,6 @@ void buddy_init(memory_region_t* memory_map, size_t region_count, buddy_allocato
       }
     }
   }
-}
-int as = 0;
-static void add_block_to_freelist(buddy_section_t *section, uintptr_t addr, size_t order)
-{
-  if (section->top) *((unsigned long*)section->top + 8) = addr;
-  *((unsigned long*)addr) = section->top;
-  section->top = addr;
-  section->block_count++;
-
-  size_t block_size = (1UL << order) * 4096;
-  size_t bitmap_index = addr / block_size;
-  bitmap_set(section->bitmap, bitmap_index);
 }
 
 static void remove_block_from_freelist(buddy_section_t* section, uintptr_t addr, size_t order)
@@ -165,17 +162,14 @@ unsigned long buddy_alloc_phys_exact(buddy_allocator_t* allocator, unsigned long
         return block_addr;
     }
     
-    // Free the unused memory at the end using the same pattern as buddy_init
     uintptr_t free_position = block_addr + actual_size;
     uintptr_t block_end = block_addr + block_size;
     
     unsigned long space_allocated = 0;
     while (free_position < block_end) {
-        // Find the largest block size that fits in the remaining space
         size_t free_size = find_max_block_size(free_position, block_end);
         if (free_size < 4096) break;
         
-        // Free this block
         size_t free_order = (63 - __builtin_clzll(free_size / 4096));
         buddy_free_phys(allocator, free_position, free_order);
 
@@ -183,13 +177,6 @@ unsigned long buddy_alloc_phys_exact(buddy_allocator_t* allocator, unsigned long
         
         free_position += free_size;
     }
-    // LOG(x9, space_allocated);
-    // LOG(x10, space_allocated + actual_size);
-    // LOG(x8, (block_addr + block_size) - (block_addr + actual_size));
-    // LOG(x7, actual_size);
-    // LOG(x6, block_size);
-    // BREAK;
-
  
     return block_addr;
 }
@@ -244,14 +231,11 @@ uintptr_t buddy_alloc_phys(buddy_allocator_t *allocator, size_t order)
 
 void* buddy_alloc_kernel(buddy_allocator_t* allocator, unsigned long virt_addr, unsigned long size, vmm_vtable_t* vmm)
 {
-  as++;
-
     size_t actual_size = (size + 4095) & ~4095;  // Round to 4KB
     
     // Allocate exact physical size (buddy will find largest block and split down)
     uintptr_t phys_addr = buddy_alloc_phys_exact(allocator, actual_size);
     if (!phys_addr) return NULL;
-  
     vmm->pages_map_kernel(virt_addr, phys_addr, 0, actual_size / 4096);
   
     return (void*)virt_addr;
@@ -291,7 +275,7 @@ void buddy_free_phys(buddy_allocator_t *allocator, uintptr_t addr, size_t order)
         buddy_section_t *section = &allocator->sections[current_order];
         size_t buddy_bitmap_index = buddy_addr / block_size;
 
-        if (!bitmap_get(section->bitmap, buddy_bitmap_index)) {
+        if (!bitmap_test(section->bitmap, buddy_bitmap_index)) {
             break;
         }
 
