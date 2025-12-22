@@ -30,7 +30,7 @@ void kfree(virt_addr_t ptr)
   heap_free(&heap, ptr);
 }
 
-void kmm_init(kernel_vtable_t* kvtable)
+void kmm_init(kernel_vtable_t* kvtable, virt_addr_t load)
 {
   ppm_vtable_t *ppm = (ppm_vtable_t*)kvtable->find_module_vtable_by_type(MODULE_PMM);
   heap_init(&heap, ppm, 0x40000000000, 0x100000);

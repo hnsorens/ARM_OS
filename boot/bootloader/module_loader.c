@@ -83,7 +83,8 @@ MODULE_LOAD Modules[] = {
   MODULE_ENTRY(L"\\kernel_core.efi", L"Kernel", ModuleKernelCore),
   MODULE_ENTRY(L"\\pmm.efi", L"PhysicalMemoryManager", ModulePmm),
   MODULE_ENTRY(L"\\vmm.efi", L"VirtualMemoryManager", ModuleVmm),
-  MODULE_ENTRY(L"\\kmm.efi", L"KernelMemoryManager", ModuleKmm)
+  MODULE_ENTRY(L"\\kmm.efi", L"KernelMemoryManager", ModuleKmm),
+  MODULE_ENTRY(L"\\gic.efi", L"GIC", ModuleGic)
 };
 
 EFI_STATUS

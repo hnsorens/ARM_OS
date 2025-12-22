@@ -10,9 +10,19 @@ all:
 				obj_files="$$obj_files $$dir$$base_name.o"; \
 			fi; \
 		done; \
+		for s_file in "$$dir"*.s; do \
+			if [ -f "$$s_file" ]; then \
+				base_name=$$(basename "$$s_file" .s); \
+				aarch64-linux-gnu-as -c "$$s_file" -o "$$dir$$base_name.o" --defsym PIC=1; \
+				obj_files="$$obj_files $$dir$$base_name.o"; \
+			fi; \
+		done; \
 		if [ -n "$$obj_files" ]; then \
-			aarch64-linux-gnu-ld -T module.ld -o "$$dir$$name.elf" $$obj_files; \
+			aarch64-linux-gnu-ld -T "$$dir/module.ld" -o "$$dir$$name.elf" $$obj_files; \
 			aarch64-linux-gnu-objcopy -O binary "$$dir$$name.elf" ../module_executables/"$$name.efi"; \
-			rm $$obj_files "$$dir$$name.elf"; \
+			# Clean up object files and elf \
+			rm -f $$obj_files "$$dir$$name.elf"; \
+		else \
+			echo "No source files found in $$dir"; \
 		fi; \
 	done

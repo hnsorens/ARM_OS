@@ -10,6 +10,7 @@ kernel_entry_t kentry;
 
 void kernel_entry(kernel_entry_t* entry)
 {
+
   kentry = *entry;
 
   kernel_vtable_t* vtable = kentry.module_table.modules[0].vtable;
@@ -17,11 +18,13 @@ void kernel_entry(kernel_entry_t* entry)
   // SKIP KERNEL CORE
   for (int i = 1; i < kentry.module_table.size; i++)
   {
-    ((vtable_init_t*)(kentry.module_table.modules[i].vtable))->init(vtable);
+    ((vtable_init_t*)(kentry.module_table.modules[i].vtable))->init(vtable, (virt_addr_t)kentry.module_table.modules[i].base);
   }
 
-  LOG(x9, 0x123123);
-  BREAK
+  while(1)
+  {
+    
+  }
 }
 
 uintptr_t find_module_vtable_by_type(module_type_t type)

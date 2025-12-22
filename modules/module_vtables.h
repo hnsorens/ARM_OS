@@ -16,7 +16,7 @@ typedef struct kernel_vtable_t
 
 typedef struct vtable_init_t
 {
-  void (*init)(kernel_vtable_t*);
+  void (*init)(kernel_vtable_t*, virt_addr_t load);
 } vtable_init_t;
 
 typedef struct ppm_vtable_t
@@ -44,5 +44,17 @@ typedef struct kmm_vtable_t
   virt_addr_t (*krealloc)(virt_addr_t, unsigned long);
   void (*kfree)(virt_addr_t vaddr);
 } kmm_vtable_t;
+
+typedef struct gic_vtable_t
+{
+  vtable_def
+  
+} gic_vtable_t;
+
+typedef struct libk_vtable_t
+{
+  vtable_def
+
+} libk_vtable_t;
 
 #endif

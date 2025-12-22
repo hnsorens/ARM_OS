@@ -8,7 +8,8 @@ typedef enum MODULE_TYPE
   ModuleKernelCore,
   ModuleVmm,
   ModulePmm,
-  ModuleKmm
+  ModuleKmm,
+  ModuleGic
 } MODULE_TYPE;
 
 typedef struct MODULE_LOAD {
