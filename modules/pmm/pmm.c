@@ -19,7 +19,7 @@ unsigned long calculate_total_memory(memory_region_t* regions, unsigned long reg
   return total_memory * 4096;
 }
 
-void ppm_init(kernel_vtable_t* kvtable, virt_addr_t load)
+void ppm_init(kernel_vtable_t* kvtable)
 {
   vmm = (vmm_vtable_t*)kvtable->find_module_vtable_by_type(MODULE_VMM);
 

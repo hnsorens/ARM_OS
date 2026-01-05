@@ -19,12 +19,13 @@
 #define GICD_IROUTERn       0x6100  // + (irq-32)*8 for SPIs
 
 #define GICR_WAKER          0x0014
-#define GICR_IGROUPR0       0x0080
-#define GICR_ISENABLER0     0x0100
-#define GICR_ICENABLER0     0x0180
-#define GICR_IPRIORITYR0    0x0400
-#define GICR_ICFGR0         0x0C00
-#define GICR_ICFGR1         0x0C04
+#define GICR_SGI_BASE       0x10000 
+#define GICR_IGROUPR0       (GICR_SGI_BASE + 0x0080)
+#define GICR_ISENABLER0     (GICR_SGI_BASE + 0x0100)
+#define GICR_ICENABLER0     (GICR_SGI_BASE + 0x0180)
+#define GICR_IPRIORITYR0    (GICR_SGI_BASE + 0x0400)
+#define GICR_ICFGR0         (GICR_SGI_BASE + 0x0C00)
+#define GICR_ICFGR1         (GICR_SGI_BASE + 0x0C04)
 
 // Globals
 static uintptr_t g_dist_base;
@@ -66,33 +67,30 @@ int gicv3_init(uintptr_t dist_base, uintptr_t redist_base) {
     g_dist_base = dist_base;
     g_redist_base = redist_base;
 
-    // Wake up redistributor (per-core)
+    // Wake up redistributor (Frame 0)
     writel(readl(g_redist_base + GICR_WAKER) & ~(1U << 1), g_redist_base + GICR_WAKER);
-    asm volatile("dsb ish" ::: "memory");
-asm volatile("isb" ::: "memory");
     while (readl(g_redist_base + GICR_WAKER) & (1U << 2));
-asm volatile("dsb ish" ::: "memory");
-asm volatile("isb" ::: "memory");
+    asm volatile("dsb ish; isb" ::: "memory");
 
-
-    // SGIs/PPIs → Group 1 non-secure
+    // --- FIX 2: Correctly target SGI_BASE for Grouping ---
     writel(0xFFFFFFFF, g_redist_base + GICR_IGROUPR0);
 
-    // Mid priority for SGIs/PPIs
+    // --- FIX 3: Correctly target SGI_BASE for Priorities ---
     for (int i = 0; i < 8; i++) {
         writel(0xA0A0A0A0, g_redist_base + GICR_IPRIORITYR0 + i * 4);
     }
 
-    // Enable affinity routing (primary core should do this once)
     uint32_t ctlr = readl(g_dist_base + GICD_CTLR);
-ctlr |= (1 << 4);  // ARE_NS
-ctlr |= (1 << 1);  // EnableGrp1NS
-writel(ctlr, g_dist_base + GICD_CTLR);
+    ctlr |= (1 << 4);  // ARE_NS
+    ctlr |= (1 << 1);  // EnableGrp1NS
+    writel(ctlr, g_dist_base + GICD_CTLR);
 
-    // CPU interface setup (per-core)
-    SYS_WRITE(ICC_PMR_EL1, 0xFF);           // Allow all priorities
-    SYS_WRITE(ICC_BPR1_EL1, 0x3);           // Reasonable binary point
-    SYS_WRITE(ICC_IGRPEN1_EL1, 1);          // Enable Group 1 IRQs
+    SYS_WRITE(ICC_SRE_EL1, 1);   
+    asm volatile("isb");
+
+    SYS_WRITE(ICC_PMR_EL1, 0xFF);           
+    SYS_WRITE(ICC_BPR1_EL1, 0x3);           
+    SYS_WRITE(ICC_IGRPEN1_EL1, 1);          
 
     spinlock_init(&g_lock);
     return 0;
@@ -103,9 +101,16 @@ int gicv3_request_irq(int irq, irq_type_t type, irq_handler_t handler, void *dat
 
     spinlock_acquire(&g_lock);
 
-    // Configure edge/level
-    uintptr_t cfg_base = (irq < 32) ? g_redist_base + ((irq < 16) ? GICR_ICFGR0 : GICR_ICFGR1)
-                                   : g_dist_base + GICD_ICFGRn + (irq / 16) * 4;
+    // --- FIX 4: Correct ICFGR selection for PPIs (16-31) ---
+    uintptr_t cfg_base;
+    if (irq < 16) {
+        cfg_base = g_redist_base + GICR_ICFGR0;
+    } else if (irq < 32) {
+        cfg_base = g_redist_base + GICR_ICFGR1;
+    } else {
+        cfg_base = g_dist_base + GICD_ICFGRn + (irq / 16) * 4;
+    }
+
     uint32_t cfg = readl(cfg_base);
     int field = (irq % 16) * 2;
     cfg &= ~(3U << field);
@@ -128,6 +133,17 @@ int gicv3_request_irq(int irq, irq_type_t type, irq_handler_t handler, void *dat
     return 0;
 }
 
+void gicv3_enable_irq(int irq) {
+    if (irq < 32) {
+        // Clear then Set to ensure state
+        writel(1U << irq, g_redist_base + GICR_ICENABLER0);
+        asm volatile("dsb sy");
+        writel(1U << irq, g_redist_base + GICR_ISENABLER0);
+    } else {
+        uintptr_t reg = g_dist_base + GICD_ISENABLERn + (irq / 32) * 4;
+        writel(1U << (irq % 32), reg);
+    }
+}
 void gicv3_free_irq(int irq) {
     if (irq < 0 || irq >= 1024) return;
     spinlock_acquire(&g_lock);
@@ -135,19 +151,6 @@ void gicv3_free_irq(int irq) {
     g_handlers[irq] = NULL;
     g_handler_data[irq] = NULL;
     spinlock_release(&g_lock);
-}
-
-void gicv3_enable_irq(int irq) {
-
-    uintptr_t reg = (irq < 32) ? g_redist_base + GICR_ISENABLER0
-                              : g_dist_base + GICD_ISENABLERn + (irq / 32) * 4;
-    writel(1U << (irq % 32), reg);
-uint32_t waker_status = readl(g_redist_base + GICR_WAKER);
-LOG(x12, waker_status);  // Should be 0 if awake, otherwise something is wrong
-	*((uint32_t*)0x080A0100) = 10;
-	LOG(x11, *((uint32_t*)0x080A0100))
-LOG(x10, reg);
-BREAK
 }
 
 void gicv3_disable_irq(int irq) {
@@ -163,20 +166,8 @@ int gicv3_set_affinity(int irq, uint64_t mpidr) {
 }
 
 void gicv3_global_enable(void) {
-    asm volatile("msr daifclr, #2" ::: "memory");
+asm volatile("msr daifclr, #0xf" ::: "memory");
 asm volatile("isb");
-uint64_t daif;
-asm volatile(
-    "msr daifclr, #1\n"
-    "isb\n"
-    "mrs %0, daif\n"
-    : "=r"(daif)
-    :
-    : "memory"
-);
-
-
-
 }
 
 void gicv3_global_disable(void) {

@@ -7,7 +7,7 @@
 vtable(libk_vtable_t);
 start(init, libk_init);
 
-void libk_init(kernel_vtable_t *kvtable, virt_addr_t load)
+void libk_init(kernel_vtable_t *kvtable)
 {
 
 }

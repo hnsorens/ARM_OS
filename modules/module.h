@@ -5,12 +5,18 @@
 #define vtable(type) struct type ___table;
 #define start(func_vtable_init, func_init)        \
 void func_vtable_init(typeof(___table)* table);   \
-void func_init(kernel_vtable_t* vtable, virt_addr_t load);          \
+void func_init(kernel_vtable_t* vtable);          \
+virt_addr_t __load_addr__ = 0;                    \
+void ___init(kernel_vtable_t* vtable, virt_addr_t load)   \
+{                                                         \
+  __load_addr__ = load;                                   \
+  func_init(vtable);                                      \
+}                                                         \
 __attribute__((section(".text._entry")))          \
 typeof(___table)* _entry()                        \
 {                                                 \
   func_vtable_init(&___table);                    \
-  ___table.init = func_init;                      \
+  ___table.init = ___init;                      \
   return &___table;                               \
 }
 

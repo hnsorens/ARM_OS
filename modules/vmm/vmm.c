@@ -9,7 +9,7 @@ start(init, vmm_init);
 ppm_vtable_t* ppm;
 page_table_t kernel_page_table;
 
-void vmm_init(kernel_vtable_t* kvtable, virt_addr_t load)
+void vmm_init(kernel_vtable_t* kvtable)
 {
 
     // Finds the Physical Memory Manager

@@ -1,9 +1,12 @@
 
 #include "../module_debug.h"
 #include "../module_vtables.h"
+#include "../module_types.h"
 
 vtable(gic_vtable_t);
 start(init, gic_init);
+
+serial_vtable_t* serial;
 
 #include <stdint.h>
 #include "gicv3.h"
@@ -27,37 +30,38 @@ void timer_handler(int irq, void *data) {
     SYS_READ(CNTV_CTL_EL0, ctl);
     SYS_WRITE(CNTV_CTL_EL0, ctl & ~1);  // Disable temporarily
 
-	LOG(x10, 0x5050);
-	BREAK
+    serial->serial_printf("Timer Interrupt Fired\n");
 
     // Do something, e.g., print "Timer fired!"
     SYS_WRITE(CNTV_CTL_EL0, ctl | 1);  // Re-enable
 }
 
-void gic_init(kernel_vtable_t* kvtable, virt_addr_t load)
+void gic_init(kernel_vtable_t* kvtable)
 {
+    serial = (serial_vtable_t*)kvtable->find_module_vtable_by_type(MODULE_SERIAL_DEBUG);
 	extern void _vectors(void);
     uintptr_t vaddr = (uintptr_t)_vectors;
-    asm volatile("msr vbar_el1, %0" : : "r"(vaddr + load));
+    asm volatile("msr vbar_el1, %0" : : "r"(vaddr + __load_addr__));
     asm volatile("isb");
 
 	// Init GICv3 (call per-core in SMP boot)
     gicv3_init(GICD_BASE, GICR_BASE);
 
     // Request basic interrupt: Non-secure physical timer (PPI 30, level-triggered)
+    // gicv3_request_irq(30, IRQ_TYPE_LEVEL, timer_handler, NULL);
     gicv3_request_irq(30, IRQ_TYPE_LEVEL, timer_handler, NULL);
-gicv3_request_irq(27, IRQ_TYPE_LEVEL, timer_handler, NULL);
-
-    // Set affinity example (for an SPI, say ID 40 to CPU0 affinity 0.0.0.0)
-    gicv3_set_affinity(40, 0x0);
 
     // Enable interrupts globally
-    gicv3_global_enable();
-
     // Setup timer as test (e.g., 1 second interval)
     SYS_WRITE(CNTFRQ_EL0, 100000000);  // Assume 100MHz freq
-    SYS_WRITE(CNTV_TVAL_EL0, 100000);  // Load value
-    SYS_WRITE(CNTV_CTL_EL0, 0x1);  // Enable timer
+    SYS_WRITE(CNTV_TVAL_EL0, 1000);  // Load value
+    SYS_WRITE(CNTV_CTL_EL0, 0x1);
+
+    gicv3_global_enable();
+    
+
+    serial->serial_printf("GIC initialized\n");
+
 }
 
 void init(gic_vtable_t* vtable)

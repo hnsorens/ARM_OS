@@ -10,6 +10,7 @@ typedef enum module_type_t
   MODULE_VMM,
   MODULE_PMM,
   MODULE_KMM,
+  MODULE_GIC,
   MODULE_SERIAL_DEBUG,
 } module_type_t;
 

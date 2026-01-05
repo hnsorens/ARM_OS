@@ -67,7 +67,8 @@ fiq_lower_aarch32: b hang
 serror_lower_aarch32: b hang
 
 // IRQ from lower EL (common for OS)
-irq_lower_aarch64:
+irq_lower_aarch64: b hang
+irq_lower_aarch64asd:
     stp x29, x30, [sp, #-16]!
     stp x0, x1, [sp, #-16]!
     // Save more regs if needed

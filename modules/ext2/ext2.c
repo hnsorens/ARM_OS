@@ -14,10 +14,10 @@ start(init, ext2_init);
  * Provides functions for mounting, reading, writing, and managing EXT2 filesystems,
  * including inode/block operations and directory management for the kernel.
  */
-#include <drivers/ext2.h>
-#include <memory/kglobals.h>
-#include <memory/kmemory.h>
-#include <misc/debug.h>
+#include "ext2.h"
+// #include <memory/kglobals.h>
+// #include <memory/kmemory.h>
+// #include <misc/debug.h>
 #include <stdint.h>
 
 uint32_t time(uint32_t time)
