@@ -42,7 +42,6 @@ void ppm_init(kernel_vtable_t* kvtable, virt_addr_t load)
       break;
     }
   }
-
   buddy_init(regions, region_count, &allocator, buddy_memory, total_memory);
 }
 

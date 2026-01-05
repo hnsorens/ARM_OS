@@ -9,7 +9,8 @@ typedef enum MODULE_TYPE
   ModuleVmm,
   ModulePmm,
   ModuleKmm,
-  ModuleGic
+  ModuleGic,
+  ModuleSerialDebug
 } MODULE_TYPE;
 
 typedef struct MODULE_LOAD {

@@ -9,7 +9,8 @@ typedef enum module_type_t
   MODULE_KERNEL_CORE,
   MODULE_VMM,
   MODULE_PMM,
-  MODULE_KMM
+  MODULE_KMM,
+  MODULE_SERIAL_DEBUG,
 } module_type_t;
 
 typedef struct module_t

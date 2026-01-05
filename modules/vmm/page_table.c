@@ -37,10 +37,10 @@ static unsigned long page_order_size(unsigned long order)
 void page_enable(page_table_t page_table)
 {
     // Configure Memory Attributes
-    unsigned long mair = MAIR_ATTR(MAIR_NORMAL_WB, MAIR_IDX_NORMAL) | 
+    unsigned long mair = MAIR_ATTR(MAIR_NORMAL_WB, MAIR_IDX_NORMAL) |
                     MAIR_ATTR(MAIR_DEVICE_nGnRE, MAIR_IDX_DEVICE);
     asm volatile("msr mair_el1, %0" : : "r"(mair));
-    
+
     // Configure Translation Control
     unsigned long tcr = (TCR_TBI_DISABLE << TCR_TBI_SHIFT) |
                    (TCR_IPS_40BIT << TCR_IPS_SHIFT) |
@@ -55,22 +55,24 @@ void page_enable(page_table_t page_table)
                    (TCR_T0SZ_48BIT << TCR_T1SZ_SHIFT) |
                    (TCR_T0SZ_48BIT << TCR_T0SZ_SHIFT);
     asm volatile("msr tcr_el1, %0" : : "r"(tcr));
-    
+
     // Set Page Table Base
     asm volatile("msr ttbr0_el1, %0" : : "r"((unsigned long)page_table));
-    
+
     // Invalidate TLB
     asm volatile("dsb sy");
     asm volatile("tlbi vmalle1");
     asm volatile("dsb sy");
     asm volatile("isb");
-    
+
     // Enable MMU
     unsigned long sctlr;
     asm volatile("mrs %0, sctlr_el1" : "=r"(sctlr));
     sctlr |= SCTLR_M_ENABLE | SCTLR_C_ENABLE | SCTLR_I_ENABLE;
     asm volatile("msr sctlr_el1, %0" : : "r"(sctlr));
     asm volatile("isb");
+
+
 }
 
 void pages_map(page_table_t* page_table, virt_addr_t virtual_address, 

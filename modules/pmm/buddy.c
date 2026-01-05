@@ -73,17 +73,14 @@ void buddy_init(memory_region_t* memory_map, size_t region_count, buddy_allocato
     allocator->sections[i].block_count = 0;
   }
 
-  for (int i = 0; i < region_count; i++)
-  {
-    if (memory_map[i].memory_type == MEMORY_FREE)
+  for (int i = 0; i < region_count; i++) {
+    if (memory_map[i].memory_type == MEMORY_FREE && memory_map[i].start < 0x400000000)
     {
       uintptr_t block_end = memory_map[i].start + memory_map[i].size * 4096;
       uintptr_t block_position = memory_map[i].start;
 
-      int a = 0;
       while (block_position < block_end)
       {
-        a++;
         block_size = find_max_block_size(block_position, block_end);
         if (block_size < 4096) break;
         // handle free
@@ -91,8 +88,11 @@ void buddy_init(memory_region_t* memory_map, size_t region_count, buddy_allocato
         uint64_t page_index = block_position / block_size;
         bitmap_set(allocator->sections[section_index].bitmap, page_index);
         if (allocator->sections[section_index].top) {
+          LOG(x10, memory_map[i].start)
+          LOG(x11, memory_map[i].size)
           *((unsigned long*)allocator->sections[section_index].top + 8) = block_position;
         }
+
         *((uintptr_t*)block_position) = allocator->sections[section_index].top;
         allocator->sections[section_index].top = block_position;
         allocator->sections[section_index].block_count++;

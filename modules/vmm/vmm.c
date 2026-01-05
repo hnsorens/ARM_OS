@@ -11,6 +11,7 @@ page_table_t kernel_page_table;
 
 void vmm_init(kernel_vtable_t* kvtable, virt_addr_t load)
 {
+
     // Finds the Physical Memory Manager
     ppm = (ppm_vtable_t*)kvtable->find_module_vtable_by_type(MODULE_PMM);
 

@@ -51,6 +51,25 @@ typedef struct gic_vtable_t
   
 } gic_vtable_t;
 
+typedef struct ext2_vtable_t 
+{
+  vtable_def
+  void* (*create_fs)(unsigned int, unsigned int);
+} ext2_vtable_t;
+
+typedef struct disk_vtable_t 
+{
+  vtable_def
+  void* (*read_fn)(unsigned int, unsigned int);
+  void (*write_fn)(unsigned int, unsigned int, void*);
+} disk_vtable_t;
+
+typedef struct serial_vtable_t
+{
+  vtable_def
+  int (*serial_printf)(const char*, ...);
+} serial_vtable_t;
+
 typedef struct libk_vtable_t
 {
   vtable_def

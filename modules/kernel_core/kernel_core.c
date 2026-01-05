@@ -23,7 +23,33 @@ void kernel_entry(kernel_entry_t* entry)
 
   while(1)
   {
-    
+	uint64_t daif, pmr, icc_igrpen1, cntv_ctl, cntv_tval, cntpct;
+
+    asm volatile(
+        "mrs %0, daif\n"        // DAIF interrupt mask
+        "mrs %1, ICC_PMR_EL1\n" // Interrupt priority mask
+        "mrs %2, ICC_IGRPEN1_EL1\n" // Group 1 enable
+        "mrs %3, CNTV_CTL_EL0\n" // Timer control
+        "mrs %4, CNTV_TVAL_EL0\n" // Timer value
+        "mrs %5, CNTPCT_EL0\n"    // Timer counter
+        : "=r"(daif), "=r"(pmr), "=r"(icc_igrpen1),
+          "=r"(cntv_ctl), "=r"(cntv_tval), "=r"(cntpct)
+        :
+        : "memory"
+    );
+
+    LOG(x5, daif);
+    LOG(x6, pmr);
+    LOG(x7, icc_igrpen1);
+    LOG(x8, cntv_ctl);
+    LOG(x9, cntv_tval);
+    LOG(x10, cntpct);
+
+	LOG(x11, *((uint64_t*)0x080A0100))
+
+
+//asm volatile("wfi");
+
   }
 }
 

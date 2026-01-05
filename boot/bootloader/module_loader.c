@@ -6,6 +6,9 @@
 #include "Uefi/UefiMultiPhase.h"
 #include "Uefi/UefiSpec.h"
 
+#define BREAK while(1);
+#define LOG(reg, val) __asm__ volatile("mov " #reg ", %0" :: "r"((unsigned long)val));
+
 static 
 EFI_STATUS 
 LoadModule(
@@ -54,7 +57,7 @@ LoadModule(
   EFI_PHYSICAL_ADDRESS ModuleMemory;
 
   Status = SystemTable->BootServices->AllocatePages(
-      AllocateAnyPages, EfiRuntimeServicesData, ModuleMemorySize, &ModuleMemory);
+      AllocateAnyPages, EfiRuntimeServicesCode, ModuleMemorySize, &ModuleMemory);
   if (EFI_ERROR(Status)) {
     return Status;
   }
@@ -65,7 +68,8 @@ LoadModule(
     UINTN FileSize = Modules[i].Info->FileSize;
 
     Status = SystemTable->BootServices->AllocatePages(
-      AllocateAnyPages, EfiRuntimeServicesData, ((Modules[i].Info->FileSize + 4095) / 4096), &ModuleWriteLocation);
+      AllocateAnyPages, EfiRuntimeServicesCode, ((Modules[i].Info->FileSize + 4095) / 4096), &ModuleWriteLocation);
+
 
     Modules[i].ModuleBase = ModuleWriteLocation;
     Status = File->Read(File, &FileSize, (VOID *)ModuleWriteLocation);
@@ -81,6 +85,7 @@ LoadModule(
 
 MODULE_LOAD Modules[] = {
   MODULE_ENTRY(L"\\kernel_core.efi", L"Kernel", ModuleKernelCore),
+  MODULE_ENTRY(L"\\serial_debug.efi", L"SerialDebug", ModuleSerialDebug),
   MODULE_ENTRY(L"\\pmm.efi", L"PhysicalMemoryManager", ModulePmm),
   MODULE_ENTRY(L"\\vmm.efi", L"VirtualMemoryManager", ModuleVmm),
   MODULE_ENTRY(L"\\kmm.efi", L"KernelMemoryManager", ModuleKmm),
