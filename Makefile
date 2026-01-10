@@ -40,6 +40,17 @@ build: # MAKE SURE TO USE -E SUDO
 	# sudo rm -rf module_executables
 
 run: 
-	qemu-system-aarch64 -bios QEMU_EFI.fd -drive file=build/disk.img,format=raw,if=virtio -d vpu -M virt,gic-version=3 -cpu cortex-a72 -serial mon:stdio  -smp 4 -m 16G -device virtio-gpu-pci -display sdl -gdb tcp::1234
+	qemu-system-aarch64 \
+  -bios QEMU_EFI.fd \
+  -M virt,gic-version=3 \
+  -cpu cortex-a72 \
+  -drive file=build/disk.img,format=raw,if=none,id=disk0 \
+  -device virtio-blk-device,drive=disk0 \
+  -serial mon:stdio \
+  -smp 4 \
+  -m 16G \
+  -device virtio-gpu-device \
+  -display sdl \
+  -gdb tcp::1234
 
 .PHONY: all clean run

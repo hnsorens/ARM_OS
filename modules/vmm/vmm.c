@@ -1,5 +1,4 @@
-#include "../module_debug.h"
-#include "../module_vtables.h"
+#include "../module.h"
 
 #include "page_table.h"
 

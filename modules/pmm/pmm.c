@@ -1,7 +1,7 @@
 
 #include "buddy.h"
 
-#include "../module_debug.h"
+#include "../module.h"
 
 vtable(ppm_vtable_t);
 start(init, ppm_init);

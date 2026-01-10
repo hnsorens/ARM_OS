@@ -1,8 +1,5 @@
 
-
-#include "../module_vtables.h"
-#include "../module_types.h"
-#include "../module_debug.h"
+#include "../module.h"
 #include "heap.h"
 
 vtable(kmm_vtable_t);

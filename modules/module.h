@@ -1,15 +1,19 @@
 #ifndef MODULE_H
 #define MODULE_H
 
-#define vtable_def void (*init)(kernel_vtable_t*, virt_addr_t load);
+#define DEBUG(fmt, ...) if (debug_serial) debug_serial->serial_printf("[" debug "] " fmt "\n", ##__VA_ARGS__)
+#define ERROR(fmt, ...) if (debug_serial) debug_serial->serial_printf("[" debug "] " fmt "\n", ##__VA_ARGS__)
+
 #define vtable(type) struct type ___table;
 #define start(func_vtable_init, func_init)        \
 void func_vtable_init(typeof(___table)* table);   \
 void func_init(kernel_vtable_t* vtable);          \
 virt_addr_t __load_addr__ = 0;                    \
+static serial_vtable_t* debug_serial = 0;         \
 void ___init(kernel_vtable_t* vtable, virt_addr_t load)   \
 {                                                         \
   __load_addr__ = load;                                   \
+  debug_serial = (serial_vtable_t*)vtable->find_module_vtable_by_type(MODULE_SERIAL_DEBUG); \
   func_init(vtable);                                      \
 }                                                         \
 __attribute__((section(".text._entry")))          \
@@ -30,5 +34,9 @@ typeof(___table)* _entry()                        \
   ___table.init = func_init;                      \
   return &___table;                               \
 }
+
+#include "module_debug.h"
+#include "module_types.h"
+#include "module_vtables.h"
 
 #endif

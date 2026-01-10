@@ -1,7 +1,4 @@
-
-#include "../module_debug.h"
-#include "../module_vtables.h"
-#include "../module_types.h"
+#include "../module.h"
 
 vtable(gic_vtable_t);
 start(init, gic_init);

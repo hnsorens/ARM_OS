@@ -1,8 +1,11 @@
-#include "module.h"
+
 #include "module_types.h"
+#include <stdint.h>
 
 #ifndef MODULE_VTABLES_H
 #define MODULE_VTABLES_H
+
+#define vtable_def void (*init)(kernel_vtable_t*, virt_addr_t load);
 
 typedef struct kernel_vtable_t
 {
@@ -57,12 +60,19 @@ typedef struct ext2_vtable_t
   void* (*create_fs)(unsigned int, unsigned int);
 } ext2_vtable_t;
 
-typedef struct disk_vtable_t 
+typedef struct ide_vtable_t 
 {
   vtable_def
   void* (*read_fn)(unsigned int, unsigned int);
   void (*write_fn)(unsigned int, unsigned int, void*);
-} disk_vtable_t;
+} ide_vtable_t;
+
+typedef struct bus_controller_vtable_t
+{
+  vtable_def
+  uintptr_t (*find_device)(unsigned char id);
+  void (*init_device)(unsigned long device_base);
+} bus_controller_vtable_t;
 
 typedef struct serial_vtable_t
 {

@@ -12,6 +12,7 @@ typedef enum module_type_t
   MODULE_KMM,
   MODULE_GIC,
   MODULE_SERIAL_DEBUG,
+  MODULE_BUS_CONTROLLER,
 } module_type_t;
 
 typedef struct module_t
