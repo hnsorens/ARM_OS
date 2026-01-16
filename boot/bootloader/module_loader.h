@@ -2,17 +2,12 @@
 #include "Guid/FileInfo.h"
 #include "ProcessorBind.h"
 #include "Protocol/SimpleFileSystem.h"
+#include "../../modules/includes/module_enum.h"
+#include "../../modules/includes/module_names.h"
 
-typedef enum MODULE_TYPE
-{
-  ModuleKernelCore,
-  ModuleVmm,
-  ModulePmm,
-  ModuleKmm,
-  ModuleGic,
-  ModuleSerialDebug,
-  ModuleBusController,
-} MODULE_TYPE;
+#define MODULE_NAMES module_names
+
+typedef module_type_t MODULE_TYPE;
 
 typedef struct MODULE_LOAD {
   CHAR16 *ModulePath;

@@ -1,0 +1,36 @@
+#ifndef SERIAL_DEBUG_H
+#define SERIAL_DEBUG_H
+#include "module_vtables.h"
+
+#ifndef SERIAL_DEBUG
+#define SERIAL_DEBUG serial_debug
+#endif
+
+#define EXPAND(var) var
+#define CONCAT(a, b) a##b
+#define CONCAT_EXPAND(a, b) CONCAT(a, b)
+
+#ifdef __MAIN__
+
+#define __SERIAL_DEBUG__DEF(prefix) \
+__attribute__((visibility("hidden"))) int (*CONCAT_EXPAND(prefix, _serial_printf))( char*, ... ) = 0; \
+\
+static void _serial_debug_init(kernel_vtable_t *kvtable){\
+	serial_debug_vtable_t* module = (serial_debug_vtable_t*)kvtable->find_module_vtable_by_type(MODULE_SERIAL_DEBUG);\
+	CONCAT_EXPAND(prefix, _serial_printf) = module->serial_printf;\
+}
+
+__SERIAL_DEBUG__DEF(SERIAL_DEBUG) 
+#undef __SERIAL_DEBUG__DEF
+
+#else
+
+#define __SERIAL_DEBUG__DEF(prefix) \
+__attribute__((visibility("hidden"))) extern int (*CONCAT_EXPAND(prefix, _serial_printf))( char*, ... ); \
+
+
+__SERIAL_DEBUG__DEF(SERIAL_DEBUG) 
+#undef __SERIAL_DEBUG__DEF
+
+#endif
+#endif
