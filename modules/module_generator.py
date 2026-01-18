@@ -11,12 +11,14 @@ class StructVisitor(c_ast.NodeVisitor):
         if node.coord and str(node.coord).startswith('includes/module_vtables.h'):
             if node.decls:
                 module_name = self.get_prefix(node.name)
+                strcture_file_path = Path("includes/modules/structures") / f"{module_name}.h"
+                open(strcture_file_path, 'a').close()
                 file_path = Path("includes/modules") / f"{module_name}.h"
                 self.module_types.append(f"{module_name.upper()}")
                 open(file_path, 'w').close()
                 with open(file_path, 'a', encoding='utf-8') as f:
                     f.write(f"#ifndef {module_name.upper()}_H\n#define {module_name.upper()}_H\n")
-                    f.write(f'#include "module_vtables.h"\n\n#ifndef {module_name.upper()}\n#define {module_name.upper()} {module_name}\n#endif\n\n#define EXPAND(var) var\n#define CONCAT(a, b) a##b\n#define CONCAT_EXPAND(a, b) CONCAT(a, b)\n\n#ifdef __MAIN__\n\n#define __{module_name.upper()}__DEF(prefix) \\\n')
+                    f.write(f'#include "modules/structures/{module_name}.h"\n#include "module_vtables.h"\n\n#ifndef {module_name.upper()}\n#define {module_name.upper()} {module_name}\n#endif\n\n#define EXPAND(var) var\n#define CONCAT(a, b) a##b\n#define CONCAT_EXPAND(a, b) CONCAT(a, b)\n\n#ifdef __MAIN__\n\n#define __{module_name.upper()}__DEF(prefix) \\\n')
                     for decl in node.decls:
                         # Skip members named 'init'
                         if decl.name == 'init':
@@ -25,7 +27,7 @@ class StructVisitor(c_ast.NodeVisitor):
                         member_name = decl.name
                         member_type = self._get_function_type(decl.type, f"CONCAT_EXPAND(prefix, _{member_name})")
                         f.write(f'__attribute__((visibility("hidden"))) {member_type} = 0; \\\n')
-                    f.write(f"\\\nstatic void _{module_name}_init(kernel_vtable_t *kvtable){'{'}\\\n")
+                    f.write(f"\\\nstatic void {module_name}_fetch(kernel_vtable_t *kvtable){'{'}\\\n")
                     f.write(f"\t{node.name}* module = ({node.name}*)kvtable->find_module_vtable_by_type(MODULE_{module_name.upper()});\\\n")
                     for decl in node.decls:
                         if decl.name == 'init':

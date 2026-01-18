@@ -1,5 +1,6 @@
 #ifndef GPT_H
 #define GPT_H
+#include "modules/structures/gpt.h"
 #include "module_vtables.h"
 
 #ifndef GPT
@@ -14,7 +15,7 @@
 
 #define __GPT__DEF(prefix) \
 \
-static void _gpt_init(kernel_vtable_t *kvtable){\
+static void gpt_fetch(kernel_vtable_t *kvtable){\
 	gpt_vtable_t* module = (gpt_vtable_t*)kvtable->find_module_vtable_by_type(MODULE_GPT);\
 }
 

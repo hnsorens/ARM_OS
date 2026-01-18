@@ -1,5 +1,6 @@
 #ifndef VMM_H
 #define VMM_H
+#include "modules/structures/vmm.h"
 #include "module_vtables.h"
 
 #ifndef VMM
@@ -16,7 +17,7 @@
 __attribute__((visibility("hidden"))) void (*CONCAT_EXPAND(prefix, _pages_map_kernel))( unsigned long, unsigned long, unsigned long, unsigned long ) = 0; \
 __attribute__((visibility("hidden"))) unsigned long (*CONCAT_EXPAND(prefix, _virt_to_phys_kernel))( unsigned long ) = 0; \
 \
-static void _vmm_init(kernel_vtable_t *kvtable){\
+static void vmm_fetch(kernel_vtable_t *kvtable){\
 	vmm_vtable_t* module = (vmm_vtable_t*)kvtable->find_module_vtable_by_type(MODULE_VMM);\
 	CONCAT_EXPAND(prefix, _pages_map_kernel) = module->pages_map_kernel;\
 	CONCAT_EXPAND(prefix, _virt_to_phys_kernel) = module->virt_to_phys_kernel;\

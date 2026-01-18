@@ -1,5 +1,6 @@
 #ifndef SERIAL_DEBUG_H
 #define SERIAL_DEBUG_H
+#include "modules/structures/serial_debug.h"
 #include "module_vtables.h"
 
 #ifndef SERIAL_DEBUG
@@ -15,7 +16,7 @@
 #define __SERIAL_DEBUG__DEF(prefix) \
 __attribute__((visibility("hidden"))) int (*CONCAT_EXPAND(prefix, _serial_printf))( char*, ... ) = 0; \
 \
-static void _serial_debug_init(kernel_vtable_t *kvtable){\
+static void serial_debug_fetch(kernel_vtable_t *kvtable){\
 	serial_debug_vtable_t* module = (serial_debug_vtable_t*)kvtable->find_module_vtable_by_type(MODULE_SERIAL_DEBUG);\
 	CONCAT_EXPAND(prefix, _serial_printf) = module->serial_printf;\
 }

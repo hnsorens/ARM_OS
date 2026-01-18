@@ -1,5 +1,6 @@
 #ifndef KMM_H
 #define KMM_H
+#include "modules/structures/kmm.h"
 #include "module_vtables.h"
 
 #ifndef KMM
@@ -18,7 +19,7 @@ __attribute__((visibility("hidden"))) virt_addr_t (*CONCAT_EXPAND(prefix, _kcall
 __attribute__((visibility("hidden"))) virt_addr_t (*CONCAT_EXPAND(prefix, _krealloc))( virt_addr_t, unsigned long ) = 0; \
 __attribute__((visibility("hidden"))) void (*CONCAT_EXPAND(prefix, _kfree))( virt_addr_t ) = 0; \
 \
-static void _kmm_init(kernel_vtable_t *kvtable){\
+static void kmm_fetch(kernel_vtable_t *kvtable){\
 	kmm_vtable_t* module = (kmm_vtable_t*)kvtable->find_module_vtable_by_type(MODULE_KMM);\
 	CONCAT_EXPAND(prefix, _kmalloc) = module->kmalloc;\
 	CONCAT_EXPAND(prefix, _kcalloc) = module->kcalloc;\

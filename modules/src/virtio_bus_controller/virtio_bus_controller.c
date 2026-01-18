@@ -148,7 +148,7 @@ static int virtio_mmio_common_init(uintptr_t base) {
 uintptr_t virtio_find_device(uint8_t id)
 {
     DEBUG("FINDING DEVICE\n");
-    uintptr_t device_base = find_virtio_device(0x02);
+    uintptr_t device_base = find_virtio_device(id);
     
     if (device_base == 0) {
         ERROR("No block device found - stopping");

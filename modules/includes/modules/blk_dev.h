@@ -1,5 +1,6 @@
 #ifndef BLK_DEV_H
 #define BLK_DEV_H
+#include "modules/structures/blk_dev.h"
 #include "module_vtables.h"
 
 #ifndef BLK_DEV
@@ -16,7 +17,7 @@
 __attribute__((visibility("hidden"))) void* (*CONCAT_EXPAND(prefix, _read_sectors))( uint32_t, uint32_t ) = 0; \
 __attribute__((visibility("hidden"))) void (*CONCAT_EXPAND(prefix, _write_sectors))( uint32_t, uint32_t, void* ) = 0; \
 \
-static void _blk_dev_init(kernel_vtable_t *kvtable){\
+static void blk_dev_fetch(kernel_vtable_t *kvtable){\
 	blk_dev_vtable_t* module = (blk_dev_vtable_t*)kvtable->find_module_vtable_by_type(MODULE_BLK_DEV);\
 	CONCAT_EXPAND(prefix, _read_sectors) = module->read_sectors;\
 	CONCAT_EXPAND(prefix, _write_sectors) = module->write_sectors;\

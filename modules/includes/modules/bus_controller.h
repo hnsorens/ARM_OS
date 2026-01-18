@@ -1,5 +1,6 @@
 #ifndef BUS_CONTROLLER_H
 #define BUS_CONTROLLER_H
+#include "modules/structures/bus_controller.h"
 #include "module_vtables.h"
 
 #ifndef BUS_CONTROLLER
@@ -16,7 +17,7 @@
 __attribute__((visibility("hidden"))) uintptr_t (*CONCAT_EXPAND(prefix, _find_device))( unsigned char ) = 0; \
 __attribute__((visibility("hidden"))) void (*CONCAT_EXPAND(prefix, _init_device))( unsigned long ) = 0; \
 \
-static void _bus_controller_init(kernel_vtable_t *kvtable){\
+static void bus_controller_fetch(kernel_vtable_t *kvtable){\
 	bus_controller_vtable_t* module = (bus_controller_vtable_t*)kvtable->find_module_vtable_by_type(MODULE_BUS_CONTROLLER);\
 	CONCAT_EXPAND(prefix, _find_device) = module->find_device;\
 	CONCAT_EXPAND(prefix, _init_device) = module->init_device;\

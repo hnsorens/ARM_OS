@@ -1,5 +1,6 @@
 #ifndef PMM_H
 #define PMM_H
+#include "modules/structures/pmm.h"
 #include "module_vtables.h"
 
 #ifndef PMM
@@ -19,7 +20,7 @@ __attribute__((visibility("hidden"))) void* (*CONCAT_EXPAND(prefix, _alloc_phys)
 __attribute__((visibility("hidden"))) void (*CONCAT_EXPAND(prefix, _free_phys))( unsigned long, unsigned long ) = 0; \
 __attribute__((visibility("hidden"))) unsigned long (*CONCAT_EXPAND(prefix, _memory_available))( void ) = 0; \
 \
-static void _pmm_init(kernel_vtable_t *kvtable){\
+static void pmm_fetch(kernel_vtable_t *kvtable){\
 	pmm_vtable_t* module = (pmm_vtable_t*)kvtable->find_module_vtable_by_type(MODULE_PMM);\
 	CONCAT_EXPAND(prefix, _alloc_virt_kernel) = module->alloc_virt_kernel;\
 	CONCAT_EXPAND(prefix, _free_virt_kernel) = module->free_virt_kernel;\

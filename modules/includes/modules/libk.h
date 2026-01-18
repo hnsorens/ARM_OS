@@ -1,5 +1,6 @@
 #ifndef LIBK_H
 #define LIBK_H
+#include "modules/structures/libk.h"
 #include "module_vtables.h"
 
 #ifndef LIBK
@@ -14,7 +15,7 @@
 
 #define __LIBK__DEF(prefix) \
 \
-static void _libk_init(kernel_vtable_t *kvtable){\
+static void libk_fetch(kernel_vtable_t *kvtable){\
 	libk_vtable_t* module = (libk_vtable_t*)kvtable->find_module_vtable_by_type(MODULE_LIBK);\
 }
 

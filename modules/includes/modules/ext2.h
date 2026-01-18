@@ -1,5 +1,6 @@
 #ifndef EXT2_H
 #define EXT2_H
+#include "modules/structures/ext2.h"
 #include "module_vtables.h"
 
 #ifndef EXT2
@@ -15,7 +16,7 @@
 #define __EXT2__DEF(prefix) \
 __attribute__((visibility("hidden"))) void* (*CONCAT_EXPAND(prefix, _create_fs))( unsigned int, unsigned int ) = 0; \
 \
-static void _ext2_init(kernel_vtable_t *kvtable){\
+static void ext2_fetch(kernel_vtable_t *kvtable){\
 	ext2_vtable_t* module = (ext2_vtable_t*)kvtable->find_module_vtable_by_type(MODULE_EXT2);\
 	CONCAT_EXPAND(prefix, _create_fs) = module->create_fs;\
 }

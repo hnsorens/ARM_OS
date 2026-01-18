@@ -1,5 +1,6 @@
 #ifndef GIC_H
 #define GIC_H
+#include "modules/structures/gic.h"
 #include "module_vtables.h"
 
 #ifndef GIC
@@ -14,7 +15,7 @@
 
 #define __GIC__DEF(prefix) \
 \
-static void _gic_init(kernel_vtable_t *kvtable){\
+static void gic_fetch(kernel_vtable_t *kvtable){\
 	gic_vtable_t* module = (gic_vtable_t*)kvtable->find_module_vtable_by_type(MODULE_GIC);\
 }
 
