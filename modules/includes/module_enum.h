@@ -14,6 +14,7 @@ typedef enum module_type_t {
 	MODULE_LIBK,
 	MODULE_BLK_DEV,
 	MODULE_GPT,
+	MODULE_STR,
 } module_type_t;
 
 

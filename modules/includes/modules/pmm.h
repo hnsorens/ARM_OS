@@ -1,5 +1,6 @@
 #ifndef PMM_H
 #define PMM_H
+
 #include "modules/structures/pmm.h"
 #include "module_vtables.h"
 
@@ -11,14 +12,16 @@
 #define CONCAT(a, b) a##b
 #define CONCAT_EXPAND(a, b) CONCAT(a, b)
 
+#define GLOBAL __attribute__((visibility("hidden")))
+
 #ifdef __MAIN__
 
 #define __PMM__DEF(prefix) \
-__attribute__((visibility("hidden"))) void* (*CONCAT_EXPAND(prefix, _alloc_virt_kernel))( unsigned long, unsigned long ) = 0; \
-__attribute__((visibility("hidden"))) void (*CONCAT_EXPAND(prefix, _free_virt_kernel))( unsigned long, unsigned long ) = 0; \
-__attribute__((visibility("hidden"))) void* (*CONCAT_EXPAND(prefix, _alloc_phys))( unsigned long ) = 0; \
-__attribute__((visibility("hidden"))) void (*CONCAT_EXPAND(prefix, _free_phys))( unsigned long, unsigned long ) = 0; \
-__attribute__((visibility("hidden"))) unsigned long (*CONCAT_EXPAND(prefix, _memory_available))( void ) = 0; \
+GLOBAL void* (*CONCAT_EXPAND(prefix, _alloc_virt_kernel))( unsigned long, unsigned long ) = 0; \
+GLOBAL void (*CONCAT_EXPAND(prefix, _free_virt_kernel))( unsigned long, unsigned long ) = 0; \
+GLOBAL void* (*CONCAT_EXPAND(prefix, _alloc_phys))( unsigned long ) = 0; \
+GLOBAL void (*CONCAT_EXPAND(prefix, _free_phys))( unsigned long, unsigned long ) = 0; \
+GLOBAL unsigned long (*CONCAT_EXPAND(prefix, _memory_available))( void ) = 0; \
 \
 static void pmm_fetch(kernel_vtable_t *kvtable){\
 	pmm_vtable_t* module = (pmm_vtable_t*)kvtable->find_module_vtable_by_type(MODULE_PMM);\
@@ -35,15 +38,17 @@ __PMM__DEF(PMM)
 #else
 
 #define __PMM__DEF(prefix) \
-__attribute__((visibility("hidden"))) extern void* (*CONCAT_EXPAND(prefix, _alloc_virt_kernel))( unsigned long, unsigned long ); \
-__attribute__((visibility("hidden"))) extern void (*CONCAT_EXPAND(prefix, _free_virt_kernel))( unsigned long, unsigned long ); \
-__attribute__((visibility("hidden"))) extern void* (*CONCAT_EXPAND(prefix, _alloc_phys))( unsigned long ); \
-__attribute__((visibility("hidden"))) extern void (*CONCAT_EXPAND(prefix, _free_phys))( unsigned long, unsigned long ); \
-__attribute__((visibility("hidden"))) extern unsigned long (*CONCAT_EXPAND(prefix, _memory_available))( void ); \
+GLOBAL extern void* (*CONCAT_EXPAND(prefix, _alloc_virt_kernel))( unsigned long, unsigned long ); \
+GLOBAL extern void (*CONCAT_EXPAND(prefix, _free_virt_kernel))( unsigned long, unsigned long ); \
+GLOBAL extern void* (*CONCAT_EXPAND(prefix, _alloc_phys))( unsigned long ); \
+GLOBAL extern void (*CONCAT_EXPAND(prefix, _free_phys))( unsigned long, unsigned long ); \
+GLOBAL extern unsigned long (*CONCAT_EXPAND(prefix, _memory_available))( void ); \
 
 
 __PMM__DEF(PMM) 
+#undef GLOBAL
 #undef __PMM__DEF
+#undef PMM
 
 #endif
 #endif

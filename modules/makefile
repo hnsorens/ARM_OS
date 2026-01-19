@@ -30,3 +30,4 @@ all:
 			echo "No source files found in $$dir"; \
 		fi; \
 	done'
+

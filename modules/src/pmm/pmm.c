@@ -3,11 +3,15 @@
 
 #include "module.h"
 
+#include "module_types.h"
+#include "modules/vmm.h"
+
+#define debug "PMM"
+
 vtable(pmm_vtable_t);
-start(init, ppm_init);
+start(init, pmm_fetch, pmm_init);
 
 buddy_allocator_t allocator;
-vmm_vtable_t* vmm = 0;
 
 unsigned long calculate_total_memory(memory_region_t* regions, unsigned long region_count)
 {
@@ -19,10 +23,15 @@ unsigned long calculate_total_memory(memory_region_t* regions, unsigned long reg
   return total_memory * 4096;
 }
 
-void ppm_init(kernel_vtable_t* kvtable)
+void pmm_fetch(kernel_vtable_t* kvtable)
 {
-  vmm = (vmm_vtable_t*)kvtable->find_module_vtable_by_type(MODULE_VMM);
+  DEBUG("Fetch");
+  vmm_fetch(kvtable);
+}
 
+void pmm_init(kernel_vtable_t* kvtable)
+{
+  DEBUG("Init");
   unsigned long region_count = kvtable->memory_regions_count();
   memory_region_t* regions = kvtable->memory_regions();
 
@@ -55,19 +64,14 @@ void free_phys(unsigned long addr, unsigned long order)
   buddy_free_phys(&allocator, addr, order);
 }
 
-void set_vmm(vmm_vtable_t* vmm_vtable)
-{
-  vmm = vmm_vtable;
-}
-
 void* page_alloc_kernel(unsigned long virt_addr, unsigned long size)
 {
-  return buddy_alloc_kernel(&allocator, virt_addr, size, vmm);
+  return buddy_alloc_kernel(&allocator, virt_addr, size);
 }
 
 void page_free_kernel(unsigned long virt_addr, unsigned long size)
 {
-  return buddy_free_kernel(&allocator, virt_addr, size, vmm);
+  return buddy_free_kernel(&allocator, virt_addr, size);
 }
 
 unsigned long memory_available()

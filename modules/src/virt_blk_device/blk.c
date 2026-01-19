@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 vtable(blk_dev_vtable_t)
-start(init, virtio_blk_init)
+start(init, virtio_blk_fetch, virtio_blk_init)
 
 #define VIRTIO_BLK_DEVICE_ID 2
 
@@ -33,6 +33,11 @@ void create_device()
   unsigned long device = virt_bus_controller->find_device(0x02);
 }
 
+void virtio_blk_fetch(kernel_vtable_t *kvtable)
+{
+  bus_controller_fetch(kvtable);
+}
+
 void init(blk_dev_vtable_t *vtable)
 {
 
@@ -40,8 +45,7 @@ void init(blk_dev_vtable_t *vtable)
 
 void virtio_blk_init(kernel_vtable_t* kvtable)
 {
-  bus_controller_fetch(kvtable);
-
+  
   uintptr_t blk_device_base = bus_controller_find_device(VIRTIO_BLK_DEVICE_ID);
 
 }

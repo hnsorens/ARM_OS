@@ -1,5 +1,6 @@
 #ifndef GPT_H
 #define GPT_H
+
 #include "modules/structures/gpt.h"
 #include "module_vtables.h"
 
@@ -10,6 +11,8 @@
 #define EXPAND(var) var
 #define CONCAT(a, b) a##b
 #define CONCAT_EXPAND(a, b) CONCAT(a, b)
+
+#define GLOBAL __attribute__((visibility("hidden")))
 
 #ifdef __MAIN__
 
@@ -28,7 +31,9 @@ __GPT__DEF(GPT)
 
 
 __GPT__DEF(GPT) 
+#undef GLOBAL
 #undef __GPT__DEF
+#undef GPT
 
 #endif
 #endif

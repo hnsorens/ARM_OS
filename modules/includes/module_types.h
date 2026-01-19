@@ -57,7 +57,8 @@ typedef struct kernel_vtable_t
 
 typedef struct vtable_init_t
 {
-  void (*init)(kernel_vtable_t*, virt_addr_t load);
+  void (*fetch)(kernel_vtable_t*, virt_addr_t load);
+  void (*init)(kernel_vtable_t*);
 } vtable_init_t;
 
 #endif

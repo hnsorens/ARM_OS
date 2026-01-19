@@ -5,7 +5,7 @@
 #define debug "VIRTIO"
 
 vtable(bus_controller_vtable_t)
-start(init, virtio_init)
+start(init, virtio_fetch, virtio_init)
 
 #define VIRTIO_MAGIC 0x74726976
 
@@ -174,9 +174,14 @@ void virtio_init_device(uintptr_t device_base)
     DEBUG("INITIALIZED DEVICE");
 }
 
-void virtio_init(kernel_vtable_t* kvtable) 
+void virtio_fetch(kernel_vtable_t* kvtable) 
 {
 
+}
+
+void virtio_init(kernel_vtable_t* kvtable) 
+{
+    DEBUG("INIT");
 }
 
 void init(bus_controller_vtable_t* vtable) 

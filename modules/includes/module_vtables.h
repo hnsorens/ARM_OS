@@ -5,7 +5,7 @@
 #ifndef MODULE_VTABLES_H
 #define MODULE_VTABLES_H
 
-#define vtable_def void (*init)(kernel_vtable_t*, virt_addr_t load);
+#define vtable_def void (*fetch)(kernel_vtable_t*, virt_addr_t load); void (*init)(kernel_vtable_t*);
 
 typedef struct pmm_vtable_t
 {
@@ -27,10 +27,10 @@ typedef struct vmm_vtable_t
 typedef struct kmm_vtable_t
 {
   vtable_def
-  virt_addr_t (*kmalloc)(unsigned long);
-  virt_addr_t (*kcalloc)(unsigned long, unsigned long);
-  virt_addr_t (*krealloc)(virt_addr_t, unsigned long);
-  void (*kfree)(virt_addr_t vaddr);
+  void* (*kmalloc)(unsigned long);
+  void* (*kcalloc)(unsigned long, unsigned long);
+  void* (*krealloc)(void*, unsigned long);
+  void (*kfree)(void* vaddr);
 } kmm_vtable_t;
 
 typedef struct gic_vtable_t
@@ -84,5 +84,29 @@ typedef struct gpt_vtable_t
   
 
 } gpt_vtable_t;
+
+typedef struct str_vtable_t
+{
+  vtable_def
+  void* (*memset)(void* s, int c, unsigned long n);
+  void* (*memcpy)(void* dest, const void* src, unsigned long n);
+  void* (*memmove)(void* dest, const void* src, unsigned long n);
+  int (*memcmp)(const void* s1, const void* s2, unsigned long n);
+  void* (*memchr)(const void* s, int c, unsigned long n);
+
+  unsigned long (*strlen)(const char* s);
+  char* (*strcpy)(char* dest, const char* src);
+  char* (*strncpy)(char* dest, const char* src, unsigned long n);
+  char* (*strcat)(char* dest, const char* src);
+  char* (*strncat)(char* dest, const char* src, unsigned long n);
+  int (*strcmp)(const char* s1, const char* s2);
+  int (*strncmp)(const char* s1, const char* s2, unsigned long n);
+  char* (*strchr)(const char* s, int c);
+  char* (*strrchr)(const char* s, int c);
+  char* (*strstr)(const char* haystack, const char* needle);
+
+  char* (*strdup)(const char* s);
+
+} str_vtable_t;
 
 #endif

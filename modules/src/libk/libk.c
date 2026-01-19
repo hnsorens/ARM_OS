@@ -5,9 +5,14 @@
 #include "module_vtables.h"
 
 vtable(libk_vtable_t);
-start(init, libk_init);
+start(init, libk_fetch, libk_init);
 
 void libk_init(kernel_vtable_t *kvtable)
+{
+
+}
+
+void libk_fetch(kernel_vtable_t *kvtable)
 {
 
 }

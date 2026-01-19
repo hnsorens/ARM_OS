@@ -1,9 +1,9 @@
 #include "module.h"
 
-vtable(gic_vtable_t);
-start(init, gic_init);
+#define debug "GIC"
 
-serial_debug_vtable_t* serial;
+vtable(gic_vtable_t);
+start(init, gic_fetch, gic_init);
 
 #include <stdint.h>
 #include "gicv3.h"
@@ -27,15 +27,19 @@ void timer_handler(int irq, void *data) {
     SYS_READ(CNTV_CTL_EL0, ctl);
     SYS_WRITE(CNTV_CTL_EL0, ctl & ~1);  // Disable temporarily
 
-    serial->serial_printf("Timer Interrupt Fired\n");
 
     // Do something, e.g., print "Timer fired!"
     SYS_WRITE(CNTV_CTL_EL0, ctl | 1);  // Re-enable
 }
 
+void gic_fetch(kernel_vtable_t* kvtable)
+{
+    DEBUG("Fetch");
+}
+
 void gic_init(kernel_vtable_t* kvtable)
 {
-    serial = (serial_debug_vtable_t*)kvtable->find_module_vtable_by_type(MODULE_SERIAL_DEBUG);
+    DEBUG("Init");
 	extern void _vectors(void);
     uintptr_t vaddr = (uintptr_t)_vectors;
     __asm__ volatile("msr vbar_el1, %0" : : "r"(vaddr + __load_addr__));
@@ -56,8 +60,7 @@ void gic_init(kernel_vtable_t* kvtable)
 
     gicv3_global_enable();
     
-
-    serial->serial_printf("GIC initialized\n");
+    DEBUG("GIC initialized\n");
 
 }
 

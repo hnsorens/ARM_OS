@@ -1,6 +1,7 @@
 #include "page_table.h"
 #include <stddef.h>
-#include "module_debug.h"
+#include "modules/pmm.h"
+
 void* kmemset(void* ptr, int value, unsigned long n)
 {
     unsigned char* p = ptr;
@@ -76,7 +77,7 @@ void page_enable(page_table_t page_table)
 }
 
 void pages_map(page_table_t* page_table, virt_addr_t virtual_address, 
-               phys_addr_t phys_addr, unsigned long page_order, unsigned long page_count, pmm_vtable_t* ppm)
+               phys_addr_t phys_addr, unsigned long page_order, unsigned long page_count)
 {   
     if (!page_table) {
         return;
@@ -84,7 +85,7 @@ void pages_map(page_table_t* page_table, virt_addr_t virtual_address,
 
     // Initialize root page table if it doesn't exist
     if (!*page_table) {
-        *page_table = (unsigned long*)ppm->alloc_phys(0);
+        *page_table = (unsigned long*)pmm_alloc_phys(0);
         if (!*page_table)
             return;
         kmemset((void*)(*page_table), 0, 4096);
@@ -100,7 +101,7 @@ void pages_map(page_table_t* page_table, virt_addr_t virtual_address,
         // Get or create P1 table
         unsigned long* p1;
         if (!(p0[idx.p0_index] & ARM_TABLE_DESCRIPTOR)) {
-            p1 = (unsigned long*)ppm->alloc_phys(0);
+            p1 = (unsigned long*)pmm_alloc_phys(0);
             if (!p1) return;
             kmemset(p1, 0, 4096);
             p0[idx.p0_index] = (unsigned long)p1 | ARM_TABLE_DESCRIPTOR;
@@ -117,7 +118,7 @@ void pages_map(page_table_t* page_table, virt_addr_t virtual_address,
         // Get or create P2 table
         unsigned long* p2;
         if (!(p1[idx.p1_index] & ARM_TABLE_DESCRIPTOR)) {
-            p2 = (unsigned long*)ppm->alloc_phys(0);
+            p2 = (unsigned long*)pmm_alloc_phys(0);
             if (!p2) return;
             kmemset(p2, 0, 4096);
             p1[idx.p1_index] = (unsigned long)p2 | ARM_TABLE_DESCRIPTOR;
@@ -134,7 +135,7 @@ void pages_map(page_table_t* page_table, virt_addr_t virtual_address,
         // Get or create P3 table for 4KB pages (order 0)
         unsigned long* p3;
         if (!(p2[idx.p2_index] & ARM_TABLE_DESCRIPTOR)) {
-            p3 = (unsigned long*)ppm->alloc_phys(0);
+            p3 = (unsigned long*)pmm_alloc_phys(0);
             if (!p3) return;
             kmemset(p3, 0, 4096);
             p2[idx.p2_index] = (unsigned long)p3 | ARM_TABLE_DESCRIPTOR;
@@ -150,10 +151,10 @@ void pages_map(page_table_t* page_table, virt_addr_t virtual_address,
     }
 }
 
-page_table_t pages_create_identity_page_table(pmm_vtable_t* ppm, size_t total_memory)
+page_table_t pages_create_identity_page_table(size_t total_memory)
 {
   // Allocate L0 table (512GB blocks)
-    page_table_t page_table = ppm->alloc_phys(0);
+    page_table_t page_table = pmm_alloc_phys(0);
     if (!page_table) {
       return 0;
     }
@@ -166,7 +167,7 @@ page_table_t pages_create_identity_page_table(pmm_vtable_t* ppm, size_t total_me
     // For identity mapping, create 1GB block mappings in L1 tables
     for (unsigned long block = 0; block < blocks_needed; block++) {
         // Allocate L1 table for this 512GB block
-        unsigned long* l1_table = ppm->alloc_phys(0);
+        unsigned long* l1_table = pmm_alloc_phys(0);
         if (!l1_table) {
           return 0;
         }

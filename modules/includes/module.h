@@ -7,22 +7,24 @@
 #define __MAIN__
 
 #define vtable(type) struct type ___table;
-#define start(func_vtable_init, func_init)        \
+#define start(func_vtable_init, func_fetch, func_init)        \
 void func_vtable_init(typeof(___table)* table);   \
-void func_init(kernel_vtable_t* vtable);          \
+void func_init(kernel_vtable_t* vtable);         \
+void func_fetch(kernel_vtable_t* vtable);         \
 virt_addr_t __load_addr__ = 0;                    \
 static serial_debug_vtable_t* debug_serial = 0;         \
-void ___init(kernel_vtable_t* vtable, virt_addr_t load)   \
+void ___fetch(kernel_vtable_t* vtable, virt_addr_t load)   \
 {                                                         \
   __load_addr__ = load;                                   \
   debug_serial = (serial_debug_vtable_t*)vtable->find_module_vtable_by_type(MODULE_SERIAL_DEBUG); \
-  func_init(vtable);                                      \
+  func_fetch(vtable);                                      \
 }                                                         \
 __attribute__((section(".text._entry")))          \
 typeof(___table)* _entry()                        \
 {                                                 \
   func_vtable_init(&___table);                    \
-  ___table.init = ___init;                      \
+  ___table.init = func_init;                      \
+  ___table.fetch = ___fetch;  \
   return &___table;                               \
 }
 

@@ -1,5 +1,6 @@
 #ifndef BLK_DEV_H
 #define BLK_DEV_H
+
 #include "modules/structures/blk_dev.h"
 #include "module_vtables.h"
 
@@ -11,11 +12,13 @@
 #define CONCAT(a, b) a##b
 #define CONCAT_EXPAND(a, b) CONCAT(a, b)
 
+#define GLOBAL __attribute__((visibility("hidden")))
+
 #ifdef __MAIN__
 
 #define __BLK_DEV__DEF(prefix) \
-__attribute__((visibility("hidden"))) void* (*CONCAT_EXPAND(prefix, _read_sectors))( uint32_t, uint32_t ) = 0; \
-__attribute__((visibility("hidden"))) void (*CONCAT_EXPAND(prefix, _write_sectors))( uint32_t, uint32_t, void* ) = 0; \
+GLOBAL void* (*CONCAT_EXPAND(prefix, _read_sectors))( uint32_t, uint32_t ) = 0; \
+GLOBAL void (*CONCAT_EXPAND(prefix, _write_sectors))( uint32_t, uint32_t, void* ) = 0; \
 \
 static void blk_dev_fetch(kernel_vtable_t *kvtable){\
 	blk_dev_vtable_t* module = (blk_dev_vtable_t*)kvtable->find_module_vtable_by_type(MODULE_BLK_DEV);\
@@ -29,12 +32,14 @@ __BLK_DEV__DEF(BLK_DEV)
 #else
 
 #define __BLK_DEV__DEF(prefix) \
-__attribute__((visibility("hidden"))) extern void* (*CONCAT_EXPAND(prefix, _read_sectors))( uint32_t, uint32_t ); \
-__attribute__((visibility("hidden"))) extern void (*CONCAT_EXPAND(prefix, _write_sectors))( uint32_t, uint32_t, void* ); \
+GLOBAL extern void* (*CONCAT_EXPAND(prefix, _read_sectors))( uint32_t, uint32_t ); \
+GLOBAL extern void (*CONCAT_EXPAND(prefix, _write_sectors))( uint32_t, uint32_t, void* ); \
 
 
 __BLK_DEV__DEF(BLK_DEV) 
+#undef GLOBAL
 #undef __BLK_DEV__DEF
+#undef BLK_DEV
 
 #endif
 #endif

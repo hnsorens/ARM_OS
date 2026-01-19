@@ -2,38 +2,52 @@
 #include "module.h"
 #include "heap.h"
 
+#include "module_types.h"
 #include "modules/pmm.h"
+#include "modules/str.h"
+
+#define debug "KMM"
 
 vtable(kmm_vtable_t);
-start(init, kmm_init);
+start(init, kmm_fetch, kmm_init);
 
 heap_t heap;
 
-virt_addr_t kmalloc(unsigned long size)
+void* kmalloc(unsigned long size)
 {
-  return heap_malloc(&heap, size);
+  return (void*)heap_malloc(&heap, size);
 }
 
-virt_addr_t kcalloc(unsigned long num, unsigned long size)
+void* kcalloc(unsigned long num, unsigned long size)
 {
-  return heap_calloc(&heap, num, size);
+  return (void*)heap_calloc(&heap, num, size);
 }
 
-virt_addr_t krealloc(virt_addr_t ptr, unsigned long new_size)
+void* krealloc(void* ptr, unsigned long new_size)
 {
-  return heap_realloc(&heap, ptr, new_size);
+  return (void*)heap_realloc(&heap, (unsigned long)ptr, new_size);
 }
 
-void kfree(virt_addr_t ptr)
+void kfree(void* ptr)
 {
-  heap_free(&heap, ptr);
+  heap_free(&heap, (unsigned long)ptr);
 }
 
-void kmm_init(kernel_vtable_t* kvtable)
+void kmm_fetch(kernel_vtable_t *kvtable)
 {
-  // pmm_vtable_t *ppm = (pmm_vtable_t*)kvtable->find_module_vtable_by_type(MODULE_PMM);
+  DEBUG("Fetch");
   pmm_fetch(kvtable);
+  str_fetch(kvtable);
+}
+
+void kmm_init(kernel_vtable_t *kvtable)
+{
+  DEBUG("Init");
+  // pmm_vtable_t *ppm = (pmm_vtable_t*)kvtable->find_module_vtable_by_type(MODULE_PMM);
   heap_init(&heap, 0x40000000000, 0x100000);
+  DEBUG(
+    "DONE"
+  );
 }
 
 void init(kmm_vtable_t* vtable)

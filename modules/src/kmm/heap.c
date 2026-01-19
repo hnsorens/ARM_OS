@@ -2,31 +2,10 @@
 
 #include "module_debug.h"
 #include "modules/pmm.h"
+#include "modules/str.h"
 
 #define ALIGNMENT 8
 #define ALIGN(size) (((size) + (ALIGNMENT - 1)) & ~(ALIGNMENT - 1))
-
-void* memset(void* ptr, int value, unsigned long num) {
-    unsigned char* p = (unsigned char*)ptr;
-    unsigned char byte_value = (unsigned char)value;
-    
-    for (unsigned long i = 0; i < num; i++) {
-        p[i] = byte_value;
-    }
-    
-    return ptr;
-}
-
-unsigned long memcpy(unsigned long dest, const unsigned long src, unsigned long num) {
-    unsigned char* d = (unsigned char*)dest;
-    const unsigned char* s = (const unsigned char*)src;
-    
-    for (unsigned long i = 0; i < num; i++) {
-        d[i] = s[i];
-    }
-    
-    return (unsigned long)dest;
-}
 
 static block_header_t *find_free_block(heap_t* heap, unsigned long size)
 {
@@ -158,7 +137,6 @@ void heap_init(heap_t* heap, unsigned long heap_base, unsigned long heap_size)
   heap->end = heap_base + heap_size;
 
   pmm_alloc_virt_kernel(heap->start, heap_size);
-  
 
   block_header_t* first_block = (block_header_t*)heap_base;
   first_block->size = heap_size - sizeof(block_header_t);
@@ -244,7 +222,7 @@ unsigned long heap_calloc(heap_t* heap, unsigned long num, unsigned long size)
 
   if (ptr)
   {
-    memset((void*)ptr, 0, total_size);
+    str_memset((void*)ptr, 0, total_size);
   }
 
   return ptr;
@@ -315,7 +293,7 @@ unsigned long heap_realloc(heap_t* heap, unsigned long ptr, unsigned long new_si
   unsigned long new_ptr = heap_malloc(heap, new_size);
   if (new_ptr) {
       unsigned long copy_size = (block->size < new_size) ? block->size : new_size;
-      memcpy(new_ptr, ptr, copy_size);
+      str_memcpy((void*)new_ptr, (void*)ptr, copy_size);
       heap_free(heap, ptr);
   }
   

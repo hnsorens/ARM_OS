@@ -2,6 +2,9 @@
 
 #include "module.h"
 
+#include "modules/str.h"
+#include "modules/kmm.h"
+
 vtable(ext2_vtable_t);
 start(init, ext2_init);
 
@@ -18,158 +21,6 @@ start(init, ext2_init);
 uint32_t time(uint32_t time)
 {
     return time;
-}
-
-int strlen(const char* str)
-{
-    int len = 0;
-    while (str[len])
-        len++;
-    return len;
-}
-
-int strlen16(const uint16_t* str)
-{
-    int len = 0;
-    while (str[len])
-        len++;
-    return len;
-}
-
-char* strcpy(char* dest, const char* src)
-{
-    int i = 0;
-    while ((dest[i] = src[i]))
-        i++;
-    return dest;
-}
-
-uint16_t* strcpy16(uint16_t* dest, const uint16_t* src)
-{
-    int i = 0;
-    while ((dest[i] = src[i]))
-        i++;
-    return dest;
-}
-
-char* strncpy(char* dest, const char* src, int n)
-{
-    int i = 0;
-    while (i < n && src[i])
-    {
-        dest[i] = src[i];
-        i++;
-    }
-    while (i < n)
-        dest[i++] = '\0';
-    return dest;
-}
-
-int strcmp(const char* s1, const char* s2)
-{
-    while (*s1 && (*s1 == *s2))
-    {
-        s1++;
-        s2++;
-    }
-    return *(unsigned char*)s1 - *(unsigned char*)s2;
-}
-
-int strcmp_8_16(const char* s1, const uint16_t* s2)
-{
-    while (*s1 && (*s1 == *s2))
-    {
-        s1++;
-        s2++;
-    }
-    return *s1 - *s2;
-}
-
-int strcmp_16_8(const uint16_t* s1, const char* s2)
-{
-    while ((char)*s1 && ((char)*s1 == *s2))
-    {
-        s1++;
-        s2++;
-    }
-    return *s1 - *s2;
-}
-
-int strncmp(const char* s1, const char* s2, int n)
-{
-    while (n-- > 0 && *s1 && (*s1 == *s2))
-    {
-        s1++;
-        s2++;
-    }
-    return n < 0 ? 0 : *s1 - *s2;
-}
-
-char* strcat(char* dest, const char* src)
-{
-    int i = 0;
-    int j = 0;
-    while (dest[i])
-        i++;
-    while ((dest[i++] = src[j++]))
-        ;
-    return dest;
-}
-
-char* strncat(char* dest, const char* src, int n)
-{
-    int i = 0;
-    int j = 0;
-    while (dest[i])
-        i++;
-    while (j < n && src[j])
-    {
-        dest[i++] = src[j++];
-    }
-    dest[i] = '\0';
-    return dest;
-}
-
-char* strchr(const char* str, char c)
-{
-    while (*str)
-    {
-        if (*str == c)
-            return str;
-        str++;
-    }
-    return c == '\0' ? str : 0;
-}
-
-char* strrchr(const char* str, char c)
-{
-    const char* last = 0;
-    while (*str)
-    {
-        if (*str == c)
-            last = str;
-        str++;
-    }
-    return c == '\0' ? str : last;
-}
-
-char* strstr(const char* haystack, const char* needle)
-{
-    if (!*needle)
-        return haystack;
-    for (; *haystack; haystack++)
-    {
-        const char* h = haystack;
-        const char* n = needle;
-        while (*h && *n && (*h == *n))
-        {
-            h++;
-            n++;
-        }
-        if (!*n)
-            return haystack;
-    }
-    return 0;
 }
 
 // Internal functions
@@ -191,11 +42,12 @@ static uint32_t count_blocks_needed(ext2_fs_t* fs, uint32_t size);
 static int ensure_blocks_allocated(ext2_fs_t* fs, struct ext2_inode* inode, uint32_t required_blocks);
 
 void init(ext2_vtable_t *vtable) {
-
+    
 }
 
 void ext2_init(kernel_vtable_t *kvtable) {
-
+    kmm_fetch(kvtable);
+    str_fetch(kvtable);
 }
 
 // Initialize filesystem
@@ -205,7 +57,7 @@ int ext2_create(ext2_fs_t* fs, void* (*read_fn)(uint32_t, uint32_t), void (*writ
     fs->write_sectors = write_fn;
     fs->start_sector = start;
     fs->end_sector = end;
-    fs->block_buffer = kmalloc(SECTOR_SIZE * 2);
+    fs->block_buffer = kmm_kmalloc(SECTOR_SIZE * 2);
 
     // Read superblock (at offset 1024)
     void* superblock_sector = fs->read_sectors(fs->start_sector + 2, 2);
@@ -213,8 +65,8 @@ int ext2_create(ext2_fs_t* fs, void* (*read_fn)(uint32_t, uint32_t), void (*writ
 
     if (sb->magic != EXT2_SIGNATURE)
     {
-        kfree(fs->block_buffer);
-        kfree(superblock_sector);
+        kmm_kfree(fs->block_buffer);
+        kmm_kfree(superblock_sector);
         return -1;
     }
 
@@ -228,13 +80,13 @@ int ext2_create(ext2_fs_t* fs, void* (*read_fn)(uint32_t, uint32_t), void (*writ
     fs->bgdt_block = (sb->first_data_block == 0) ? 1 : sb->first_data_block + 1;
     fs->inode_size = (sb->rev_level >= 1) ? sb->inode_size : 128;
 
-    kfree(superblock_sector);
+    kmm_kfree(superblock_sector);
     return 0;
 }
 
 void ext2_cleanup(ext2_fs_t* fs)
 {
-    kfree(fs->block_buffer);
+    kmm_kfree(fs->block_buffer);
 }
 
 // File operations
@@ -332,13 +184,13 @@ long ext2_file_read2(ext2_fs_t* fs, file_descriptor_t* file, void* buf, size_t c
 
         if (block_num == 0)
         { // Sparse block
-            kmemset((uint8_t*)buf + bytes_read, 0, to_read);
+            str_memset((uint8_t*)buf + bytes_read, 0, to_read);
         }
         else
         {
             void* block_data = read_block(fs, block_num);
-            kmemcpy((uint8_t*)buf + bytes_read, (uint8_t*)block_data + block_offset, to_read);
-            kfree(block_data);
+            str_memcpy((uint8_t*)buf + bytes_read, (uint8_t*)block_data + block_offset, to_read);
+            kmm_kfree(block_data);
         }
 
         bytes_read += to_read;
@@ -382,13 +234,13 @@ long ext2_file_read(ext2_fs_t* fs, file_descriptor_t* file, void* buf, size_t co
 
         if (block_num == 0)
         { // Sparse block
-            kmemset((uint8_t*)buf + bytes_read, 0, to_read);
+            str_memset((uint8_t*)buf + bytes_read, 0, to_read);
         }
         else
         {
             void* block_data = read_block(fs, block_num);
-            kmemcpy((uint8_t*)buf + bytes_read, (uint8_t*)block_data + block_offset, to_read);
-            kfree(block_data);
+            str_memcpy((uint8_t*)buf + bytes_read, (uint8_t*)block_data + block_offset, to_read);
+            kmm_kfree(block_data);
         }
 
         bytes_read += to_read;
@@ -438,9 +290,9 @@ long ext2_file_write(ext2_fs_t* fs, file_descriptor_t* file, const void* buf, si
         }
 
         void* block_data = read_block(fs, block_num);
-        kmemcpy((uint8_t*)block_data + block_offset, (uint8_t*)buf + bytes_written, to_write);
+        str_memcpy((uint8_t*)block_data + block_offset, (uint8_t*)buf + bytes_written, to_write);
         write_block(fs, block_num, block_data);
-        kfree(block_data);
+        kmm_kfree(block_data);
 
         bytes_written += to_write;
         file->pos += to_write;
@@ -519,11 +371,11 @@ int ext2_file_truncate(ext2_fs_t* fs, file_descriptor_t* file, size_t length)
         if (new_blocks < old_blocks)
         {
             uint32_t blocks_to_free = old_blocks - new_blocks;
-            uint32_t* blocks = kmalloc(blocks_to_free * sizeof(uint32_t));
+            uint32_t* blocks = kmm_kmalloc(blocks_to_free * sizeof(uint32_t));
 
             if (read_block_pointers(fs, file->inode, new_blocks, blocks, blocks_to_free) != blocks_to_free)
             {
-                kfree(blocks);
+                kmm_kfree(blocks);
                 return -1;
             }
 
@@ -535,7 +387,7 @@ int ext2_file_truncate(ext2_fs_t* fs, file_descriptor_t* file, size_t length)
                 }
             }
 
-            kfree(blocks);
+            kmm_kfree(blocks);
 
             // Zero out the pointers
             uint32_t zero = 0;
@@ -591,11 +443,11 @@ int ext2_file_delete(ext2_fs_t* fs, uint32_t dir_inode, const char* filename)
 
     // Free all blocks
     uint32_t blocks_count = count_blocks_needed(fs, inode.size);
-    uint32_t* blocks = kmalloc(blocks_count * sizeof(uint32_t));
+    uint32_t* blocks = kmm_kmalloc(blocks_count * sizeof(uint32_t));
 
     if (read_block_pointers(fs, &inode, 0, blocks, blocks_count) != blocks_count)
     {
-        kfree(blocks);
+        kmm_kfree(blocks);
         return -1;
     }
 
@@ -607,7 +459,7 @@ int ext2_file_delete(ext2_fs_t* fs, uint32_t dir_inode, const char* filename)
         }
     }
 
-    kfree(blocks);
+    kmm_kfree(blocks);
 
     // Free inode
     if (free_inode(fs, file_inode) != 0)
@@ -736,11 +588,11 @@ int ext2_dir_delete(ext2_fs_t* fs, uint32_t parent_inode, const char* dirname)
 
     // Free all blocks
     uint32_t blocks_count = count_blocks_needed(fs, inode.size);
-    uint32_t* blocks = kmalloc(blocks_count * sizeof(uint32_t));
+    uint32_t* blocks = kmm_kmalloc(blocks_count * sizeof(uint32_t));
 
     if (read_block_pointers(fs, &inode, 0, blocks, blocks_count) != blocks_count)
     {
-        kfree(blocks);
+        kmm_kfree(blocks);
         return -1;
     }
 
@@ -752,7 +604,7 @@ int ext2_dir_delete(ext2_fs_t* fs, uint32_t parent_inode, const char* dirname)
         }
     }
 
-    kfree(blocks);
+    kmm_kfree(blocks);
 
     // Free inode
     if (free_inode(fs, dir_inode) != 0)
@@ -787,7 +639,7 @@ int ext2_dir_count_entries(ext2_fs_t* fs, uint32_t dir_inode)
     }
 
     int count = 0;
-    uint8_t* buffer = kmalloc(fs->block_size);
+    uint8_t* buffer = kmm_kmalloc(fs->block_size);
     uint32_t offset = 0;
 
     while (offset < inode.size)
@@ -797,20 +649,20 @@ int ext2_dir_count_entries(ext2_fs_t* fs, uint32_t dir_inode)
 
         if (read_block_pointers(fs, &inode, block_idx, &block_num, 1) != 1)
         {
-            kfree(buffer);
+            kmm_kfree(buffer);
             return -1;
         }
 
         if (block_num == 0)
         {
-            kfree(buffer);
+            kmm_kfree(buffer);
             return -1;
         }
 
         void* block_data = read_block(fs, block_num);
         uint32_t blockSize = fs->block_size;
-        kmemcpy(buffer, block_data, fs->block_size);
-        kfree(block_data);
+        str_memcpy(buffer, block_data, fs->block_size);
+        kmm_kfree(block_data);
 
         uint32_t pos = 0;
         while (pos < fs->block_size)
@@ -832,7 +684,7 @@ int ext2_dir_count_entries(ext2_fs_t* fs, uint32_t dir_inode)
         offset += fs->block_size;
     }
 
-    kfree(buffer);
+    kmm_kfree(buffer);
     return count;
 }
 
@@ -849,7 +701,7 @@ int ext2_dir_iter_start(ext2_fs_t* fs, ext2_dirent_iter_t* iter, uint32_t inode_
         return -1;
     }
 
-    iter->buffer = kmalloc(fs->block_size);
+    iter->buffer = kmm_kmalloc(fs->block_size);
     iter->pos = 0;
     iter->block_remaining = 0;
     iter->current_block = 0;
@@ -884,13 +736,13 @@ int ext2_dir_iter_next(ext2_fs_t* fs, ext2_dirent_iter_t* iter, ext2_dirent_t** 
 
             if (block_num == 0)
             { // Sparse block
-                kmemset(iter->buffer, 0, fs->block_size);
+                str_memset(iter->buffer, 0, fs->block_size);
             }
             else
             {
                 void* block_data = read_block(fs, block_num);
-                kmemcpy(iter->buffer, block_data, fs->block_size);
-                kfree(block_data);
+                str_memcpy(iter->buffer, block_data, fs->block_size);
+                kmm_kfree(block_data);
             }
 
             iter->pos = 0;
@@ -920,7 +772,7 @@ int ext2_dir_iter_next(ext2_fs_t* fs, ext2_dirent_iter_t* iter, ext2_dirent_t** 
 
 void ext2_dir_iter_end(ext2_dirent_iter_t* iter)
 {
-    kfree(iter->buffer);
+    kmm_kfree(iter->buffer);
 }
 
 int ext2_stat(ext2_fs_t* fs, uint32_t inode_num, ext2_inode* inode_out)
@@ -1018,8 +870,8 @@ int read_inode(ext2_fs_t* fs, uint32_t inode_num, struct ext2_inode* inode)
 
     struct ext2_bg_desc bg_desc;
     void* bgdt_data = read_block(fs, fs->bgdt_block + group / (fs->block_size / sizeof(struct ext2_bg_desc)));
-    kmemcpy(&bg_desc, (uint8_t*)bgdt_data + (group % (fs->block_size / sizeof(struct ext2_bg_desc))) * sizeof(struct ext2_bg_desc), sizeof(struct ext2_bg_desc));
-    kfree(bgdt_data);
+    str_memcpy(&bg_desc, (uint8_t*)bgdt_data + (group % (fs->block_size / sizeof(struct ext2_bg_desc))) * sizeof(struct ext2_bg_desc), sizeof(struct ext2_bg_desc));
+    kmm_kfree(bgdt_data);
 
     uint32_t inode_table_block = bg_desc.inode_table;
     uint32_t inode_offset = index * fs->inode_size;
@@ -1027,8 +879,8 @@ int read_inode(ext2_fs_t* fs, uint32_t inode_num, struct ext2_inode* inode)
     uint32_t inode_block_offset = inode_offset % fs->block_size;
 
     void* block = read_block(fs, inode_block);
-    kmemcpy(inode, (uint8_t*)block + inode_block_offset, sizeof(struct ext2_inode));
-    kfree(block);
+    str_memcpy(inode, (uint8_t*)block + inode_block_offset, sizeof(struct ext2_inode));
+    kmm_kfree(block);
 
     return 0;
 }
@@ -1045,8 +897,8 @@ static int write_inode(ext2_fs_t* fs, uint32_t inode_num, struct ext2_inode* ino
 
     struct ext2_bg_desc bg_desc;
     void* bgdt_data = read_block(fs, fs->bgdt_block + group / (fs->block_size / sizeof(struct ext2_bg_desc)));
-    kmemcpy(&bg_desc, (uint8_t*)bgdt_data + (group % (fs->block_size / sizeof(struct ext2_bg_desc))) * sizeof(struct ext2_bg_desc), sizeof(struct ext2_bg_desc));
-    kfree(bgdt_data);
+    str_memcpy(&bg_desc, (uint8_t*)bgdt_data + (group % (fs->block_size / sizeof(struct ext2_bg_desc))) * sizeof(struct ext2_bg_desc), sizeof(struct ext2_bg_desc));
+    kmm_kfree(bgdt_data);
 
     uint32_t inode_table_block = bg_desc.inode_table;
     uint32_t inode_offset = index * fs->inode_size;
@@ -1054,9 +906,9 @@ static int write_inode(ext2_fs_t* fs, uint32_t inode_num, struct ext2_inode* ino
     uint32_t inode_block_offset = inode_offset % fs->block_size;
 
     void* block = read_block(fs, inode_block);
-    kmemcpy((uint8_t*)block + inode_block_offset, inode, sizeof(struct ext2_inode));
+    str_memcpy((uint8_t*)block + inode_block_offset, inode, sizeof(struct ext2_inode));
     write_block(fs, inode_block, block);
-    kfree(block);
+    kmm_kfree(block);
 
     return 0;
 }
@@ -1089,8 +941,8 @@ static uint32_t allocate_block(ext2_fs_t* fs)
     {
         struct ext2_bg_desc bg_desc;
         void* bgdt_data = read_block(fs, fs->bgdt_block + group / (fs->block_size / sizeof(struct ext2_bg_desc)));
-        kmemcpy(&bg_desc, (uint8_t*)bgdt_data + (group % (fs->block_size / sizeof(struct ext2_bg_desc))) * sizeof(struct ext2_bg_desc), sizeof(struct ext2_bg_desc));
-        kfree(bgdt_data);
+        str_memcpy(&bg_desc, (uint8_t*)bgdt_data + (group % (fs->block_size / sizeof(struct ext2_bg_desc))) * sizeof(struct ext2_bg_desc), sizeof(struct ext2_bg_desc));
+        kmm_kfree(bgdt_data);
 
         if (bg_desc.free_blocks_count == 0)
         {
@@ -1115,23 +967,23 @@ static uint32_t allocate_block(ext2_fs_t* fs)
                 // Update block group descriptor
                 bg_desc.free_blocks_count--;
                 void* bgdt_block = read_block(fs, fs->bgdt_block + group / (fs->block_size / sizeof(struct ext2_bg_desc)));
-                kmemcpy((uint8_t*)bgdt_block + (group % (fs->block_size / sizeof(struct ext2_bg_desc))) * sizeof(struct ext2_bg_desc), &bg_desc, sizeof(struct ext2_bg_desc));
+                str_memcpy((uint8_t*)bgdt_block + (group % (fs->block_size / sizeof(struct ext2_bg_desc))) * sizeof(struct ext2_bg_desc), &bg_desc, sizeof(struct ext2_bg_desc));
                 write_block(fs, fs->bgdt_block + group / (fs->block_size / sizeof(struct ext2_bg_desc)), bgdt_block);
-                kfree(bgdt_block);
+                kmm_kfree(bgdt_block);
 
                 // Update superblock
                 void* superblock_sector = fs->read_sectors(fs->start_sector + 2, 2);
                 struct ext2_superblock* sb = (struct ext2_superblock*)((uint8_t*)superblock_sector + 1024 % SECTOR_SIZE);
                 sb->free_blocks_count--;
                 fs->write_sectors(fs->start_sector + 2, 2, superblock_sector);
-                kfree(superblock_sector);
+                kmm_kfree(superblock_sector);
 
-                kfree(bitmap_block);
+                kmm_kfree(bitmap_block);
                 return group * fs->blocks_per_group + i + fs->first_data_block;
             }
         }
 
-        kfree(bitmap_block);
+        kmm_kfree(bitmap_block);
     }
 
     return 0; // No free blocks
@@ -1149,8 +1001,8 @@ static int free_block(ext2_fs_t* fs, uint32_t block_num)
 
     struct ext2_bg_desc bg_desc;
     void* bgdt_data = read_block(fs, fs->bgdt_block + group / (fs->block_size / sizeof(struct ext2_bg_desc)));
-    kmemcpy(&bg_desc, (uint8_t*)bgdt_data + (group % (fs->block_size / sizeof(struct ext2_bg_desc))) * sizeof(struct ext2_bg_desc), sizeof(struct ext2_bg_desc));
-    kfree(bgdt_data);
+    str_memcpy(&bg_desc, (uint8_t*)bgdt_data + (group % (fs->block_size / sizeof(struct ext2_bg_desc))) * sizeof(struct ext2_bg_desc), sizeof(struct ext2_bg_desc));
+    kmm_kfree(bgdt_data);
 
     // Read block bitmap
     void* bitmap_block = read_block(fs, bg_desc.block_bitmap);
@@ -1159,7 +1011,7 @@ static int free_block(ext2_fs_t* fs, uint32_t block_num)
     // Check if block is already free
     if ((bitmap[index / 8] & (1 << (index % 8))) == 0)
     {
-        kfree(bitmap_block);
+        kmm_kfree(bitmap_block);
         return 0;
     }
 
@@ -1170,18 +1022,18 @@ static int free_block(ext2_fs_t* fs, uint32_t block_num)
     // Update block group descriptor
     bg_desc.free_blocks_count++;
     void* bgdt_block = read_block(fs, fs->bgdt_block + group / (fs->block_size / sizeof(struct ext2_bg_desc)));
-    kmemcpy((uint8_t*)bgdt_block + (group % (fs->block_size / sizeof(struct ext2_bg_desc))) * sizeof(struct ext2_bg_desc), &bg_desc, sizeof(struct ext2_bg_desc));
+    str_memcpy((uint8_t*)bgdt_block + (group % (fs->block_size / sizeof(struct ext2_bg_desc))) * sizeof(struct ext2_bg_desc), &bg_desc, sizeof(struct ext2_bg_desc));
     write_block(fs, fs->bgdt_block + group / (fs->block_size / sizeof(struct ext2_bg_desc)), bgdt_block);
-    kfree(bgdt_block);
+    kmm_kfree(bgdt_block);
 
     // Update superblock
     void* superblock_sector = fs->read_sectors(fs->start_sector + 2, 2);
     struct ext2_superblock* sb = (struct ext2_superblock*)((uint8_t*)superblock_sector + 1024 % SECTOR_SIZE);
     sb->free_blocks_count++;
     fs->write_sectors(fs->start_sector + 2, 2, superblock_sector);
-    kfree(superblock_sector);
+    kmm_kfree(superblock_sector);
 
-    kfree(bitmap_block);
+    kmm_kfree(bitmap_block);
     return 0;
 }
 
@@ -1192,8 +1044,8 @@ static uint32_t allocate_inode(ext2_fs_t* fs, int is_directory)
     {
         struct ext2_bg_desc bg_desc;
         void* bgdt_data = read_block(fs, fs->bgdt_block + group / (fs->block_size / sizeof(struct ext2_bg_desc)));
-        kmemcpy(&bg_desc, (uint8_t*)bgdt_data + (group % (fs->block_size / sizeof(struct ext2_bg_desc))) * sizeof(struct ext2_bg_desc), sizeof(struct ext2_bg_desc));
-        kfree(bgdt_data);
+        str_memcpy(&bg_desc, (uint8_t*)bgdt_data + (group % (fs->block_size / sizeof(struct ext2_bg_desc))) * sizeof(struct ext2_bg_desc), sizeof(struct ext2_bg_desc));
+        kmm_kfree(bgdt_data);
 
         if (bg_desc.free_inodes_count == 0)
         {
@@ -1224,23 +1076,23 @@ static uint32_t allocate_inode(ext2_fs_t* fs, int is_directory)
                 }
 
                 void* bgdt_block = read_block(fs, fs->bgdt_block + group / (fs->block_size / sizeof(struct ext2_bg_desc)));
-                kmemcpy((uint8_t*)bgdt_block + (group % (fs->block_size / sizeof(struct ext2_bg_desc))) * sizeof(struct ext2_bg_desc), &bg_desc, sizeof(struct ext2_bg_desc));
+                str_memcpy((uint8_t*)bgdt_block + (group % (fs->block_size / sizeof(struct ext2_bg_desc))) * sizeof(struct ext2_bg_desc), &bg_desc, sizeof(struct ext2_bg_desc));
                 write_block(fs, fs->bgdt_block + group / (fs->block_size / sizeof(struct ext2_bg_desc)), bgdt_block);
-                kfree(bgdt_block);
+                kmm_kfree(bgdt_block);
 
                 // Update superblock
                 void* superblock_sector = fs->read_sectors(fs->start_sector + 2, 2);
                 struct ext2_superblock* sb = (struct ext2_superblock*)((uint8_t*)superblock_sector + 1024 % SECTOR_SIZE);
                 sb->free_inodes_count--;
                 fs->write_sectors(fs->start_sector + 2, 2, superblock_sector);
-                kfree(superblock_sector);
+                kmm_kfree(superblock_sector);
 
-                kfree(bitmap_block);
+                kmm_kfree(bitmap_block);
                 return group * fs->inodes_per_group + i + 1;
             }
         }
 
-        kfree(bitmap_block);
+        kmm_kfree(bitmap_block);
     }
 
     return 0; // No free inodes
@@ -1258,8 +1110,8 @@ static int free_inode(ext2_fs_t* fs, uint32_t inode_num)
 
     struct ext2_bg_desc bg_desc;
     void* bgdt_data = read_block(fs, fs->bgdt_block + group / (fs->block_size / sizeof(struct ext2_bg_desc)));
-    kmemcpy(&bg_desc, (uint8_t*)bgdt_data + (group % (fs->block_size / sizeof(struct ext2_bg_desc))) * sizeof(struct ext2_bg_desc), sizeof(struct ext2_bg_desc));
-    kfree(bgdt_data);
+    str_memcpy(&bg_desc, (uint8_t*)bgdt_data + (group % (fs->block_size / sizeof(struct ext2_bg_desc))) * sizeof(struct ext2_bg_desc), sizeof(struct ext2_bg_desc));
+    kmm_kfree(bgdt_data);
 
     // Read inode bitmap
     void* bitmap_block = read_block(fs, bg_desc.inode_bitmap);
@@ -1268,7 +1120,7 @@ static int free_inode(ext2_fs_t* fs, uint32_t inode_num)
     // Check if inode is already free
     if ((bitmap[index / 8] & (1 << (index % 8))) == 0)
     {
-        kfree(bitmap_block);
+        kmm_kfree(bitmap_block);
         return 0;
     }
 
@@ -1279,18 +1131,18 @@ static int free_inode(ext2_fs_t* fs, uint32_t inode_num)
     // Update block group descriptor
     bg_desc.free_inodes_count++;
     void* bgdt_block = read_block(fs, fs->bgdt_block + group / (fs->block_size / sizeof(struct ext2_bg_desc)));
-    kmemcpy((uint8_t*)bgdt_block + (group % (fs->block_size / sizeof(struct ext2_bg_desc))) * sizeof(struct ext2_bg_desc), &bg_desc, sizeof(struct ext2_bg_desc));
+    str_memcpy((uint8_t*)bgdt_block + (group % (fs->block_size / sizeof(struct ext2_bg_desc))) * sizeof(struct ext2_bg_desc), &bg_desc, sizeof(struct ext2_bg_desc));
     write_block(fs, fs->bgdt_block + group / (fs->block_size / sizeof(struct ext2_bg_desc)), bgdt_block);
-    kfree(bgdt_block);
+    kmm_kfree(bgdt_block);
 
     // Update superblock
     void* superblock_sector = fs->read_sectors(fs->start_sector + 2, 2);
     struct ext2_superblock* sb = (struct ext2_superblock*)((uint8_t*)superblock_sector + 1024 % SECTOR_SIZE);
     sb->free_inodes_count++;
     fs->write_sectors(fs->start_sector + 2, 2, superblock_sector);
-    kfree(superblock_sector);
+    kmm_kfree(superblock_sector);
 
-    kfree(bitmap_block);
+    kmm_kfree(bitmap_block);
     return 0;
 }
 
@@ -1307,8 +1159,8 @@ static int find_entry(ext2_fs_t* fs, uint32_t dir_inode, const char* name, uint3
         return -1;
     }
 
-    uint32_t name_len = strlen(name);
-    uint8_t* buffer = kmalloc(fs->block_size);
+    uint32_t name_len = str_strlen(name);
+    uint8_t* buffer = kmm_kmalloc(fs->block_size);
     uint32_t offset = 0;
     while (offset < inode.size)
     {
@@ -1318,19 +1170,19 @@ static int find_entry(ext2_fs_t* fs, uint32_t dir_inode, const char* name, uint3
         uint32_t block_num;
         if (read_block_pointers(fs, &inode, block_idx, &block_num, 1) != 1)
         {
-            kfree(buffer);
+            kmm_kfree(buffer);
             return -1;
         }
 
         if (block_num == 0)
         {
-            kfree(buffer);
+            kmm_kfree(buffer);
             return -1;
         }
 
         void* block_data = read_block(fs, block_num);
-        kmemcpy(buffer, block_data, fs->block_size);
-        kfree(block_data);
+        str_memcpy(buffer, block_data, fs->block_size);
+        kmm_kfree(block_data);
 
         uint32_t pos = 0;
         while (pos < fs->block_size)
@@ -1341,14 +1193,14 @@ static int find_entry(ext2_fs_t* fs, uint32_t dir_inode, const char* name, uint3
                 break;
             }
 
-            if (entry->inode != 0 && entry->name_len == name_len && kmemcmp(entry->name, name, name_len) == 0)
+            if (entry->inode != 0 && entry->name_len == name_len && str_memcmp(entry->name, name, name_len) == 0)
             {
                 *inode_out = entry->inode;
                 if (file_type)
                 {
                     *file_type = entry->file_type;
                 }
-                kfree(buffer);
+                kmm_kfree(buffer);
                 return 0;
             }
 
@@ -1358,7 +1210,7 @@ static int find_entry(ext2_fs_t* fs, uint32_t dir_inode, const char* name, uint3
         offset += fs->block_size;
     }
 
-    kfree(buffer);
+    kmm_kfree(buffer);
     return -1;
 }
 
@@ -1374,9 +1226,9 @@ static int add_entry(ext2_fs_t* fs, uint32_t dir_inode, const char* name, uint32
         return -1;
     }
 
-    uint32_t name_len = strlen(name);
+    uint32_t name_len = str_strlen(name);
     uint32_t entry_len = sizeof(ext2_dirent_t) + ((name_len + 3) & ~3); // Align to 4 bytes
-    uint8_t* buffer = kmalloc(fs->block_size);
+    uint8_t* buffer = kmm_kmalloc(fs->block_size);
     uint32_t offset = 0;
 
     while (offset < inode.size)
@@ -1387,7 +1239,7 @@ static int add_entry(ext2_fs_t* fs, uint32_t dir_inode, const char* name, uint32
         uint32_t block_num;
         if (read_block_pointers(fs, &inode, block_idx, &block_num, 1) != 1)
         {
-            kfree(buffer);
+            kmm_kfree(buffer);
             return -1;
         }
 
@@ -1397,17 +1249,17 @@ static int add_entry(ext2_fs_t* fs, uint32_t dir_inode, const char* name, uint32
             block_num = allocate_block(fs);
             if (block_num == 0)
             {
-                kfree(buffer);
+                kmm_kfree(buffer);
                 return -1;
             }
 
-            kmemset(buffer, 0, fs->block_size);
+            str_memset(buffer, 0, fs->block_size);
             write_block(fs, block_num, buffer);
 
             if (write_block_pointers(fs, &inode, block_idx, &block_num, 1) != 1)
             {
                 free_block(fs, block_num);
-                kfree(buffer);
+                kmm_kfree(buffer);
                 return -1;
             }
 
@@ -1417,8 +1269,8 @@ static int add_entry(ext2_fs_t* fs, uint32_t dir_inode, const char* name, uint32
         else
         {
             void* block_data = read_block(fs, block_num);
-            kmemcpy(buffer, block_data, fs->block_size);
-            kfree(block_data);
+            str_memcpy(buffer, block_data, fs->block_size);
+            kmm_kfree(block_data);
         }
 
         uint32_t pos = 0;
@@ -1437,10 +1289,10 @@ static int add_entry(ext2_fs_t* fs, uint32_t dir_inode, const char* name, uint32
                     new_entry->rec_len = fs->block_size - pos;
                     new_entry->name_len = name_len;
                     new_entry->file_type = file_type;
-                    kmemcpy(new_entry->name, name, name_len);
+                    str_memcpy(new_entry->name, name, name_len);
 
                     write_block(fs, block_num, buffer);
-                    kfree(buffer);
+                    kmm_kfree(buffer);
                     return 0;
                 }
                 break;
@@ -1457,7 +1309,7 @@ static int add_entry(ext2_fs_t* fs, uint32_t dir_inode, const char* name, uint32
                     new_entry->rec_len = entry->rec_len;
                     new_entry->name_len = name_len;
                     new_entry->file_type = file_type;
-                    kmemcpy(new_entry->name, name, name_len);
+                    str_memcpy(new_entry->name, name, name_len);
 
                     // If there's remaining space, create a new unused entry
                     if (entry->rec_len > entry_len)
@@ -1469,7 +1321,7 @@ static int add_entry(ext2_fs_t* fs, uint32_t dir_inode, const char* name, uint32
                     }
 
                     write_block(fs, block_num, buffer);
-                    kfree(buffer);
+                    kmm_kfree(buffer);
                     return 0;
                 }
             }
@@ -1490,10 +1342,10 @@ static int add_entry(ext2_fs_t* fs, uint32_t dir_inode, const char* name, uint32
                     new_entry->rec_len = old_rec_len - entry->rec_len;
                     new_entry->name_len = name_len;
                     new_entry->file_type = file_type;
-                    kmemcpy(new_entry->name, name, name_len);
+                    str_memcpy(new_entry->name, name, name_len);
 
                     write_block(fs, block_num, buffer);
-                    kfree(buffer);
+                    kmm_kfree(buffer);
                     return 0;
                 }
             }
@@ -1508,17 +1360,17 @@ static int add_entry(ext2_fs_t* fs, uint32_t dir_inode, const char* name, uint32
     uint32_t new_block = allocate_block(fs);
     if (new_block == 0)
     {
-        kfree(buffer);
+        kmm_kfree(buffer);
         return -1;
     }
 
-    kmemset(buffer, 0, fs->block_size);
+    str_memset(buffer, 0, fs->block_size);
     ext2_dirent_t* new_entry = (ext2_dirent_t*)buffer;
     new_entry->inode = inode_num;
     new_entry->rec_len = fs->block_size;
     new_entry->name_len = name_len;
     new_entry->file_type = file_type;
-    kmemcpy(new_entry->name, name, name_len);
+    str_memcpy(new_entry->name, name, name_len);
 
     write_block(fs, new_block, buffer);
 
@@ -1527,14 +1379,14 @@ static int add_entry(ext2_fs_t* fs, uint32_t dir_inode, const char* name, uint32
     if (write_block_pointers(fs, &inode, block_idx, &new_block, 1) != 1)
     {
         free_block(fs, new_block);
-        kfree(buffer);
+        kmm_kfree(buffer);
         return -1;
     }
 
     inode.size += fs->block_size;
     write_inode(fs, dir_inode, &inode);
 
-    kfree(buffer);
+    kmm_kfree(buffer);
     return 0;
 }
 
@@ -1551,8 +1403,8 @@ static int remove_entry(ext2_fs_t* fs, uint32_t dir_inode, const char* name)
         return -1;
     }
 
-    uint32_t name_len = strlen(name);
-    uint8_t* buffer = kmalloc(fs->block_size);
+    uint32_t name_len = str_strlen(name);
+    uint8_t* buffer = kmm_kmalloc(fs->block_size);
     uint32_t offset = 0;
     ext2_dirent_t* prev_entry = NULL;
     uint32_t prev_pos = 0;
@@ -1565,19 +1417,19 @@ static int remove_entry(ext2_fs_t* fs, uint32_t dir_inode, const char* name)
         uint32_t block_num;
         if (read_block_pointers(fs, &inode, block_idx, &block_num, 1) != 1)
         {
-            kfree(buffer);
+            kmm_kfree(buffer);
             return -1;
         }
 
         if (block_num == 0)
         {
-            kfree(buffer);
+            kmm_kfree(buffer);
             return -1;
         }
 
         void* block_data = read_block(fs, block_num);
-        kmemcpy(buffer, block_data, fs->block_size);
-        kfree(block_data);
+        str_memcpy(buffer, block_data, fs->block_size);
+        kmm_kfree(block_data);
 
         uint32_t pos = 0;
         while (pos < fs->block_size)
@@ -1588,7 +1440,7 @@ static int remove_entry(ext2_fs_t* fs, uint32_t dir_inode, const char* name)
                 break;
             }
 
-            if (entry->inode != 0 && entry->name_len == name_len && kmemcmp(entry->name, name, name_len) == 0)
+            if (entry->inode != 0 && entry->name_len == name_len && str_memcmp(entry->name, name, name_len) == 0)
             {
                 // Found the entry to remove
                 entry->inode = 0;
@@ -1600,7 +1452,7 @@ static int remove_entry(ext2_fs_t* fs, uint32_t dir_inode, const char* name)
                 }
 
                 write_block(fs, block_num, buffer);
-                kfree(buffer);
+                kmm_kfree(buffer);
                 return 0;
             }
 
@@ -1612,7 +1464,7 @@ static int remove_entry(ext2_fs_t* fs, uint32_t dir_inode, const char* name)
         offset += fs->block_size;
     }
 
-    kfree(buffer);
+    kmm_kfree(buffer);
     return -1;
 }
 
@@ -1625,7 +1477,7 @@ static int read_block_pointers(ext2_fs_t* fs, struct ext2_inode* inode, uint32_t
     if (block_idx < 12)
     {
         uint32_t to_read = (count < 12 - block_idx) ? count : 12 - block_idx;
-        kmemcpy(blocks, &inode->block[block_idx], to_read * sizeof(uint32_t));
+        str_memcpy(blocks, &inode->block[block_idx], to_read * sizeof(uint32_t));
         blocks_read += to_read;
         block_idx += to_read;
         count -= to_read;
@@ -1638,8 +1490,8 @@ static int read_block_pointers(ext2_fs_t* fs, struct ext2_inode* inode, uint32_t
         uint32_t to_read = (count < ptrs_per_block - start) ? count : ptrs_per_block - start;
 
         uint32_t* indirect_block = read_block(fs, inode->block[12]);
-        kmemcpy(blocks + blocks_read, indirect_block + start, to_read * sizeof(uint32_t));
-        kfree(indirect_block);
+        str_memcpy(blocks + blocks_read, indirect_block + start, to_read * sizeof(uint32_t));
+        kmm_kfree(indirect_block);
 
         blocks_read += to_read;
         block_idx += to_read;
@@ -1659,13 +1511,13 @@ static int read_block_pointers(ext2_fs_t* fs, struct ext2_inode* inode, uint32_t
             uint32_t* second_indirect = read_block(fs, first_indirect[first_level]);
 
             uint32_t to_read = (count < ptrs_per_block - second_level) ? count : ptrs_per_block - second_level;
-            kmemcpy(blocks + blocks_read, second_indirect + second_level, to_read * sizeof(uint32_t));
+            str_memcpy(blocks + blocks_read, second_indirect + second_level, to_read * sizeof(uint32_t));
 
-            kfree(second_indirect);
+            kmm_kfree(second_indirect);
             blocks_read += to_read;
         }
 
-        kfree(first_indirect);
+        kmm_kfree(first_indirect);
     }
 
     return blocks_read;
@@ -1680,7 +1532,7 @@ static int write_block_pointers(ext2_fs_t* fs, struct ext2_inode* inode, uint32_
     if (block_idx < 12)
     {
         uint32_t to_write = (count < 12 - block_idx) ? count : 12 - block_idx;
-        kmemcpy(&inode->block[block_idx], blocks, to_write * sizeof(uint32_t));
+        str_memcpy(&inode->block[block_idx], blocks, to_write * sizeof(uint32_t));
         blocks_written += to_write;
         block_idx += to_write;
         count -= to_write;
@@ -1698,19 +1550,19 @@ static int write_block_pointers(ext2_fs_t* fs, struct ext2_inode* inode, uint32_
             }
 
             // Initialize indirect block with zeros
-            uint32_t* indirect_block = kmalloc(fs->block_size);
-            kmemset(indirect_block, 0, fs->block_size);
+            uint32_t* indirect_block = kmm_kmalloc(fs->block_size);
+            str_memset(indirect_block, 0, fs->block_size);
             write_block(fs, inode->block[12], indirect_block);
-            kfree(indirect_block);
+            kmm_kfree(indirect_block);
         }
 
         uint32_t start = block_idx - 12;
         uint32_t to_write = (count < ptrs_per_block - start) ? count : ptrs_per_block - start;
 
         uint32_t* indirect_block = read_block(fs, inode->block[12]);
-        kmemcpy(indirect_block + start, blocks + blocks_written, to_write * sizeof(uint32_t));
+        str_memcpy(indirect_block + start, blocks + blocks_written, to_write * sizeof(uint32_t));
         write_block(fs, inode->block[12], indirect_block);
-        kfree(indirect_block);
+        kmm_kfree(indirect_block);
 
         blocks_written += to_write;
         block_idx += to_write;
@@ -1729,10 +1581,10 @@ static int write_block_pointers(ext2_fs_t* fs, struct ext2_inode* inode, uint32_
             }
 
             // Initialize double indirect block with zeros
-            uint32_t* first_indirect = kmalloc(fs->block_size);
-            kmemset(first_indirect, 0, fs->block_size);
+            uint32_t* first_indirect = kmm_kmalloc(fs->block_size);
+            str_memset(first_indirect, 0, fs->block_size);
             write_block(fs, inode->block[13], first_indirect);
-            kfree(first_indirect);
+            kmm_kfree(first_indirect);
         }
 
         uint32_t start = block_idx - 12 - ptrs_per_block;
@@ -1745,15 +1597,15 @@ static int write_block_pointers(ext2_fs_t* fs, struct ext2_inode* inode, uint32_
             first_indirect[first_level] = allocate_block(fs);
             if (first_indirect[first_level] == 0)
             {
-                kfree(first_indirect);
+                kmm_kfree(first_indirect);
                 return blocks_written;
             }
 
             // Initialize second level indirect block with zeros
-            uint32_t* second_indirect = kmalloc(fs->block_size);
-            kmemset(second_indirect, 0, fs->block_size);
+            uint32_t* second_indirect = kmm_kmalloc(fs->block_size);
+            str_memset(second_indirect, 0, fs->block_size);
             write_block(fs, first_indirect[first_level], second_indirect);
-            kfree(second_indirect);
+            kmm_kfree(second_indirect);
 
             write_block(fs, inode->block[13], first_indirect);
         }
@@ -1761,12 +1613,12 @@ static int write_block_pointers(ext2_fs_t* fs, struct ext2_inode* inode, uint32_
         uint32_t to_write = (count < ptrs_per_block - second_level) ? count : ptrs_per_block - second_level;
 
         uint32_t* second_indirect = read_block(fs, first_indirect[first_level]);
-        kmemcpy(second_indirect + second_level, blocks + blocks_written, to_write * sizeof(uint32_t));
+        str_memcpy(second_indirect + second_level, blocks + blocks_written, to_write * sizeof(uint32_t));
         write_block(fs, first_indirect[first_level], second_indirect);
-        kfree(second_indirect);
+        kmm_kfree(second_indirect);
 
         blocks_written += to_write;
-        kfree(first_indirect);
+        kmm_kfree(first_indirect);
     }
 
     return blocks_written;
@@ -1787,7 +1639,7 @@ static int ensure_blocks_allocated(ext2_fs_t* fs, struct ext2_inode* inode, uint
     }
 
     uint32_t blocks_to_allocate = required_blocks - current_blocks;
-    uint32_t* blocks = kmalloc(blocks_to_allocate * sizeof(uint32_t));
+    uint32_t* blocks = kmm_kmalloc(blocks_to_allocate * sizeof(uint32_t));
 
     // Allocate new blocks
     for (uint32_t i = 0; i < blocks_to_allocate; i++)
@@ -1800,7 +1652,7 @@ static int ensure_blocks_allocated(ext2_fs_t* fs, struct ext2_inode* inode, uint
             {
                 free_block(fs, blocks[j]);
             }
-            kfree(blocks);
+            kmm_kfree(blocks);
             return -1;
         }
     }
@@ -1813,10 +1665,10 @@ static int ensure_blocks_allocated(ext2_fs_t* fs, struct ext2_inode* inode, uint
         {
             free_block(fs, blocks[i]);
         }
-        kfree(blocks);
+        kmm_kfree(blocks);
         return -1;
     }
 
-    kfree(blocks);
+    kmm_kfree(blocks);
     return 0;
 }

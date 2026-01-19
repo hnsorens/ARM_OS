@@ -1,5 +1,6 @@
 #ifndef GIC_H
 #define GIC_H
+
 #include "modules/structures/gic.h"
 #include "module_vtables.h"
 
@@ -10,6 +11,8 @@
 #define EXPAND(var) var
 #define CONCAT(a, b) a##b
 #define CONCAT_EXPAND(a, b) CONCAT(a, b)
+
+#define GLOBAL __attribute__((visibility("hidden")))
 
 #ifdef __MAIN__
 
@@ -28,7 +31,9 @@ __GIC__DEF(GIC)
 
 
 __GIC__DEF(GIC) 
+#undef GLOBAL
 #undef __GIC__DEF
+#undef GIC
 
 #endif
 #endif

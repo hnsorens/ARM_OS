@@ -94,10 +94,9 @@ void buddy_free_phys(buddy_allocator_t *allocator, buddy_block_addr_t addr, budd
  * @param allocator Initialized buddy allocator
  * @param virt_addr Virtual address to map to
  * @param size Number of bytes to allocate
- * @param vmm Virtual memory manager instance
  * @return Virtual address of allocated memory, or NULL if failed
  */
-void* buddy_alloc_kernel(buddy_allocator_t* allocator, vaddr_t virt_addr, buddy_memory_size_t size, vmm_vtable_t* vmm);
+void* buddy_alloc_kernel(buddy_allocator_t* allocator, vaddr_t virt_addr, buddy_memory_size_t size);
 
 /**
  * @brief Free kernel virtual memory
@@ -107,9 +106,8 @@ void* buddy_alloc_kernel(buddy_allocator_t* allocator, vaddr_t virt_addr, buddy_
  * @param allocator Initialized buddy allocator
  * @param virt_addr Virtual address to free
  * @param size Number of bytes to free
- * @param vmm Virtual memory manager instance
  */
-void buddy_free_kernel(buddy_allocator_t* allocator, vaddr_t virt_addr, buddy_memory_size_t size, vmm_vtable_t* vmm);
+void buddy_free_kernel(buddy_allocator_t* allocator, vaddr_t virt_addr, buddy_memory_size_t size);
 
 /**
  * @brief Get total available physical memory

@@ -35,7 +35,7 @@ static inline uint32_t mmio_read(uint32_t reg) {
 }
 
 vtable(serial_debug_vtable_t);
-start(init, serial_init);
+start(init, serial_fetch, serial_init);
 
 void uart_putc(char c) {
     // Wait until transmit FIFO has space
@@ -670,6 +670,11 @@ int kprintf(char *format, ...) {
 void init(serial_debug_vtable_t *vtable)
 {
   vtable->serial_printf = kprintf;
+}
+
+void serial_fetch(kernel_vtable_t *kvtable)
+{
+
 }
 
 void serial_init(kernel_vtable_t *kvtable)

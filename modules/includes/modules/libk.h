@@ -1,5 +1,6 @@
 #ifndef LIBK_H
 #define LIBK_H
+
 #include "modules/structures/libk.h"
 #include "module_vtables.h"
 
@@ -10,6 +11,8 @@
 #define EXPAND(var) var
 #define CONCAT(a, b) a##b
 #define CONCAT_EXPAND(a, b) CONCAT(a, b)
+
+#define GLOBAL __attribute__((visibility("hidden")))
 
 #ifdef __MAIN__
 
@@ -28,7 +31,9 @@ __LIBK__DEF(LIBK)
 
 
 __LIBK__DEF(LIBK) 
+#undef GLOBAL
 #undef __LIBK__DEF
+#undef LIBK
 
 #endif
 #endif

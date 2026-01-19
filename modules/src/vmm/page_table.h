@@ -109,7 +109,7 @@ void page_enable(page_table_t page_table);
  * @return Bytes needed for bitmap structure and storage
  */
 void pages_map(page_table_t* page_table, virt_addr_t virtual_address, 
-               phys_addr_t phys_addr, unsigned long page_order, unsigned long page_count, pmm_vtable_t* ppm);
+               phys_addr_t phys_addr, unsigned long page_order, unsigned long page_count);
 
 /**
  * @brief Creates an identity page table for a specified amount of memory
@@ -118,7 +118,7 @@ void pages_map(page_table_t* page_table, virt_addr_t virtual_address,
  * @param total_memory Total amount of system memory
  * @return New page table
  */
-page_table_t pages_create_identity_page_table(pmm_vtable_t* ppm, size_t total_memory);
+page_table_t pages_create_identity_page_table(size_t total_memory);
 
 /**
  * @brief Converts virtual address to physical address

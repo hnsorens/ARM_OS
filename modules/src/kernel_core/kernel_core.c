@@ -18,7 +18,11 @@ void kernel_entry(kernel_entry_t* entry)
   // SKIP KERNEL CORE
   for (int i = 1; i < kentry.module_table.size; i++)
   {
-    ((vtable_init_t*)(kentry.module_table.modules[i].vtable))->init(vtable, (virt_addr_t)kentry.module_table.modules[i].base);
+    ((vtable_init_t*)(kentry.module_table.modules[i].vtable))->fetch(vtable, (virt_addr_t)kentry.module_table.modules[i].base);
+  }
+  for (int i = 1; i < kentry.module_table.size; i++)
+  {
+    ((vtable_init_t*)(kentry.module_table.modules[i].vtable))->init(vtable);
   }
 
   while(1)

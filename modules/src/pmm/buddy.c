@@ -4,6 +4,8 @@
 
 #include "module_debug.h"
 
+#include "modules/vmm.h"
+
 static size_t find_max_block_size(uintptr_t addr, uintptr_t end) {
     size_t max_size = end - addr;
     size_t block_size = 4096;
@@ -229,19 +231,20 @@ uintptr_t buddy_alloc_phys(buddy_allocator_t *allocator, size_t order)
 }
 
 
-void* buddy_alloc_kernel(buddy_allocator_t* allocator, unsigned long virt_addr, unsigned long size, vmm_vtable_t* vmm)
+void* buddy_alloc_kernel(buddy_allocator_t* allocator, unsigned long virt_addr, unsigned long size)
 {
     size_t actual_size = (size + 4095) & ~4095;  // Round to 4KB
     
     // Allocate exact physical size (buddy will find largest block and split down)
     uintptr_t phys_addr = buddy_alloc_phys_exact(allocator, actual_size);
+
     if (!phys_addr) return NULL;
-    vmm->pages_map_kernel(virt_addr, phys_addr, 0, actual_size / 4096);
+    vmm_pages_map_kernel(virt_addr, phys_addr, 0, actual_size / 4096);
   
     return (void*)virt_addr;
 }
 
-void buddy_free_kernel(buddy_allocator_t* allocator, unsigned long virt_addr, unsigned long size, vmm_vtable_t* vmm)
+void buddy_free_kernel(buddy_allocator_t* allocator, unsigned long virt_addr, unsigned long size)
 {
   uintptr_t free_position = virt_addr;
   uintptr_t block_end = virt_addr + size;
@@ -255,7 +258,7 @@ void buddy_free_kernel(buddy_allocator_t* allocator, unsigned long virt_addr, un
       size_t free_order = (63 - __builtin_clzll(free_size / 4096));
 
       // TODO convert virtual address to physical address before freeing hehe
-      buddy_free_phys(allocator, vmm->virt_to_phys_kernel(free_position), free_order);
+      buddy_free_phys(allocator, vmm_virt_to_phys_kernel(free_position), free_order);
       
       free_position += free_size;
   }

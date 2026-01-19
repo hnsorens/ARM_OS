@@ -15,6 +15,7 @@ static char* module_names[] = {
 	"LIBK",
 	"BLK_DEV",
 	"GPT",
+	"STR",
 };
 
 #endif

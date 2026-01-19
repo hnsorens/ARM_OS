@@ -1,28 +1,19 @@
 #include "module.h"
 #include <stdint.h>
 
+#include "modules/kmm.h"
+#include "modules/blk_dev.h"
+#include "modules/str.h"
+
 #include "gpt.h"
 
 #define debug "GPT"
 
 vtable(gpt_vtable_t);
-start(init, gpt_init);
-
-void* kmemcpy(void* dest, const void* src, unsigned long n)
-{
-    unsigned char* d = dest;
-    const unsigned char* s = src;
-    for (unsigned long i = 0; i < n; ++i)
-    {
-        d[i] = s[i];
-    }
-    return dest;
-}
+start(init, gpt_fetch, gpt_init);
 
 void* (*read_sectors)(uint32_t lba, uint32_t sector_count);
 void  (*write_sectors)(uint32_t lba, uint32_t sector_count, void* data);
-virt_addr_t (*kmalloc)(unsigned long size);
-void (*kfree)(virt_addr_t addr);
 
 int parse_gpt_partitions(gpt_header_t* header, gpt_partition_t** partitions)
 {
@@ -34,7 +25,7 @@ int parse_gpt_partitions(gpt_header_t* header, gpt_partition_t** partitions)
   // Read partition entries from disk
   uint8_t* entries = read_sectors(entries_lba, (num_entries * entry_size + 511) / 512); // Round up to next sector
   // Allocate output partition array
-  *partitions = (gpt_partition_t*)kmalloc(num_entries * sizeof(gpt_partition_t));
+  *partitions = (gpt_partition_t*)kmm_kmalloc(num_entries * sizeof(gpt_partition_t));
   int valid_partitions = 0;
 
   // Process each partition entry
@@ -50,8 +41,8 @@ int parse_gpt_partitions(gpt_header_t* header, gpt_partition_t** partitions)
 
       // Populate partition structure
       gpt_partition_t* partition = &(*partitions)[valid_partitions];
-      kmemcpy(partition->type_guid, entry->type_guid, 16);
-      kmemcpy(partition->unique_guid, entry->unique_guid, 16);
+      str_memcpy(partition->type_guid, entry->type_guid, 16);
+      str_memcpy(partition->unique_guid, entry->unique_guid, 16);
       partition->first_lba = entry->first_lba;
       partition->last_lba = entry->last_lba;
       partition->attributes = entry->attributes;
@@ -95,11 +86,11 @@ void init(gpt_vtable_t* vtable)
 void gpt_init(kernel_vtable_t *kvtable)
 {
   DEBUG("INIT");
-  blk_dev_vtable_t* blk_vtable = (blk_dev_vtable_t*)kvtable->find_module_vtable_by_type(MODULE_BLK_DEV);
-  read_sectors = blk_vtable->read_sectors;
-  write_sectors = blk_vtable->write_sectors;
+}
 
-  kmm_vtable_t* kmm = (kmm_vtable_t*)kvtable->find_module_vtable_by_type(MODULE_KMM);
-  kmalloc = kmm->kmalloc;
-  kfree = kmm->kfree;
+void gpt_fetch(kernel_vtable_t *kvtable)
+{
+  kmm_fetch(kvtable);
+  blk_dev_fetch(kvtable);
+  str_fetch(kvtable);
 }
