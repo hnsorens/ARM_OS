@@ -23,6 +23,7 @@ unsigned long heap_get_used_memory(heap_t* heap);
 unsigned long heap_get_free_memory(heap_t* heap);
 unsigned long heap_get_total_memory(heap_t* heap);
 unsigned long heap_malloc(heap_t* heap, unsigned long size);
+unsigned long heap_malloc_aligned(heap_t* heap, unsigned long size, unsigned long alignment);
 unsigned long heap_calloc(heap_t* heap, unsigned long num, unsigned long size);
 unsigned long heap_realloc(heap_t* heap, unsigned long ptr, unsigned long new_size);
 void heap_free(heap_t* heap, unsigned long ptr);

@@ -184,7 +184,8 @@ SortEfiMemoryMap(
 static EFI_STATUS GetKernelMemoryMap(
   IN  EFI_MEMORY_MAP    *EfiMemoryMap,
   OUT MEMORY_MAP        *KernelMemoryMap,
-  OUT UINTN             *MemoryMapRegionCount
+  OUT UINTN             *MemoryMapRegionCount,
+  EFI_SYSTEM_TABLE *SystemTable
 )
 {
   UINTN MemoryMapEntryCount = EfiMemoryMap->MemoryMapSize / EfiMemoryMap->DescriptorSize;
@@ -225,30 +226,38 @@ static EFI_STATUS GetKernelMemoryMap(
 
   for (int i = 0; i < MemoryMapEntryCount; i++)
   {
-    switch (Current->Type)
+    if (MemoryMap[CurrentRegion].Start < 0x40000000000)
     {
-      case EfiReservedMemoryType:
-      case EfiRuntimeServicesCode:
-      case EfiRuntimeServicesData:
-      case EfiACPIMemoryNVS:
-      case EfiMemoryMappedIO:
-      case EfiMemoryMappedIOPortSpace:
-      case EfiPalCode:
-      case EfiPersistentMemory:
-      case EfiUnusableMemory:
-      case EfiACPIReclaimMemory:
-        MemoryMap[CurrentRegion].Type = MEMORY_USED;
-        break;
-      case EfiBootServicesCode:
-      case EfiBootServicesData:
-      case EfiLoaderData:
-      case EfiLoaderCode:
-      case EfiConventionalMemory:
-        MemoryMap[CurrentRegion].Type = MEMORY_FREE;
-        break;
-      default:
-        MemoryMap[CurrentRegion].Type = MEMORY_USED;
-        break;
+      MemoryMap[CurrentRegion].Type = MEMORY_USED;
+    }
+    else {
+      
+      
+      switch (Current->Type)
+      {
+        case EfiReservedMemoryType:
+        case EfiRuntimeServicesCode:
+        case EfiRuntimeServicesData:
+        case EfiACPIMemoryNVS:
+        case EfiMemoryMappedIO:
+        case EfiMemoryMappedIOPortSpace:
+        case EfiPalCode:
+        case EfiPersistentMemory:
+        case EfiUnusableMemory:
+        case EfiACPIReclaimMemory:
+          MemoryMap[CurrentRegion].Type = MEMORY_USED;
+          break;
+        case EfiBootServicesCode:
+        case EfiBootServicesData:
+        case EfiConventionalMemory:
+        case EfiLoaderData:
+        case EfiLoaderCode:
+          MemoryMap[CurrentRegion].Type = MEMORY_FREE;
+          break;
+        default:
+          MemoryMap[CurrentRegion].Type = MEMORY_USED;
+          break;
+      }
     }
 
     if (MemoryMap[CurrentRegion].Type == LastType)
@@ -346,7 +355,8 @@ static EFI_STATUS ExitBootServices(IN EFI_HANDLE ImageHandle,
   GetKernelMemoryMap(
    &MemoryMap,
    KernelMemoryMap,
-   RegionCount
+   RegionCount,
+   SystemTable
  );
 
   return EFI_SUCCESS;

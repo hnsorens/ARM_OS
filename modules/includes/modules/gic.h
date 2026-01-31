@@ -12,28 +12,22 @@
 #define CONCAT(a, b) a##b
 #define CONCAT_EXPAND(a, b) CONCAT(a, b)
 
+#ifdef __MAIN__
 #define GLOBAL __attribute__((visibility("hidden")))
+#define END = 0;
+#else
+#define GLOBAL __attribute__((visibility("hidden"))) extern 
+#define END ;
+#endif
 
 #ifdef __MAIN__
 
-#define __GIC__DEF(prefix) \
-\
-static void gic_fetch(kernel_vtable_t *kvtable){\
-	gic_vtable_t* module = (gic_vtable_t*)kvtable->find_module_vtable_by_type(MODULE_GIC);\
+static void gic_fetch(kernel_vtable_t *kvtable){
+	gic_vtable_t* module = (gic_vtable_t*)kvtable->find_module_vtable_by_type(MODULE_GIC);
 }
+#endif
 
-__GIC__DEF(GIC) 
-#undef __GIC__DEF
-
-#else
-
-#define __GIC__DEF(prefix) \
-
-
-__GIC__DEF(GIC) 
 #undef GLOBAL
-#undef __GIC__DEF
 #undef GIC
 
-#endif
 #endif

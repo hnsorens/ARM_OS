@@ -12,34 +12,30 @@
 #define CONCAT(a, b) a##b
 #define CONCAT_EXPAND(a, b) CONCAT(a, b)
 
+#ifdef __MAIN__
 #define GLOBAL __attribute__((visibility("hidden")))
+#define END = 0;
+#else
+#define GLOBAL __attribute__((visibility("hidden"))) extern 
+#define END ;
+#endif
 
+GLOBAL void* (*CONCAT_EXPAND(BLK_DEV, _create))( void* dev ) END 
+GLOBAL int (*CONCAT_EXPAND(BLK_DEV, _read_sectors))( void* dev, uint64_t sector, void* buffer ) END 
+GLOBAL int (*CONCAT_EXPAND(BLK_DEV, _write_sector))( void* dev, uint64_t sector, const void* buffer ) END 
+GLOBAL int (*CONCAT_EXPAND(BLK_DEV, _flush))( void* dev ) END 
 #ifdef __MAIN__
 
-#define __BLK_DEV__DEF(prefix) \
-GLOBAL void* (*CONCAT_EXPAND(prefix, _read_sectors))( uint32_t, uint32_t ) = 0; \
-GLOBAL void (*CONCAT_EXPAND(prefix, _write_sectors))( uint32_t, uint32_t, void* ) = 0; \
-\
-static void blk_dev_fetch(kernel_vtable_t *kvtable){\
-	blk_dev_vtable_t* module = (blk_dev_vtable_t*)kvtable->find_module_vtable_by_type(MODULE_BLK_DEV);\
-	CONCAT_EXPAND(prefix, _read_sectors) = module->read_sectors;\
-	CONCAT_EXPAND(prefix, _write_sectors) = module->write_sectors;\
+static void blk_dev_fetch(kernel_vtable_t *kvtable){
+	blk_dev_vtable_t* module = (blk_dev_vtable_t*)kvtable->find_module_vtable_by_type(MODULE_BLK_DEV);
+	CONCAT_EXPAND(BLK_DEV, _create) = module->create;
+	CONCAT_EXPAND(BLK_DEV, _read_sectors) = module->read_sectors;
+	CONCAT_EXPAND(BLK_DEV, _write_sector) = module->write_sector;
+	CONCAT_EXPAND(BLK_DEV, _flush) = module->flush;
 }
+#endif
 
-__BLK_DEV__DEF(BLK_DEV) 
-#undef __BLK_DEV__DEF
-
-#else
-
-#define __BLK_DEV__DEF(prefix) \
-GLOBAL extern void* (*CONCAT_EXPAND(prefix, _read_sectors))( uint32_t, uint32_t ); \
-GLOBAL extern void (*CONCAT_EXPAND(prefix, _write_sectors))( uint32_t, uint32_t, void* ); \
-
-
-__BLK_DEV__DEF(BLK_DEV) 
 #undef GLOBAL
-#undef __BLK_DEV__DEF
 #undef BLK_DEV
 
-#endif
 #endif

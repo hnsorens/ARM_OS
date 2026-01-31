@@ -12,28 +12,22 @@
 #define CONCAT(a, b) a##b
 #define CONCAT_EXPAND(a, b) CONCAT(a, b)
 
+#ifdef __MAIN__
 #define GLOBAL __attribute__((visibility("hidden")))
+#define END = 0;
+#else
+#define GLOBAL __attribute__((visibility("hidden"))) extern 
+#define END ;
+#endif
 
 #ifdef __MAIN__
 
-#define __LIBK__DEF(prefix) \
-\
-static void libk_fetch(kernel_vtable_t *kvtable){\
-	libk_vtable_t* module = (libk_vtable_t*)kvtable->find_module_vtable_by_type(MODULE_LIBK);\
+static void libk_fetch(kernel_vtable_t *kvtable){
+	libk_vtable_t* module = (libk_vtable_t*)kvtable->find_module_vtable_by_type(MODULE_LIBK);
 }
+#endif
 
-__LIBK__DEF(LIBK) 
-#undef __LIBK__DEF
-
-#else
-
-#define __LIBK__DEF(prefix) \
-
-
-__LIBK__DEF(LIBK) 
 #undef GLOBAL
-#undef __LIBK__DEF
 #undef LIBK
 
-#endif
 #endif

@@ -136,7 +136,7 @@ void heap_init(heap_t* heap, unsigned long heap_base, unsigned long heap_size)
   heap->start = heap_base;
   heap->end = heap_base + heap_size;
 
-  pmm_alloc_virt_kernel(heap->start, heap_size);
+  pmm_alloc_virt_kernel((void*)heap->start, heap_size);
 
   block_header_t* first_block = (block_header_t*)heap_base;
   first_block->size = heap_size - sizeof(block_header_t);
@@ -195,7 +195,7 @@ unsigned long heap_malloc(heap_t* heap, unsigned long size)
     coalesce_blocks(heap);
     block = find_free_block(heap, aligned_size);
 
-    // TODO INSTEAD JUST INCREASE SIZE OF HEAP
+  // TODO INSTEAD JUST INCREASE SIZE OF HEAP
     if (!block) {
       return 0;
     }
@@ -208,6 +208,29 @@ unsigned long heap_malloc(heap_t* heap, unsigned long size)
   block->is_free = 0;
 
   return (unsigned long)((char*)block + sizeof(block_header_t));
+}
+
+unsigned long heap_malloc_aligned(heap_t* heap, unsigned long size, unsigned long alignment)
+{
+    if (size == 0 || !heap->start) {
+        return 0;
+    }
+
+    if ((alignment & (alignment - 1)) != 0) {
+        // Alignment must be a power of two
+        return 0;
+    }
+
+    // Allocate slightly more to be able to align manually
+    unsigned long total_size = size + alignment - 1;
+    unsigned long ptr = heap_malloc(heap, total_size);
+    if (!ptr) {
+        return 0;
+    }
+
+    unsigned long aligned_ptr = (ptr + alignment - 1) & ~(alignment - 1);
+
+    return aligned_ptr;
 }
 
 unsigned long heap_calloc(heap_t* heap, unsigned long num, unsigned long size)

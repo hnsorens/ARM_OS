@@ -27,14 +27,14 @@ void vmm_init(kernel_vtable_t* kvtable)
     page_enable(kernel_page_table);
 }
 
-void pages_map_kernel(virt_addr_t virtual_address, phys_addr_t physical_address, unsigned long page_order, unsigned long page_count)
+void pages_map_kernel(void* vaddr, void* paddr, unsigned long page_order, unsigned long page_count)
 {
-    pages_map(&kernel_page_table, virtual_address, physical_address, page_order, page_count);
+    pages_map(&kernel_page_table, (unsigned long)vaddr, (unsigned long)paddr, page_order, page_count);
 }
 
-phys_addr_t virt_to_phys_kernel(virt_addr_t virtual_address)
+phys_addr_t virt_to_phys_kernel(void* virtual_address)
 {
-    return virt_to_phys(kernel_page_table, virtual_address);
+    return virt_to_phys(kernel_page_table, (unsigned long)virtual_address);
 }
 
 void init(vmm_vtable_t *vtable)

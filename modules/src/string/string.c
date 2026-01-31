@@ -223,21 +223,21 @@ void str_fetch(kernel_vtable_t *kvtable)
 
 void init(str_vtable_t *vtable)
 {
-//   vtable->memset = memset;
-//   vtable->memcpy = memcpy;
-//   vtable->memmove = memmove;
-//   vtable->memcmp = memcmp;
-//   vtable->memchr = memchr;
+  vtable->memset = memset;
+  vtable->memcpy = memcpy;
+  vtable->memmove = memmove;
+  vtable->memcmp = memcmp;
+  vtable->memchr = memchr;
 
-//   vtable->strlen = strlen;
-//   vtable->strncpy = strncpy;
-//   vtable->strcat = strcat;
-//   vtable->strncat = strncat;
-//   vtable->strcmp = strcmp;
-//   vtable->strncmp = strncmp;
-//   vtable->strchr = strchr;
-//   vtable->strrchr = strrchr;
-//   vtable->strstr = strstr;
+  vtable->strlen = strlen;
+  vtable->strncpy = strncpy;
+  vtable->strcat = strcat;
+  vtable->strncat = strncat;
+  vtable->strcmp = strcmp;
+  vtable->strncmp = strncmp;
+  vtable->strchr = strchr;
+  vtable->strrchr = strrchr;
+  vtable->strstr = strstr;
   
-//   vtable->strdup = strdup;
+  vtable->strdup = strdup;
 }

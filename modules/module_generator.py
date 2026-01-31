@@ -8,8 +8,12 @@ class StructVisitor(c_ast.NodeVisitor):
     def get_prefix(self, text):
         return text.split('_vtable_t')[0]
     def visit_Struct(self, node):
+        with open('includes/module_vtables.h', 'r') as f:
+            source_lines = f.readlines()
         if node.coord and str(node.coord).startswith('includes/module_vtables.h'):
             if node.decls:
+                current_decl_line = node.coord.line + 3
+                current_decl_line2 = node.coord.line + 3
                 module_name = self.get_prefix(node.name)
                 strcture_file_path = Path("includes/modules/structures") / f"{module_name}.h"
                 open(strcture_file_path, 'a').close()
@@ -18,33 +22,29 @@ class StructVisitor(c_ast.NodeVisitor):
                 open(file_path, 'w').close()
                 with open(file_path, 'a', encoding='utf-8') as f:
                     f.write(f"#ifndef {module_name.upper()}_H\n#define {module_name.upper()}_H\n")
-                    f.write(f'\n#include "modules/structures/{module_name}.h"\n#include "module_vtables.h"\n\n#ifndef {module_name.upper()}\n#define {module_name.upper()} {module_name}\n#endif\n\n#define EXPAND(var) var\n#define CONCAT(a, b) a##b\n#define CONCAT_EXPAND(a, b) CONCAT(a, b)\n\n#define GLOBAL __attribute__((visibility("hidden")))\n\n#ifdef __MAIN__\n\n#define __{module_name.upper()}__DEF(prefix) \\\n')
+                    f.write(f'\n#include "modules/structures/{module_name}.h"\n#include "module_vtables.h"\n\n#ifndef {module_name.upper()}\n#define {module_name.upper()} {module_name}\n#endif\n\n#define EXPAND(var) var\n#define CONCAT(a, b) a##b\n#define CONCAT_EXPAND(a, b) CONCAT(a, b)\n\n#ifdef __MAIN__\n#define GLOBAL __attribute__((visibility("hidden")))\n#define END = 0;\n#else\n#define GLOBAL __attribute__((visibility("hidden"))) extern \n#define END ;\n#endif\n\n')
                     for decl in node.decls:
                         # Skip members named 'init'
                         if decl.name == 'init' or decl.name == "fetch":
                             continue
-                        
+                        current_line = decl.coord.line
+                        for line_num in range(current_decl_line, current_line - 1):
+                            f.write(f'{source_lines[line_num].rstrip()} \n')
                         member_name = decl.name
-                        member_type = self._get_function_type(decl.type, f"CONCAT_EXPAND(prefix, _{member_name})")
-                        f.write(f'GLOBAL {member_type} = 0; \\\n')
-                    f.write(f"\\\nstatic void {module_name}_fetch(kernel_vtable_t *kvtable){'{'}\\\n")
-                    f.write(f"\t{node.name}* module = ({node.name}*)kvtable->find_module_vtable_by_type(MODULE_{module_name.upper()});\\\n")
+                        member_type = self._get_function_type(decl.type, f"CONCAT_EXPAND({module_name.upper()}, _{member_name})")
+                        f.write(f'GLOBAL {member_type} END \n')
+                        current_decl_line = current_line
+                    f.write(f'#ifdef __MAIN__\n\n')
+                    f.write(f"static void {module_name}_fetch(kernel_vtable_t *kvtable){'{'}\n")
+                    f.write(f"\t{node.name}* module = ({node.name}*)kvtable->find_module_vtable_by_type(MODULE_{module_name.upper()});\n")
                     for decl in node.decls:
                         if decl.name == 'init' or decl.name == "fetch":
                             continue
                         
                         member_name = decl.name
-                        f.write(f"\tCONCAT_EXPAND(prefix, _{member_name}) = module->{member_name};\\\n");
-                    f.write(f'{'}'}\n\n__{module_name.upper()}__DEF({module_name.upper()}) \n#undef __{module_name.upper()}__DEF\n\n#else\n\n#define __{module_name.upper()}__DEF(prefix) \\\n')
-                    for decl in node.decls:
-                        # Skip members named 'init'
-                        if decl.name == 'init' or decl.name == "fetch":
-                            continue
-                        
-                        member_name = decl.name
-                        member_type = self._get_function_type(decl.type, f"CONCAT_EXPAND(prefix, _{member_name})")
-                        f.write(f'GLOBAL extern {member_type}; \\\n')
-                    f.write(f'\n\n__{module_name.upper()}__DEF({module_name.upper()}) \n#undef GLOBAL\n#undef __{module_name.upper()}__DEF\n#undef {module_name.upper()}\n\n#endif\n#endif')
+                        f.write(f"\tCONCAT_EXPAND({module_name.upper()}, _{member_name}) = module->{member_name};\n");
+                    f.write(f'{'}'}\n#endif\n')
+                    f.write(f'\n#undef GLOBAL\n#undef {module_name.upper()}\n\n#endif')
     def _get_function_type(self, n, name):
         if isinstance(n, c_ast.PtrDecl):
             # If the pointer points to a FuncDecl, it's a function pointer
@@ -166,10 +166,25 @@ class StructVisitor(c_ast.NodeVisitor):
         
         args = []
         if func_decl.args:
-            for arg in func_decl.args.params:
-                # Handle cases like 'void' in func(void) which are Typename nodes
-                arg_node = arg.type if hasattr(arg, 'type') else arg
-                args.append(self._get_type(arg_node))
+            for param in func_decl.args.params:
+                # Handle different types of parameter nodes
+                if isinstance(param, c_ast.Typename):
+                    # Typename for anonymous parameters like "void" or types without names
+                    arg_type = self._get_type(param.type)
+                    args.append(arg_type)
+                elif isinstance(param, c_ast.Decl):
+                    # Regular parameter declaration with name
+                    arg_type = self._get_type(param.type)
+                    if param.name:
+                        args.append(f"{arg_type} {param.name}")
+                    else:
+                        args.append(arg_type)
+                elif isinstance(param, c_ast.ID):
+                    # Just an identifier (rare case)
+                    args.append(param.name)
+                else:
+                    # Fallback: get whatever type we can
+                    args.append(self._get_type(param))
         else:
             args.append("void")
             

@@ -5,6 +5,7 @@
 
 #include "module_types.h"
 #include "modules/vmm.h"
+#include "modules/serial_debug.h"
 
 #define debug "PMM"
 
@@ -26,6 +27,7 @@ unsigned long calculate_total_memory(memory_region_t* regions, unsigned long reg
 void pmm_fetch(kernel_vtable_t* kvtable)
 {
   DEBUG("Fetch");
+  serial_debug_fetch(kvtable);
   vmm_fetch(kvtable);
 }
 
@@ -56,22 +58,27 @@ void pmm_init(kernel_vtable_t* kvtable)
 
 void* alloc_phys(unsigned long order)
 {
+  DEBUG("Physical Memory Allocation of size %d", order);
+  for (int i = 0; i < allocator.section_count; i++)
+  {
+    DEBUG("SECTION ORDER %d, %d", i, allocator.sections[i].block_count);
+  }
   return (void*)buddy_alloc_phys(&allocator, order);
 }
 
-void free_phys(unsigned long addr, unsigned long order)
+void free_phys(void* paddr, unsigned long order)
 {
-  buddy_free_phys(&allocator, addr, order);
+  buddy_free_phys(&allocator, (unsigned long)paddr, order);
 }
 
-void* page_alloc_kernel(unsigned long virt_addr, unsigned long size)
+void* page_alloc_kernel(void* virt_addr, unsigned long size)
 {
-  return buddy_alloc_kernel(&allocator, virt_addr, size);
+  return buddy_alloc_kernel(&allocator, (unsigned long)virt_addr, size);
 }
 
-void page_free_kernel(unsigned long virt_addr, unsigned long size)
+void page_free_kernel(void *vaddr, unsigned long size)
 {
-  return buddy_free_kernel(&allocator, virt_addr, size);
+  return buddy_free_kernel(&allocator, (unsigned long)vaddr, size);
 }
 
 unsigned long memory_available()

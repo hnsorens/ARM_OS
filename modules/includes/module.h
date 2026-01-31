@@ -2,7 +2,7 @@
 #define MODULE_H
 
 #define DEBUG(fmt, ...) if (debug_serial) debug_serial->serial_printf("[" debug "] " fmt "\n", ##__VA_ARGS__)
-#define ERROR(fmt, ...) if (debug_serial) debug_serial->serial_printf("[" debug "] " fmt "\n", ##__VA_ARGS__)
+#define ERROR(fmt, ...) if (debug_serial) debug_serial->serial_printf("ERROR: [" debug "] " fmt "\n", ##__VA_ARGS__)
 
 #define __MAIN__
 

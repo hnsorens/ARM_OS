@@ -43,12 +43,13 @@ run:
   -M virt,gic-version=3 \
   -cpu cortex-a72 \
   -drive file=build/disk.img,format=raw,if=none,id=disk0 \
-  -device virtio-blk-device,drive=disk0 \
+  -device virtio-blk-device,drive=disk0,x-disable-legacy-check=on \
   -serial mon:stdio \
   -smp 4 \
   -m 16G \
   -device virtio-gpu-device \
   -display sdl \
+	-global virtio-mmio.force-legacy=false \
   -gdb tcp::1234
 
 .PHONY: all clean run

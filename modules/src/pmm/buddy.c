@@ -3,8 +3,9 @@
 #include <stdint.h>
 
 #include "module_debug.h"
-
+#include "module_types.h"
 #include "modules/vmm.h"
+#include "modules/serial_debug.h"
 
 static size_t find_max_block_size(uintptr_t addr, uintptr_t end) {
     size_t max_size = end - addr;
@@ -24,7 +25,9 @@ static size_t find_max_block_size(uintptr_t addr, uintptr_t end) {
 static void add_block_to_freelist(buddy_section_t *section, uintptr_t addr, size_t order)
 {
   if (section->top) *((unsigned long*)section->top + 8) = addr;
+
   *((unsigned long*)addr) = section->top;
+  *((unsigned long*)(addr + 8)) = 0;
   section->top = addr;
   section->block_count++;
 
@@ -52,6 +55,18 @@ size_t buddy_get_memory_size(size_t total_memory)
 
 void buddy_init(memory_region_t* memory_map, size_t region_count, buddy_allocator_t *allocator, uintptr_t buddy_memory, size_t total_memory)
 {
+  for (int i = 0; i < region_count; i++)
+  {
+    serial_debug_serial_printf("MEMORY MAP: START %16x, Size: %16x Free: %d\n", memory_map[i].start, memory_map[i].size, memory_map[i].memory_type == MEMORY_FREE);
+    if (memory_map->memory_type == MEMORY_FREE)
+    {
+
+      for (int i2 = 0; i2 < memory_map[i].size; i2++)
+      {
+        ((char*)memory_map[i].start)[i2] = 0;
+      }
+    }
+  }
   size_t block_size = 4096;
   uintptr_t buddy_memory_pos = buddy_memory;
   uint32_t order = 0;
@@ -76,7 +91,7 @@ void buddy_init(memory_region_t* memory_map, size_t region_count, buddy_allocato
   }
 
   for (int i = 0; i < region_count; i++) {
-    if (memory_map[i].memory_type == MEMORY_FREE && memory_map[i].start < 0x400000000)
+    if (memory_map[i].memory_type == MEMORY_FREE && memory_map[i].start > 0x40000000 && memory_map[i].start < 0x400000000)
     {
       uintptr_t block_end = memory_map[i].start + memory_map[i].size * 4096;
       uintptr_t block_position = memory_map[i].start;
@@ -90,12 +105,11 @@ void buddy_init(memory_region_t* memory_map, size_t region_count, buddy_allocato
         uint64_t page_index = block_position / block_size;
         bitmap_set(allocator->sections[section_index].bitmap, page_index);
         if (allocator->sections[section_index].top) {
-          LOG(x10, memory_map[i].start)
-          LOG(x11, memory_map[i].size)
           *((unsigned long*)allocator->sections[section_index].top + 8) = block_position;
         }
 
         *((uintptr_t*)block_position) = allocator->sections[section_index].top;
+        serial_debug_serial_printf("ADDED %lx\n", block_position);
         allocator->sections[section_index].top = block_position;
         allocator->sections[section_index].block_count++;
 
@@ -128,6 +142,11 @@ static void remove_block_from_freelist(buddy_section_t* section, uintptr_t addr,
   }
 
   section->block_count--;
+
+  if (section->block_count == 0)
+  {
+    section->top = 0;
+  }
 
   // Clear the bitmap
   size_t block_size = (1UL << order) * 4096;
@@ -189,30 +208,40 @@ uintptr_t buddy_alloc_phys(buddy_allocator_t *allocator, size_t order)
   {
     return 0;
   }
-
+  serial_debug_serial_printf("got here ");
   int current_order = order;
   while (current_order < MAX_ORDER)
   {
+    serial_debug_serial_printf("FOund new thing %d\n", current_order);
     buddy_section_t *section = &allocator->sections[current_order];
-    if (section->top != 0)
+    serial_debug_serial_printf("Got here 1\n");
+    if (section->block_count != 0)
     {
-
+      serial_debug_serial_printf("Got here 2 %x\n", section->top);
+      serial_debug_serial_printf("Actuallt found it\n");
       uintptr_t block_addr = section->top;
+      serial_debug_serial_printf("Got here 3\n");
       section->top = *((unsigned long*)block_addr);
+      serial_debug_serial_printf("Got here 4 %x %x\n", section->top, section->block_count);
       if (section->top) *((unsigned long*)section->top + 8) = 0;
-                  
+      serial_debug_serial_printf("Got here 5\n");                  
       section->block_count--;
+      serial_debug_serial_printf("Got here 6\n");
 
       size_t block_size = (1UL << current_order) * 4096;
+      serial_debug_serial_printf("Got here 7\n");
       size_t bitmap_index = block_addr / block_size;
+      serial_debug_serial_printf("Got here 8\n");
       
       bitmap_clear(section->bitmap, bitmap_index);
-      
+      serial_debug_serial_printf("Got here 9\n");
       if (current_order > order)
       {
+        serial_debug_serial_printf("Got here 10\n");
         uintptr_t keep_addr = block_addr;
+        serial_debug_serial_printf("Got here 11\n");
         size_t split_size = block_size;
-
+        serial_debug_serial_printf("Got here 12\n");
         for (size_t split_order = current_order - 1; split_order + 1 > order; split_order--)
         {
           split_size /= 2;
@@ -239,7 +268,7 @@ void* buddy_alloc_kernel(buddy_allocator_t* allocator, unsigned long virt_addr, 
     uintptr_t phys_addr = buddy_alloc_phys_exact(allocator, actual_size);
 
     if (!phys_addr) return NULL;
-    vmm_pages_map_kernel(virt_addr, phys_addr, 0, actual_size / 4096);
+    vmm_pages_map_kernel((void*)virt_addr, (void*)phys_addr, 0, actual_size / 4096);
   
     return (void*)virt_addr;
 }
@@ -258,7 +287,7 @@ void buddy_free_kernel(buddy_allocator_t* allocator, unsigned long virt_addr, un
       size_t free_order = (63 - __builtin_clzll(free_size / 4096));
 
       // TODO convert virtual address to physical address before freeing hehe
-      buddy_free_phys(allocator, vmm_virt_to_phys_kernel(free_position), free_order);
+      buddy_free_phys(allocator, vmm_virt_to_phys_kernel((void*)free_position), free_order);
       
       free_position += free_size;
   }
