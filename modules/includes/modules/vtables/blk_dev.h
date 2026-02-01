@@ -2,6 +2,7 @@
 #define BLK_DEV_VTABLE_H
 
 #include "../../module_vtable.h"
+#include "../structures/blk_dev.h"
 
 typedef struct blk_dev_vtable_t
 {

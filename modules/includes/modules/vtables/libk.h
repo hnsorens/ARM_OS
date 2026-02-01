@@ -2,6 +2,7 @@
 #define LINK_VTABLE_H
 
 #include "../../module_vtable.h"
+#include "../structures/libk.h"
 
 typedef struct libk_vtable_t
 {

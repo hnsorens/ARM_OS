@@ -2,6 +2,7 @@
 #define EXT2_VTABLE_H
 
 #include "../../module_vtable.h"
+#include "../structures/ext2.h"
 
 typedef struct ext2_vtable_t 
 {

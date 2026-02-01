@@ -2,6 +2,7 @@
 #define STR_VTABLE_H
 
 #include "../../module_vtable.h"
+#include "../structures/str.h"
 
 /**
  * @brief String/Memory Operations VTable

@@ -2,6 +2,7 @@
 #define VMM_VTABLE_H
 
 #include "../../module_vtable.h"
+#include "../structures/vmm.h"
 
 /**
  * @brief Virtual Memory Manager (VMM) VTable

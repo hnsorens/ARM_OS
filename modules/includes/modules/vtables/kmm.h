@@ -2,6 +2,7 @@
 #define KMM_VTABLE_H
 
 #include "../../module_vtable.h"
+#include "../structures/kmm.h"
 
 /**
  * @brief Kernel Memory Manager (KMM) VTable

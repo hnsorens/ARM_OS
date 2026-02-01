@@ -2,6 +2,7 @@
 #define IDE_VTABLE_H
 
 #include "../../module_vtable.h"
+#include "../structures/ide.h"
 
 typedef struct ide_vtable_t 
 {

@@ -2,6 +2,7 @@
 #define SERIAL_DEBUG_VTABLE_H
 
 #include "../../module_vtable.h"
+#include "../structures/serial_debug.h"
 
 typedef struct serial_debug_vtable_t
 {

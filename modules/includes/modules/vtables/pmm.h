@@ -2,6 +2,7 @@
 #define PMM_VTABLE_H
 
 #include "../../module_vtable.h"
+#include "../structures/pmm.h"
 
 /**
  * @brief Physical Memory Manager (PMM) VTable

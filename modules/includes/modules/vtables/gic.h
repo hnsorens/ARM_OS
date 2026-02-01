@@ -2,6 +2,7 @@
 #define GIC_VTABLE_H
 
 #include "../../module_vtable.h"
+#include "../structures/gic.h"
 
 /**
  * @brief Generic Interrupt Controller (GIC) VTable

@@ -2,6 +2,7 @@
 #define BUS_CONTROLLER_VTABLE_H
 
 #include "../../module_vtable.h"
+#include "../structures/bus_controller.h"
 
 typedef struct bus_controller_vtable_t
 {
