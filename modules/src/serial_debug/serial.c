@@ -1,14 +1,12 @@
 
-#include "module_debug.h"
-#include "module_vtables.h"
 #include "module.h"
-
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
-
 #include <stdint.h>
+
+#include "modules/vtables/serial_debug.h"
 
 // PL011 UART Registers (ARM Versatile Express base)
 #define UART0_BASE 0x09000000

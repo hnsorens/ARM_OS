@@ -2,7 +2,7 @@
 #define GIC_H
 
 #include "modules/structures/gic.h"
-#include "module_vtables.h"
+#include "modules/vtables/gic.h"
 
 #ifndef GIC
 #define GIC gic

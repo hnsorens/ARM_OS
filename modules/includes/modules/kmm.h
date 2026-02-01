@@ -2,7 +2,7 @@
 #define KMM_H
 
 #include "modules/structures/kmm.h"
-#include "module_vtables.h"
+#include "modules/vtables/kmm.h"
 
 #ifndef KMM
 #define KMM kmm

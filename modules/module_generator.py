@@ -1,16 +1,20 @@
 import sys
+import os
 
 from pycparser import parse_file, c_ast
 from pathlib import Path
 
 class StructVisitor(c_ast.NodeVisitor):
     module_types = list()
+    file_name = ''
+    def setFileName(self, f):
+        self.file_name = f
     def get_prefix(self, text):
         return text.split('_vtable_t')[0]
     def visit_Struct(self, node):
-        with open('includes/module_vtables.h', 'r') as f:
+        with open(self.file_name, 'r') as f:
             source_lines = f.readlines()
-        if node.coord and str(node.coord).startswith('includes/module_vtables.h'):
+        if node.coord and str(node.coord).startswith(self.file_name):
             if node.decls:
                 current_decl_line = node.coord.line + 3
                 current_decl_line2 = node.coord.line + 3
@@ -22,7 +26,7 @@ class StructVisitor(c_ast.NodeVisitor):
                 open(file_path, 'w').close()
                 with open(file_path, 'a', encoding='utf-8') as f:
                     f.write(f"#ifndef {module_name.upper()}_H\n#define {module_name.upper()}_H\n")
-                    f.write(f'\n#include "modules/structures/{module_name}.h"\n#include "module_vtables.h"\n\n#ifndef {module_name.upper()}\n#define {module_name.upper()} {module_name}\n#endif\n\n#define EXPAND(var) var\n#define CONCAT(a, b) a##b\n#define CONCAT_EXPAND(a, b) CONCAT(a, b)\n\n#ifdef __MAIN__\n#define GLOBAL __attribute__((visibility("hidden")))\n#define END = 0;\n#else\n#define GLOBAL __attribute__((visibility("hidden"))) extern \n#define END ;\n#endif\n\n')
+                    f.write(f'\n#include "modules/structures/{module_name}.h"\n#include "modules/vtables/{module_name}.h"\n\n#ifndef {module_name.upper()}\n#define {module_name.upper()} {module_name}\n#endif\n\n#define EXPAND(var) var\n#define CONCAT(a, b) a##b\n#define CONCAT_EXPAND(a, b) CONCAT(a, b)\n\n#ifdef __MAIN__\n#define GLOBAL __attribute__((visibility("hidden")))\n#define END = 0;\n#else\n#define GLOBAL __attribute__((visibility("hidden"))) extern \n#define END ;\n#endif\n\n')
                     for decl in node.decls:
                         # Skip members named 'init'
                         if decl.name == 'init' or decl.name == "fetch":
@@ -209,14 +213,26 @@ class StructVisitor(c_ast.NodeVisitor):
 
 
 def parse_header(filename):
-    dir_path = Path("includes/modules")
+    dir_path = Path("includes/modules/vtables")
     dir_path.mkdir(exist_ok=True)
-
-    ast = parse_file(filename, use_cpp=True)
+    ast = parse_file(f'includes/modules/vtables/{filename}', use_cpp=True)
     visitor = StructVisitor()
+    visitor.setFileName(f'includes/modules/vtables/{filename}')
     visitor.visit(ast)
 
     visitor.create_modules_enum()
 
 if __name__ == "__main__":
-    parse_header('includes/module_vtables.h')
+    folder_path = 'includes/modules/vtables'
+    all_items = os.listdir(folder_path)
+    files_only = [item for item in all_items if os.path.isfile(os.path.join(folder_path, item))]
+    for filename in files_only:
+        print(filename)
+        dir_path = Path("includes/modules/vtables")
+        dir_path.mkdir(exist_ok=True)
+        ast = parse_file(f'includes/modules/vtables/{filename}', use_cpp=True)
+        visitor = StructVisitor()
+        visitor.setFileName(f'includes/modules/vtables/{filename}')
+        visitor.visit(ast)
+
+    visitor.create_modules_enum()

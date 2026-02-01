@@ -1,11 +1,13 @@
 #include "module.h"
+#include <stdint.h>
 
+#include "modules/vtables/blk_dev.h"
+
+#include "modules/serial_debug.h"
 #include "modules/bus_controller.h"
 #include "modules/kmm.h"
 #include "modules/str.h"
 #include "modules/pmm.h"
-
-#include <stdint.h>
 
 #define debug "VIRTIO_BLK"
 
@@ -388,6 +390,7 @@ void virtio_blk_fetch(kernel_vtable_t *kvtable)
     kmm_fetch(kvtable);
     str_fetch(kvtable);
     pmm_fetch(kvtable);
+    serial_debug_fetch(kvtable);
 }
 
 void init(blk_dev_vtable_t *vtable)

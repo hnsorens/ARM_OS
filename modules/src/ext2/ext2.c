@@ -2,6 +2,8 @@
 
 #include "module.h"
 
+#include "modules/vtables/ext2.h"
+
 #include "modules/str.h"
 #include "modules/kmm.h"
 

@@ -1,5 +1,4 @@
 #include "module.h"
-#include "module_vtables.h"
 #include "module_debug.h"
 #include <stdint.h>
 

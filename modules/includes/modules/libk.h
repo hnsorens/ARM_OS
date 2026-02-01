@@ -2,7 +2,7 @@
 #define LIBK_H
 
 #include "modules/structures/libk.h"
-#include "module_vtables.h"
+#include "modules/vtables/libk.h"
 
 #ifndef LIBK
 #define LIBK libk

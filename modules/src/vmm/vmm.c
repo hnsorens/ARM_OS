@@ -1,8 +1,10 @@
 #include "module.h"
-
 #include "page_table.h"
 
+#include "modules/vtables/vmm.h"
+
 #include "modules/pmm.h"
+#include "modules/serial_debug.h"
 
 #define debug "VMM"
 
@@ -13,8 +15,8 @@ page_table_t kernel_page_table;
 
 void vmm_fetch(kernel_vtable_t *kvtable)
 {
-    DEBUG("Fetch");
     pmm_fetch(kvtable);
+    serial_debug_fetch(kvtable);
 }
 
 void vmm_init(kernel_vtable_t* kvtable)

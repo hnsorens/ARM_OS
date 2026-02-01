@@ -1,9 +1,11 @@
-
-
-
 #include "module.h"
 
+#include "modules/vtables/str.h"
+
 #include "modules/kmm.h"
+#include "modules/serial_debug.h"
+
+#define debug "STR"
 
 vtable(str_vtable_t);
 start(init, str_fetch, str_init);
@@ -213,12 +215,13 @@ char* strdup(const char* s) {
 
 void str_init(kernel_vtable_t *kvtable)
 {
+
 }
 
 void str_fetch(kernel_vtable_t *kvtable)
 {
     kmm_fetch(kvtable);
-    
+    serial_debug_fetch(kvtable);
 }
 
 void init(str_vtable_t *vtable)

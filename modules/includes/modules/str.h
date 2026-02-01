@@ -2,7 +2,7 @@
 #define STR_H
 
 #include "modules/structures/str.h"
-#include "module_vtables.h"
+#include "modules/vtables/str.h"
 
 #ifndef STR
 #define STR str

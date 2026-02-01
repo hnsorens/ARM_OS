@@ -1,7 +1,7 @@
 #ifndef HEAP_H
 #define HEAP_H
 
-#include "module_vtables.h"
+#include "module_types.h"
 
 typedef struct block_header_t
 {

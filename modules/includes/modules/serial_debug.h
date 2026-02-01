@@ -2,7 +2,7 @@
 #define SERIAL_DEBUG_H
 
 #include "modules/structures/serial_debug.h"
-#include "module_vtables.h"
+#include "modules/vtables/serial_debug.h"
 
 #ifndef SERIAL_DEBUG
 #define SERIAL_DEBUG serial_debug

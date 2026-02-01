@@ -2,7 +2,7 @@
 #define PMM_H
 
 #include "modules/structures/pmm.h"
-#include "module_vtables.h"
+#include "modules/vtables/pmm.h"
 
 #ifndef PMM
 #define PMM pmm

@@ -6,13 +6,13 @@ OBJCOPY = aarch64-linux-gnu-objcopy
 CFLAGS = -ffreestanding -nostdlib -mgeneral-regs-only -Iinclude -O2
 
 build: # MAKE SURE TO USE -E SUDO
+	make -C modules
+	
 	cd edk2 &&	\
 	. ./edksetup.sh &&	\
 	cd ..	&& \
 	ln -sf $(PWD)/boot edk2/boot && \
 	build -a AARCH64 -p boot/boot.dsc -t GCC5
-
-	make -C modules
 	
 	mkdir -p build
 

@@ -2,7 +2,7 @@
 #define EXT2_H
 
 #include "modules/structures/ext2.h"
-#include "module_vtables.h"
+#include "modules/vtables/ext2.h"
 
 #ifndef EXT2
 #define EXT2 ext2

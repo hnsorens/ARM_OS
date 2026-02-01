@@ -2,7 +2,7 @@
 #define VMM_H
 
 #include "modules/structures/vmm.h"
-#include "module_vtables.h"
+#include "modules/vtables/vmm.h"
 
 #ifndef VMM
 #define VMM vmm

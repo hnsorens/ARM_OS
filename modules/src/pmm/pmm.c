@@ -1,9 +1,8 @@
-
+#include "module.h"
 #include "buddy.h"
 
-#include "module.h"
+#include "modules/vtables/pmm.h"
 
-#include "module_types.h"
 #include "modules/vmm.h"
 #include "modules/serial_debug.h"
 
@@ -26,14 +25,12 @@ unsigned long calculate_total_memory(memory_region_t* regions, unsigned long reg
 
 void pmm_fetch(kernel_vtable_t* kvtable)
 {
-  DEBUG("Fetch");
   serial_debug_fetch(kvtable);
   vmm_fetch(kvtable);
 }
 
 void pmm_init(kernel_vtable_t* kvtable)
 {
-  DEBUG("Init");
   unsigned long region_count = kvtable->memory_regions_count();
   memory_region_t* regions = kvtable->memory_regions();
 

@@ -2,7 +2,7 @@
 #define GPT_H
 
 #include "modules/structures/gpt.h"
-#include "module_vtables.h"
+#include "modules/vtables/gpt.h"
 
 #ifndef GPT
 #define GPT gpt

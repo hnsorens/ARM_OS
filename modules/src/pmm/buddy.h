@@ -3,7 +3,7 @@
 #define BUDDY_ALLOCATOR_H
 
 #include "bitmap.h"
-#include "module_vtables.h"
+#include "module_types.h"
 #include <stddef.h>
 
 #define MAX_ORDER 64

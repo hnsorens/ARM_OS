@@ -3,7 +3,6 @@
 
 #include <stddef.h>
 #include <stdint.h>
-#include "module_vtables.h"
 
 #define P0_INDEX(x) (((x) >> 39) & 0x1FF)
 #define P1_INDEX(x) (((x) >> 30) & 0x1FF)

@@ -1,5 +1,9 @@
 #include "module.h"
 
+#include "modules/vtables/gic.h"
+
+#include "modules/serial_debug.h"
+
 #define debug "GIC"
 
 vtable(gic_vtable_t);
@@ -34,7 +38,7 @@ void timer_handler(int irq, void *data) {
 
 void gic_fetch(kernel_vtable_t* kvtable)
 {
-    DEBUG("Fetch");
+    serial_debug_fetch(kvtable);
 }
 
 void gic_init(kernel_vtable_t* kvtable)

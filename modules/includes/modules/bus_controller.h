@@ -2,7 +2,7 @@
 #define BUS_CONTROLLER_H
 
 #include "modules/structures/bus_controller.h"
-#include "module_vtables.h"
+#include "modules/vtables/bus_controller.h"
 
 #ifndef BUS_CONTROLLER
 #define BUS_CONTROLLER bus_controller

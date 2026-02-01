@@ -2,10 +2,11 @@
 #include "module.h"
 #include "heap.h"
 
-#include "module_types.h"
+#include "modules/vtables/kmm.h"
 
 #include "modules/pmm.h"
 #include "modules/str.h"
+#include "modules/serial_debug.h"
 
 #define debug "KMM"
 
@@ -41,9 +42,9 @@ void* kmalloc_aligned(unsigned long size, unsigned long alignment)
 
 void kmm_fetch(kernel_vtable_t *kvtable)
 {
-  DEBUG("Fetch");
   pmm_fetch(kvtable);
   str_fetch(kvtable);
+  serial_debug_fetch(kvtable);
 }
 
 void kmm_init(kernel_vtable_t *kvtable)
@@ -51,9 +52,7 @@ void kmm_init(kernel_vtable_t *kvtable)
   DEBUG("Init");
   // pmm_vtable_t *ppm = (pmm_vtable_t*)kvtable->find_module_vtable_by_type(MODULE_PMM);
   heap_init(&heap, 0x40000000000, 0x1000000);
-  DEBUG(
-    "DONE"
-  );
+  DEBUG("DONE");
 }
 
 void init(kmm_vtable_t* vtable)

@@ -2,7 +2,7 @@
 #define IDE_H
 
 #include "modules/structures/ide.h"
-#include "module_vtables.h"
+#include "modules/vtables/ide.h"
 
 #ifndef IDE
 #define IDE ide

@@ -2,7 +2,7 @@
 #define BLK_DEV_H
 
 #include "modules/structures/blk_dev.h"
-#include "module_vtables.h"
+#include "modules/vtables/blk_dev.h"
 
 #ifndef BLK_DEV
 #define BLK_DEV blk_dev

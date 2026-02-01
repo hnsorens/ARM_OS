@@ -4,17 +4,17 @@
 [[gnu::unused]]
 static char* module_names[] = {
 	"KERNEL_CORE",
-	"PMM",
 	"VMM",
-	"KMM",
-	"GIC",
+	"BLK_DEV",
 	"EXT2",
 	"IDE",
-	"BUS_CONTROLLER",
-	"SERIAL_DEBUG",
-	"LIBK",
-	"BLK_DEV",
 	"GPT",
+	"SERIAL_DEBUG",
+	"KMM",
+	"BUS_CONTROLLER",
+	"GIC",
+	"LIBK",
+	"PMM",
 	"STR",
 };
 

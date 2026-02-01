@@ -2,8 +2,12 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "modules/bus_controller.h"
+#include "modules/vtables/bus_controller.h"
+
 #include "modules/pmm.h"
 #include "modules/str.h"
+#include "modules/serial_debug.h"
 
 #define debug "VIRTIO"
 
@@ -537,6 +541,8 @@ void virtio_fetch(kernel_vtable_t* kvtable)
 {
     pmm_fetch(kvtable);
     str_fetch(kvtable);
+    bus_controller_fetch(kvtable);
+    serial_debug_fetch(kvtable);
 }
 
 void virtio_init(kernel_vtable_t* kvtable) 

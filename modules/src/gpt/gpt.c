@@ -1,11 +1,13 @@
 #include "module.h"
 #include <stdint.h>
+#include "gpt.h"
+
+#include "modules/vtables/gpt.h"
 
 #include "modules/kmm.h"
 #include "modules/blk_dev.h"
 #include "modules/str.h"
-
-#include "gpt.h"
+#include "modules/serial_debug.h"
 
 #define debug "GPT"
 
@@ -93,4 +95,5 @@ void gpt_fetch(kernel_vtable_t *kvtable)
   kmm_fetch(kvtable);
   blk_dev_fetch(kvtable);
   str_fetch(kvtable);
+  serial_debug_fetch(kvtable);
 }
