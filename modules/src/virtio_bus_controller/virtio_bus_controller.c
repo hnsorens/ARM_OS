@@ -1,18 +1,11 @@
-#include "module.h"
+#include "bus_controller/bus_controller_impl.h"
+
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "modules/bus_controller.h"
-#include "modules/vtables/bus_controller.h"
-
-#include "modules/pmm.h"
-#include "modules/str.h"
-#include "modules/serial_debug.h"
-
-#define debug "VIRTIO"
-
-vtable(bus_controller_vtable_t)
-start(init, virtio_fetch, virtio_init)
+#include "pmm/pmm_inc.h"
+#include "str/str_inc.h"
+#include "serial_debug/serial_debug_inc.h"
 
 #define VIRTIO_MAGIC 0x74726976
 
@@ -537,23 +530,22 @@ void virtio_init_device(void* device_base)
     DEBUG("INITIALIZED DEVICE");
 }
 
-void virtio_fetch(kernel_vtable_t* kvtable) 
+void bus_controller_fetch(core_ops* ops) 
 {
-    pmm_fetch(kvtable);
-    str_fetch(kvtable);
-    bus_controller_fetch(kvtable);
-    serial_debug_fetch(kvtable);
+    pmm_fetch(ops);
+    str_fetch(ops);
+    serial_debug_fetch(ops);
 }
 
-void virtio_init(kernel_vtable_t* kvtable) 
+void bus_controller_start(core_ops* ops) 
 {
     DEBUG("INIT");
 }
 
-void init(bus_controller_vtable_t* vtable) 
+void bus_controller_init(bus_controller_ops* ops) 
 {
-    vtable->init_device = virtio_init_device;
-    vtable->find_device = virtio_find_device;
-    vtable->setup_queue = virtio_setup_queue;
-    vtable->submit_request = virtio_submit_request;
+    ops->init_device = virtio_init_device;
+    ops->find_device = virtio_find_device;
+    ops->setup_queue = virtio_setup_queue;
+    ops->submit_request = virtio_submit_request;
 }

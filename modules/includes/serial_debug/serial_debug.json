@@ -1,0 +1,13 @@
+{
+  "typeName": "serial_debug",
+  "description": "",
+  "layer": "hardware",
+  "vtable": [
+    {
+      "name": "serial_printf",
+      "signature": "int (*serial_debug_serial_printf)( char*, ... )",
+      "description": ""
+    }
+  ],
+  "extensions": []
+}

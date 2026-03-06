@@ -167,8 +167,7 @@ typedef struct ext2_dirent_iter_t
 // Filesystem context
 typedef struct ext2_fs_t
 {
-    void* (*read_sectors)(uint32_t lba, uint32_t count);
-    void (*write_sectors)(uint32_t lba, uint32_t count, void* data);
+    void* device;
     uint32_t start_sector;
     uint32_t end_sector;
     uint32_t block_size;
@@ -201,7 +200,6 @@ typedef struct file_descriptor_t
 typedef struct file_descriptor_t file_descriptor_t;
 
 // Initialize filesystem
-int ext2_init(ext2_fs_t* fs, void* (*read_fn)(uint32_t, uint32_t), void (*write_fn)(uint32_t, uint32_t, void*), uint32_t start, uint32_t end);
 
 // Clean up filesystem
 void ext2_cleanup(ext2_fs_t* fs);

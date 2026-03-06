@@ -1,0 +1,18 @@
+{
+  "typeName": "ide",
+  "description": "",
+  "layer": "hardware",
+  "vtable": [
+    {
+      "name": "read_fn",
+      "signature": "void* (*ide_read_fn)( unsigned int, unsigned int )",
+      "description": ""
+    },
+    {
+      "name": "write_fn",
+      "signature": "void (*ide_write_fn)( unsigned int, unsigned int, void* )",
+      "description": ""
+    }
+  ],
+  "extensions": []
+}

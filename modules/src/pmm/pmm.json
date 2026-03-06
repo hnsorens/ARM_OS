@@ -1,0 +1,29 @@
+{
+  "umid": "pmm-driver-001",
+  "name": "Physical Memory Manager",
+  "version": "1.0.0",
+  "description": "Physical Management Manager",
+  "moduleType": "pmm",
+  "icon": "database",
+  "source": "builtin",
+  "targetArchitectures": ["aarch64"],
+  "supportedExtensions": [],
+  "dependencies": [
+    {
+      "type": "mmu",
+      "description": "Memory Management Unit for Mapping Memory",
+      "requiredExtensions": []
+    },
+    {
+      "type": "serial_debug",
+      "description": "Serial module for logs",
+      "requiredExtensions": []
+    }
+  ],
+  "configSchema": [
+
+  ],
+  "defaultConfig": {
+
+  }
+}

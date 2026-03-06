@@ -1,0 +1,38 @@
+export default {
+  "typeName": "Driver",
+  "description": "Hardware device drivers",
+  "layer": "hardware",
+  "vtable": [
+    {
+      "name": "init",
+      "signature": "void (*init)(void)",
+      "description": "Initialize driver",
+      "required": true
+    },
+    {
+      "name": "probe",
+      "signature": "int (*probe)(device_t* dev)",
+      "description": "Probe for device",
+      "required": true
+    },
+    {
+      "name": "read",
+      "signature": "ssize_t (*read)(device_t* dev, void* buf, size_t count)",
+      "description": "Read from device",
+      "required": false
+    },
+    {
+      "name": "write",
+      "signature": "ssize_t (*write)(device_t* dev, const void* buf, size_t count)",
+      "description": "Write to device",
+      "required": false
+    },
+    {
+      "name": "ioctl",
+      "signature": "int (*ioctl)(device_t* dev, int cmd, void* arg)",
+      "description": "Device control",
+      "required": false
+    }
+  ],
+  "extensions": []
+};

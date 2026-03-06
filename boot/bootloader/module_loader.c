@@ -88,16 +88,6 @@ LoadModule(
 
 #define MODULE_ENTRY(Path, Name, Type) {Path, Name, Type, 0, 0, 0, 0}
 
-MODULE_LOAD Modules[] = {
-  MODULE_ENTRY(L"\\kernel_core.efi", L"Kernel", MODULE_KERNEL_CORE),
-  MODULE_ENTRY(L"\\serial_debug.efi", L"SerialDebug", MODULE_SERIAL_DEBUG),
-  MODULE_ENTRY(L"\\virtio_bus_controller.efi", L"bus_controller", MODULE_BUS_CONTROLLER),
-  MODULE_ENTRY(L"\\pmm.efi", L"PhysicalMemoryManager", MODULE_PMM),
-  MODULE_ENTRY(L"\\vmm.efi", L"VirtualMemoryManager", MODULE_VMM),
-  MODULE_ENTRY(L"\\kmm.efi", L"KernelMemoryManager", MODULE_KMM),
-  MODULE_ENTRY(L"\\gic.efi", L"GIC", MODULE_GIC)
-};
-
 UINTN strlen(CHAR8 *str) {
     UINTN len = 0;
     while (str[len] != '\0') {

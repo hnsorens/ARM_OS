@@ -1,0 +1,19 @@
+{
+  "umid": "serial-debug-driver-001",
+  "name": "Serial Debug Driver",
+  "version": "1.0.0",
+  "description": "Serial Debug Driver",
+  "moduleType": "serial_debug",
+  "icon": "database",
+  "source": "builtin",
+  "targetArchitectures": ["aarch64"],
+  "supportedExtensions": [],
+  "dependencies": [
+  ],
+  "configSchema": [
+
+  ],
+  "defaultConfig": {
+
+  }
+}

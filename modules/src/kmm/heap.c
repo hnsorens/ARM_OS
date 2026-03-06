@@ -1,8 +1,7 @@
 #include "heap.h"
 
-#include "module_debug.h"
-#include "modules/pmm.h"
-#include "modules/str.h"
+#include "pmm/pmm_inc.h"
+#include "str/str_inc.h"
 
 #define ALIGNMENT 8
 #define ALIGN(size) (((size) + (ALIGNMENT - 1)) & ~(ALIGNMENT - 1))

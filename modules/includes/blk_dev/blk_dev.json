@@ -1,0 +1,28 @@
+{
+  "typeName": "blk_dev",
+  "description": "",
+  "layer": "hardware",
+  "vtable": [
+    {
+      "name": "create",
+      "signature": "blk_device_t (*blk_dev_create)( void* mmio_base )",
+      "description": ""
+    },
+    {
+      "name": "read_sectors",
+      "signature": "int (*blk_dev_read_sectors)( blk_device_t dev, uint64_t sector, void* buffer, uint64_t sector_count )",
+      "description": ""
+    },
+    {
+      "name": "write_sector",
+      "signature": "int (*blk_dev_write_sector)( blk_device_t dev, uint64_t sector, const void* buffer, uint64_t sector_count )",
+      "description": ""
+    },
+    {
+      "name": "flush",
+      "signature": "int (*blk_dev_flush)( void* dev )",
+      "description": ""
+    }
+  ],
+  "extensions": []
+}

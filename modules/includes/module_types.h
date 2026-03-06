@@ -3,9 +3,6 @@
 
 #include "module_enum.h"
 
-typedef unsigned long virt_addr_t;
-typedef unsigned long phys_addr_t;
-
 typedef struct module_t
 {
   char moduleName[32];
@@ -45,20 +42,24 @@ typedef struct kernel_entry_t
 } kernel_entry_t;
 
 
-typedef struct kernel_vtable_t
+typedef struct core_ops
 {
   void (*init)(kernel_entry_t*);
-  unsigned long (*find_module_vtable_by_type)(module_type_t type);
-  unsigned long (*find_module_vtable_by_name)(char* name);
+  unsigned long (*find_module_by_type)(module_type_t type);
+  unsigned long (*find_module_by_name)(char* name);
   unsigned long (*total_system_memory)();
   memory_region_t* (*memory_regions)();
   unsigned long (*memory_regions_count)();
-} kernel_vtable_t;
+} core_ops;
 
 typedef struct vtable_init_t
 {
-  void (*fetch)(kernel_vtable_t*, virt_addr_t load);
-  void (*init)(kernel_vtable_t*);
+  void (*fetch)(core_ops*);
+  void (*init)(core_ops*);
 } vtable_init_t;
+
+#define override  /* Identifies a function that implements a vtable interface */
+#define internal  /* Identifies a private helper function (not in vtable) */
+#define optional  /* Identifies an extension that may be NULL */
 
 #endif

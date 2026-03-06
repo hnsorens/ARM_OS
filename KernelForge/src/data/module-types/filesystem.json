@@ -1,0 +1,115 @@
+{
+  "typeName": "Filesystem",
+  "description": "File and directory operations",
+  "layer": "service",
+  "vtable": [
+    {
+      "name": "init",
+      "signature": "void (*init)(void)",
+      "description": "Initialize filesystem",
+      "required": true
+    },
+    {
+      "name": "open",
+      "signature": "file_t* (*open)(const char* path, int flags)",
+      "description": "Open file",
+      "required": true
+    },
+    {
+      "name": "close",
+      "signature": "int (*close)(file_t* file)",
+      "description": "Close file",
+      "required": true
+    },
+    {
+      "name": "read",
+      "signature": "ssize_t (*read)(file_t* file, void* buf, size_t count)",
+      "description": "Read from file",
+      "required": true
+    },
+    {
+      "name": "write",
+      "signature": "ssize_t (*write)(file_t* file, const void* buf, size_t count)",
+      "description": "Write to file",
+      "required": true
+    },
+    {
+      "name": "mkdir",
+      "signature": "int (*mkdir)(const char* path)",
+      "description": "Create directory",
+      "required": false
+    }
+  ],
+  "extensions": [
+    {
+      "id": "symlink",
+      "name": "Symbolic Links",
+      "description": "Support for symbolic links",
+      "vtable": [
+        {
+          "name": "symlink",
+          "signature": "int (*symlink)(const char* target, const char* linkpath)",
+          "description": "Create a symbolic link",
+          "required": true
+        },
+        {
+          "name": "readlink",
+          "signature": "ssize_t (*readlink)(const char* path, char* buf, size_t bufsize)",
+          "description": "Read the value of a symbolic link",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "hard_links",
+      "name": "Hard Links",
+      "description": "Support for hard links",
+      "vtable": [
+        {
+          "name": "link",
+          "signature": "int (*link)(const char* oldpath, const char* newpath)",
+          "description": "Create a hard link",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "acl",
+      "name": "Access Control Lists",
+      "description": "Fine-grained permission control",
+      "vtable": [
+        {
+          "name": "get_acl",
+          "signature": "acl_t* (*get_acl)(const char* path)",
+          "description": "Get access control list",
+          "required": true
+        },
+        {
+          "name": "set_acl",
+          "signature": "int (*set_acl)(const char* path, acl_t* acl)",
+          "description": "Set access control list",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "quota",
+      "name": "Disk Quotas",
+      "description": "Per-user disk usage limits",
+      "vtable": [
+        {
+          "name": "get_quota",
+          "signature": "quota_t* (*get_quota)(uid_t uid)",
+          "description": "Get user disk quota",
+          "required": true
+        },
+        {
+          "name": "set_quota",
+          "signature": "int (*set_quota)(uid_t uid, quota_t* quota)",
+          "description": "Set user disk quota",
+          "required": true
+        }
+      ]
+    }
+  ]
+}

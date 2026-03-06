@@ -1,14 +1,7 @@
-#include "module.h"
+#include "str/str_impl.h"
 
-#include "modules/vtables/str.h"
-
-#include "modules/kmm.h"
-#include "modules/serial_debug.h"
-
-#define debug "STR"
-
-vtable(str_vtable_t);
-start(init, str_fetch, str_init);
+#include "kmm/kmm_inc.h"
+#include "serial_debug/serial_debug_inc.h"
 
 /* Memory Functions */
 void* memset(void* s, int c, unsigned long n) {
@@ -213,34 +206,34 @@ char* strdup(const char* s) {
     return new_str;
 }
 
-void str_init(kernel_vtable_t *kvtable)
+override void str_start(core_ops *ops)
 {
 
 }
 
-void str_fetch(kernel_vtable_t *kvtable)
+override void str_fetch(core_ops *ops)
 {
-    kmm_fetch(kvtable);
-    serial_debug_fetch(kvtable);
+    kmm_fetch(ops);
+    serial_debug_fetch(ops);
 }
 
-void init(str_vtable_t *vtable)
+override void str_init(str_ops *ops)
 {
-  vtable->memset = memset;
-  vtable->memcpy = memcpy;
-  vtable->memmove = memmove;
-  vtable->memcmp = memcmp;
-  vtable->memchr = memchr;
+  ops->memset = memset;
+  ops->memcpy = memcpy;
+  ops->memmove = memmove;
+  ops->memcmp = memcmp;
+  ops->memchr = memchr;
 
-  vtable->strlen = strlen;
-  vtable->strncpy = strncpy;
-  vtable->strcat = strcat;
-  vtable->strncat = strncat;
-  vtable->strcmp = strcmp;
-  vtable->strncmp = strncmp;
-  vtable->strchr = strchr;
-  vtable->strrchr = strrchr;
-  vtable->strstr = strstr;
+  ops->strlen = strlen;
+  ops->strncpy = strncpy;
+  ops->strcat = strcat;
+  ops->strncat = strncat;
+  ops->strcmp = strcmp;
+  ops->strncmp = strncmp;
+  ops->strchr = strchr;
+  ops->strrchr = strrchr;
+  ops->strstr = strstr;
   
-  vtable->strdup = strdup;
+  ops->strdup = strdup;
 }

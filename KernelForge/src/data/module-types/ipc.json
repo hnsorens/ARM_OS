@@ -1,0 +1,38 @@
+{
+  "typeName": "IPC",
+  "description": "Inter-Process Communication mechanisms",
+  "layer": "kernel",
+  "vtable": [
+    {
+      "name": "init",
+      "signature": "void (*init)(void)",
+      "description": "Initialize IPC mechanism",
+      "required": true
+    },
+    {
+      "name": "send",
+      "signature": "int (*send)(ipc_handle_t handle, const void* msg, size_t size)",
+      "description": "Send message",
+      "required": true
+    },
+    {
+      "name": "receive",
+      "signature": "int (*receive)(ipc_handle_t handle, void* msg, size_t size)",
+      "description": "Receive message",
+      "required": true
+    },
+    {
+      "name": "create",
+      "signature": "ipc_handle_t (*create)(const char* name)",
+      "description": "Create IPC channel",
+      "required": true
+    },
+    {
+      "name": "destroy",
+      "signature": "int (*destroy)(ipc_handle_t handle)",
+      "description": "Destroy IPC channel",
+      "required": true
+    }
+  ],
+  "extensions": []
+}

@@ -1,46 +1,26 @@
-#include "module.h"
-#include "page_table.h"
+#include "vmm/vmm_impl.h"
 
-#include "modules/vtables/vmm.h"
+#include "mmu/mmu_inc.h"
+#include "pmm/pmm_inc.h"
+#include "serial_debug/serial_debug_inc.h"
 
-#include "modules/pmm.h"
-#include "modules/serial_debug.h"
 
-#define debug "VMM"
 
-vtable(vmm_vtable_t);
-start(init, vmm_fetch, vmm_init);
-
-page_table_t kernel_page_table;
-
-void vmm_fetch(kernel_vtable_t *kvtable)
+override void vmm_fetch(core_ops* ops)
 {
-    pmm_fetch(kvtable);
-    serial_debug_fetch(kvtable);
+  serial_debug_fetch(ops);
+  pmm_fetch(ops);
+  mmu_fetch(ops);
 }
 
-void vmm_init(kernel_vtable_t* kvtable)
+override void vmm_start(core_ops* kvtable)
 {
-    DEBUG("Init");
-    // Creates initial kernel page table
-    unsigned long total_memory = kvtable->total_system_memory();
-    kernel_page_table = pages_create_identity_page_table(total_memory);
-    
-    page_enable(kernel_page_table);
+
 }
 
-void pages_map_kernel(void* vaddr, void* paddr, unsigned long page_order, unsigned long page_count)
+override void vmm_init(vmm_ops *ops)
 {
-    pages_map(&kernel_page_table, (unsigned long)vaddr, (unsigned long)paddr, page_order, page_count);
-}
-
-phys_addr_t virt_to_phys_kernel(void* virtual_address)
-{
-    return virt_to_phys(kernel_page_table, (unsigned long)virtual_address);
-}
-
-void init(vmm_vtable_t *vtable)
-{
-    vtable->pages_map_kernel = pages_map_kernel;
-    vtable->virt_to_phys_kernel = virt_to_phys_kernel;
+  ops->alloc_kernel = ;
+  ops->free_kernel = ;
+  ops->v2p_kernel = ;
 }

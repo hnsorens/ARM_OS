@@ -1,6 +1,6 @@
 all:
-	@echo "Running module generator..."
-	@python3 module_generator.py || (echo "Python script failed!"; exit 1)
+# 	@echo "Running module generator..."
+# 	@python3 module_generator.py || (echo "Python script failed!"; exit 1)
 	
 	@bash -c '\
 	mkdir -p build; \
@@ -14,7 +14,7 @@ all:
 		if [ -n "$$src_files" ]; then \
 			echo "  Compiling Position Independent Binary..."; \
 			aarch64-linux-gnu-gcc \
-				-std=c23 -ffreestanding -nostdlib -nostartfiles \
+				-std=c23 -ffreestanding -nostdlib -nostartfiles -fno-builtin \
 				-fpie -fno-stack-protector -mgeneral-regs-only -fvisibility=hidden -fno-zero-initialized-in-bss \
 				-mcmodel=small \
 				-Iincludes -Isrc \

@@ -1,14 +1,12 @@
+#include "fs/fs_impl.h"
 
-
-#include "module.h"
-
-#include "modules/vtables/ext2.h"
-
-#include "modules/str.h"
-#include "modules/kmm.h"
-
-vtable(ext2_vtable_t);
-start(init, ext2_init);
+#include "module_types.h"
+#include "str/str_inc.h"
+#include "kmm/kmm_inc.h"
+#include "blk_dev/blk_dev_inc.h"
+#include "gpt/gpt_inc.h"
+#include "bus_controller/bus_controller_inc.h"
+#include "serial_debug/serial_debug_inc.h"
 
 /**
  * @file ext2.c
@@ -43,33 +41,34 @@ static int update_file_size(ext2_fs_t* fs, uint32_t inode_num, struct ext2_inode
 static uint32_t count_blocks_needed(ext2_fs_t* fs, uint32_t size);
 static int ensure_blocks_allocated(ext2_fs_t* fs, struct ext2_inode* inode, uint32_t required_blocks);
 
-void init(ext2_vtable_t *vtable) {
-    
+override void fs_init(fs_ops *ops) {}
+
+override void fs_fetch(core_ops *ops) {
+  kmm_fetch(ops);
+  str_fetch(ops);
+  gpt_fetch(ops);
+  blk_dev_fetch(ops);
+  bus_controller_fetch(ops);
+  serial_debug_fetch(ops);
 }
 
-void ext2_init(kernel_vtable_t *kvtable) {
-    kmm_fetch(kvtable);
-    str_fetch(kvtable);
-}
 
 // Initialize filesystem
-int ext2_create(ext2_fs_t* fs, void* (*read_fn)(uint32_t, uint32_t), void (*write_fn)(uint32_t, uint32_t, void*), uint32_t start, uint32_t end)
-{
-    fs->read_sectors = read_fn;
-    fs->write_sectors = write_fn;
-    fs->start_sector = start;
-    fs->end_sector = end;
-    fs->block_buffer = kmm_kmalloc(SECTOR_SIZE * 2);
+int create(ext2_fs_t *fs, blk_device_t dev, gpt_partition_t *partition) {
+    
+    fs->start_sector = partition->first_lba;
+    fs->end_sector = partition->last_lba;
+    fs->block_buffer = kmm_ksalloc(10);
 
     // Read superblock (at offset 1024)
-    void* superblock_sector = fs->read_sectors(fs->start_sector + 2, 2);
-    ext2_superblock* sb = (ext2_superblock*)((uint8_t*)superblock_sector + 1024 % SECTOR_SIZE);
+    void *superblock = kmm_ksalloc(10);
+    blk_dev_read_sectors(dev, fs->start_sector + 2, superblock, 2);
+    ext2_superblock *sb = (ext2_superblock *)((uint8_t *)superblock + 1024 % SECTOR_SIZE);
 
-    if (sb->magic != EXT2_SIGNATURE)
-    {
-        kmm_kfree(fs->block_buffer);
-        kmm_kfree(superblock_sector);
-        return -1;
+    if (sb->magic != EXT2_SIGNATURE) {
+	kmm_ksfree(10, fs->block_buffer);
+	kmm_ksfree(10, superblock);
+	return -1;
     }
 
     fs->block_size = 1024 << sb->log_block_size;
@@ -82,9 +81,26 @@ int ext2_create(ext2_fs_t* fs, void* (*read_fn)(uint32_t, uint32_t), void (*writ
     fs->bgdt_block = (sb->first_data_block == 0) ? 1 : sb->first_data_block + 1;
     fs->inode_size = (sb->rev_level >= 1) ? sb->inode_size : 128;
 
-    kmm_kfree(superblock_sector);
+    kmm_ksfree(10, superblock);
     return 0;
 }
+
+override void fs_start(core_ops *ops) {
+
+    DEBUG("STARTING CREATION OF EXT2");
+    void *device_base = (void*)bus_controller_find_device(2);
+    bus_controller_init_device(device_base);
+
+    blk_device_t dev = blk_dev_create(device_base);
+
+    gpt_partition_t* partitions = gpt_create(dev);
+
+    ext2_fs_t fs;
+    create(&fs, dev, &partitions[1]);
+
+    DEBUG("Created EXT2 FILESYSTEM");
+}
+
 
 void ext2_cleanup(ext2_fs_t* fs)
 {
@@ -123,7 +139,7 @@ int ext2_file_create(ext2_fs_t* fs, uint32_t dir_inode, const char* filename, ui
     }
 
     // Initialize inode
-    struct ext2_inode inode = {0};
+    struct ext2_inode inode;
     inode.mode = EXT2_S_IFREG | (mode & 0x0FFF); // Regular file
     inode.uid = 0;
     inode.gid = 0;
@@ -490,7 +506,7 @@ int ext2_dir_create(ext2_fs_t* fs, uint32_t parent_inode, const char* dirname, u
     }
 
     // Initialize inode
-    struct ext2_inode inode = {0};
+    struct ext2_inode inode;
     inode.mode = EXT2_S_IFDIR | (mode & 0x0FFF); // Directory
     inode.uid = 0;
     inode.gid = 0;
@@ -922,7 +938,13 @@ static void* read_block(ext2_fs_t* fs, uint32_t block_num)
         return NULL;
     }
 
-    return fs->read_sectors(fs->start_sector + block_num * (fs->block_size / SECTOR_SIZE), fs->block_size / SECTOR_SIZE);
+    void* block = kmm_kmalloc(fs->block_size);
+
+    blk_dev_read_sectors(fs->device,
+                         fs->start_sector +
+                             block_num * (fs->block_size / SECTOR_SIZE),
+                         block, fs->block_size / SECTOR_SIZE);
+    return block;
 }
 
 static int write_block(ext2_fs_t* fs, uint32_t block_num, void* data)
@@ -932,7 +954,7 @@ static int write_block(ext2_fs_t* fs, uint32_t block_num, void* data)
         return -1;
     }
 
-    fs->write_sectors(fs->start_sector + block_num * (fs->block_size / SECTOR_SIZE), fs->block_size / SECTOR_SIZE, data);
+    blk_dev_write_sector(fs->device, fs->start_sector + block_num * (fs->block_size / SECTOR_SIZE), data, fs->block_size / SECTOR_SIZE);
     return 0;
 }
 
@@ -974,11 +996,12 @@ static uint32_t allocate_block(ext2_fs_t* fs)
                 kmm_kfree(bgdt_block);
 
                 // Update superblock
-                void* superblock_sector = fs->read_sectors(fs->start_sector + 2, 2);
-                struct ext2_superblock* sb = (struct ext2_superblock*)((uint8_t*)superblock_sector + 1024 % SECTOR_SIZE);
+                void *superblock = kmm_ksalloc(10);
+                blk_dev_read_sectors(fs->device, fs->start_sector + 2, superblock, 2);
+                struct ext2_superblock* sb = (struct ext2_superblock*)((uint8_t*)superblock + 1024 % SECTOR_SIZE);
                 sb->free_blocks_count--;
-                fs->write_sectors(fs->start_sector + 2, 2, superblock_sector);
-                kmm_kfree(superblock_sector);
+                blk_dev_write_sector(fs->device, fs->start_sector + 2, superblock, 2);
+                kmm_ksfree(10, superblock);
 
                 kmm_kfree(bitmap_block);
                 return group * fs->blocks_per_group + i + fs->first_data_block;
@@ -1029,11 +1052,12 @@ static int free_block(ext2_fs_t* fs, uint32_t block_num)
     kmm_kfree(bgdt_block);
 
     // Update superblock
-    void* superblock_sector = fs->read_sectors(fs->start_sector + 2, 2);
-    struct ext2_superblock* sb = (struct ext2_superblock*)((uint8_t*)superblock_sector + 1024 % SECTOR_SIZE);
+    void *superblock = kmm_ksalloc(10);
+    blk_dev_read_sectors(fs->device, fs->start_sector + 2, superblock, 2);
+    struct ext2_superblock* sb = (struct ext2_superblock*)((uint8_t*)superblock + 1024 % SECTOR_SIZE);
     sb->free_blocks_count++;
-    fs->write_sectors(fs->start_sector + 2, 2, superblock_sector);
-    kmm_kfree(superblock_sector);
+    blk_dev_write_sector(fs->device, fs->start_sector + 2, superblock, 2);
+    kmm_ksfree(10, superblock);
 
     kmm_kfree(bitmap_block);
     return 0;
@@ -1083,11 +1107,12 @@ static uint32_t allocate_inode(ext2_fs_t* fs, int is_directory)
                 kmm_kfree(bgdt_block);
 
                 // Update superblock
-                void* superblock_sector = fs->read_sectors(fs->start_sector + 2, 2);
-                struct ext2_superblock* sb = (struct ext2_superblock*)((uint8_t*)superblock_sector + 1024 % SECTOR_SIZE);
+                void *superblock = kmm_ksalloc(10);
+                blk_dev_read_sectors(fs->device, fs->start_sector + 2, superblock, 2);
+                struct ext2_superblock* sb = (struct ext2_superblock*)((uint8_t*)superblock + 1024 % SECTOR_SIZE);
                 sb->free_inodes_count--;
-                fs->write_sectors(fs->start_sector + 2, 2, superblock_sector);
-                kmm_kfree(superblock_sector);
+		blk_dev_write_sector(fs->device, fs->start_sector + 2, superblock, 2);
+                kmm_ksfree(10, superblock);
 
                 kmm_kfree(bitmap_block);
                 return group * fs->inodes_per_group + i + 1;
@@ -1138,11 +1163,12 @@ static int free_inode(ext2_fs_t* fs, uint32_t inode_num)
     kmm_kfree(bgdt_block);
 
     // Update superblock
-    void* superblock_sector = fs->read_sectors(fs->start_sector + 2, 2);
-    struct ext2_superblock* sb = (struct ext2_superblock*)((uint8_t*)superblock_sector + 1024 % SECTOR_SIZE);
+    void *superblock = kmm_ksalloc(10);
+    blk_dev_read_sectors(fs->device, fs->start_sector + 2, superblock, 2);
+    struct ext2_superblock* sb = (struct ext2_superblock*)((uint8_t*)superblock + 1024 % SECTOR_SIZE);
     sb->free_inodes_count++;
-    fs->write_sectors(fs->start_sector + 2, 2, superblock_sector);
-    kmm_kfree(superblock_sector);
+    blk_dev_write_sector(fs->device, fs->start_sector + 2, superblock, 2);
+    kmm_ksfree(10, superblock);
 
     kmm_kfree(bitmap_block);
     return 0;

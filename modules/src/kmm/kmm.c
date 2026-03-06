@@ -1,19 +1,16 @@
+#include "kmm/kmm.h"
+#include "kmm/kmm_impl.h"
 
-#include "module.h"
 #include "heap.h"
+#include "slab.h"
 
-#include "modules/vtables/kmm.h"
-
-#include "modules/pmm.h"
-#include "modules/str.h"
-#include "modules/serial_debug.h"
-
-#define debug "KMM"
-
-vtable(kmm_vtable_t);
-start(init, kmm_fetch, kmm_init);
+#include "pmm/pmm_inc.h"
+#include "str/str_inc.h"
+#include "serial_debug/serial_debug_inc.h"
 
 heap_t heap;
+
+slab_allocator_t *slab_allocators[12];
 
 void* kmalloc(unsigned long size)
 {
@@ -40,26 +37,47 @@ void* kmalloc_aligned(unsigned long size, unsigned long alignment)
   return (void*)heap_malloc_aligned(&heap, size, alignment);
 }
 
-void kmm_fetch(kernel_vtable_t *kvtable)
-{
-  pmm_fetch(kvtable);
-  str_fetch(kvtable);
-  serial_debug_fetch(kvtable);
+void *ksalloc(int order) {
+  if (order >= 12)
+    return 0;
+
+  return slab_alloc(slab_allocators[order]);
 }
 
-void kmm_init(kernel_vtable_t *kvtable)
+void ksfree(int order, void *addr) {
+  if (order >= 12)
+    return;
+
+  slab_free(slab_allocators[order], addr);  
+}    
+
+override void kmm_fetch(core_ops *ops)
+{
+  pmm_fetch(ops);
+  str_fetch(ops);
+  serial_debug_fetch(ops);
+}
+
+override void kmm_start(core_ops *ops)
 {
   DEBUG("Init");
   // pmm_vtable_t *ppm = (pmm_vtable_t*)kvtable->find_module_vtable_by_type(MODULE_PMM);
   heap_init(&heap, 0x40000000000, 0x1000000);
+
+  for (int i = 0; i < 12; i++) {
+    slab_allocators[i] = create_slab_allocator(&heap, i, 0);
+  }
+  
   DEBUG("DONE");
 }
 
-void init(kmm_vtable_t* vtable)
+override void kmm_init(kmm_ops* ops)
 {
-  vtable->kfree = kfree;
-  vtable->kmalloc = kmalloc;
-  vtable->kcalloc = kcalloc;
-  vtable->krealloc = krealloc;
-  vtable->kmalloc_aligned = kmalloc_aligned;
+  ops->kfree = kfree;
+  ops->kmalloc = kmalloc;
+  ops->kcalloc = kcalloc;
+  ops->krealloc = krealloc;
+  ops->kmalloc_aligned = kmalloc_aligned;
+  ops->ksalloc = ksalloc;
+  ops->ksfree = ksfree;
 }

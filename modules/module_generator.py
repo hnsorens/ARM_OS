@@ -227,12 +227,13 @@ if __name__ == "__main__":
     all_items = os.listdir(folder_path)
     files_only = [item for item in all_items if os.path.isfile(os.path.join(folder_path, item))]
     for filename in files_only:
-        print(filename)
-        dir_path = Path("includes/modules/vtables")
-        dir_path.mkdir(exist_ok=True)
-        ast = parse_file(f'includes/modules/vtables/{filename}', use_cpp=True)
-        visitor = StructVisitor()
-        visitor.setFileName(f'includes/modules/vtables/{filename}')
-        visitor.visit(ast)
+        if not filename.startswith('#'):
+            print(filename)
+            dir_path = Path("includes/modules/vtables")
+            dir_path.mkdir(exist_ok=True)
+            ast = parse_file(f'includes/modules/vtables/{filename}', use_cpp=True)
+            visitor = StructVisitor()
+            visitor.setFileName(f'includes/modules/vtables/{filename}')
+            visitor.visit(ast)
 
     visitor.create_modules_enum()

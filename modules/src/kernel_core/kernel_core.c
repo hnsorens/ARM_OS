@@ -2,8 +2,15 @@
 #include "module_debug.h"
 #include <stdint.h>
 
-vtable(kernel_vtable_t);
-kernel_start(init, kernel_entry);
+struct core_ops ___table;
+
+void init(typeof(___table) *table);
+void kernel_entry(struct kernel_entry_t *vtable);
+__attribute__((section(".text._entry"))) typeof(___table) *_entry() {
+  init(&___table);
+  ___table.init = kernel_entry;
+  return &___table;
+}
 
 kernel_entry_t kentry;
 
@@ -12,19 +19,18 @@ void kernel_entry(kernel_entry_t* entry)
 
   kentry = *entry;
 
-  kernel_vtable_t* vtable = kentry.module_table.modules[0].vtable;
-
+  core_ops* vtable = kentry.module_table.modules[0].vtable;
+  
   // SKIP KERNEL CORE
   for (int i = 1; i < kentry.module_table.size; i++)
   {
-    ((vtable_init_t*)(kentry.module_table.modules[i].vtable))->fetch(vtable, (virt_addr_t)kentry.module_table.modules[i].base);
+    ((vtable_init_t*)(kentry.module_table.modules[i].vtable))->fetch(vtable);
   }
   for (int i = 1; i < kentry.module_table.size; i++)
   {
     ((vtable_init_t*)(kentry.module_table.modules[i].vtable))->init(vtable);
   }
 
-  while(1)
   {
 	uint64_t daif, pmr, icc_igrpen1, cntv_ctl, cntv_tval, cntpct;
 
@@ -103,10 +109,10 @@ unsigned long memory_regions_count()
   return kentry.memory_map_entry_count;
 }
 
-void init(kernel_vtable_t *table)
+void init(core_ops *table)
 {
-  table->find_module_vtable_by_type = find_module_vtable_by_type;
-  table->find_module_vtable_by_name = find_module_vtable_by_name;
+  table->find_module_by_type = find_module_vtable_by_type;
+  table->find_module_by_name = find_module_vtable_by_name;
   table->total_system_memory = total_system_memory;
   table->memory_regions = memory_regions;
   table->memory_regions_count = memory_regions_count;

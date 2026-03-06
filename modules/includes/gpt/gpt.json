@@ -1,0 +1,13 @@
+{
+  "typeName": "gpt",
+  "description": "",
+  "layer": "hardware",
+  "vtable": [
+    {
+      "name": "create",
+      "signature": "gpt_partition_t* (*gpt_create)( blk_device_t dev )",
+      "description": ""
+    }
+  ],
+  "extensions": []
+}

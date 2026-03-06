@@ -1,15 +1,9 @@
-#include "module.h"
+#include "pmm/pmm_impl.h"
+
 #include "buddy.h"
 
-#include "modules/vtables/pmm.h"
-
-#include "modules/vmm.h"
-#include "modules/serial_debug.h"
-
-#define debug "PMM"
-
-vtable(pmm_vtable_t);
-start(init, pmm_fetch, pmm_init);
+#include "mmu/mmu_inc.h"
+#include "serial_debug/serial_debug_inc.h"
 
 buddy_allocator_t allocator;
 
@@ -23,14 +17,15 @@ unsigned long calculate_total_memory(memory_region_t* regions, unsigned long reg
   return total_memory * 4096;
 }
 
-void pmm_fetch(kernel_vtable_t* kvtable)
+void pmm_fetch(core_ops* ops)
 {
-  serial_debug_fetch(kvtable);
-  vmm_fetch(kvtable);
+  serial_debug_fetch(ops);
+  mmu_fetch(ops);
 }
 
-void pmm_init(kernel_vtable_t* kvtable)
+override void pmm_start(core_ops* kvtable)
 {
+  DEBUG ("Beggining PMM Initialization");
   unsigned long region_count = kvtable->memory_regions_count();
   memory_region_t* regions = kvtable->memory_regions();
 
@@ -50,7 +45,10 @@ void pmm_init(kernel_vtable_t* kvtable)
       break;
     }
   }
+  DEBUG ("Initializing Buddy Allocator");
   buddy_init(regions, region_count, &allocator, buddy_memory, total_memory);
+  DEBUG ("Successfully Initialized Buddy Allocator");
+  DEBUG ("done initializing PMM");
 }
 
 void* alloc_phys(unsigned long order)
@@ -68,12 +66,12 @@ void free_phys(void* paddr, unsigned long order)
   buddy_free_phys(&allocator, (unsigned long)paddr, order);
 }
 
-void* page_alloc_kernel(void* virt_addr, unsigned long size)
+void *page_alloc_kernel(void* vaddr, size_t size)
 {
-  return buddy_alloc_kernel(&allocator, (unsigned long)virt_addr, size);
+    return buddy_alloc_kernel(&allocator, (unsigned long)vaddr, size);
 }
 
-void page_free_kernel(void *vaddr, unsigned long size)
+void page_free_kernel(void* vaddr, size_t size)
 {
   return buddy_free_kernel(&allocator, (unsigned long)vaddr, size);
 }
@@ -83,11 +81,11 @@ unsigned long memory_available()
   return buddy_memory_available(&allocator);
 }
 
-void init(pmm_vtable_t *vtable)
+void pmm_init(pmm_ops *ops)
 {
-  vtable->alloc_virt_kernel = page_alloc_kernel;
-  vtable->free_virt_kernel = page_free_kernel;
-  vtable->alloc_phys = alloc_phys;
-  vtable->free_phys = free_phys;
-  vtable->memory_available = memory_available;
+  ops->alloc_virt_kernel = page_alloc_kernel;
+  ops->free_virt_kernel = page_free_kernel;
+  ops->alloc_phys = alloc_phys;
+  ops->free_phys = free_phys;
+  ops->memory_available = memory_available;
 }

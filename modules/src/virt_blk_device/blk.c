@@ -1,18 +1,12 @@
-#include "module.h"
+#include "blk_dev/blk_dev_impl.h"
+
 #include <stdint.h>
 
-#include "modules/vtables/blk_dev.h"
-
-#include "modules/serial_debug.h"
-#include "modules/bus_controller.h"
-#include "modules/kmm.h"
-#include "modules/str.h"
-#include "modules/pmm.h"
-
-#define debug "VIRTIO_BLK"
-
-vtable(blk_dev_vtable_t)
-start(init, virtio_blk_fetch, virtio_blk_init)
+#include "serial_debug/serial_debug_inc.h"
+#include "bus_controller/bus_controller_inc.h"
+#include "kmm/kmm_inc.h"
+#include "str/str_inc.h"
+#include "pmm/pmm_inc.h"
 
 #define VIRTIO_BLK_DEVICE_ID 2
 
@@ -212,7 +206,7 @@ void* alloc(unsigned long size)
 }
 
 // Public API
-void* virtio_blk_create(void *mmio_base)
+blk_device_t virtio_blk_create(void *mmio_base)
 {
     uint32_t version = mmio_read32(mmio_base, VIRTIO_MMIO_VERSION);
     if (version != 2) {
@@ -276,7 +270,7 @@ void* virtio_blk_create(void *mmio_base)
 }
 
 // Read a sector
-int virtio_blk_read(void *dev, uint64_t sector, void *buffer) {
+int virtio_blk_read(blk_device_t dev, uint64_t sector, void *buffer, uint64_t sector_count) {
     virtio_blk_device_t *virt_dev = (virtio_blk_device_t*)dev;
 
     if (!dev) {
@@ -314,7 +308,7 @@ int virtio_blk_read(void *dev, uint64_t sector, void *buffer) {
     int ret = bus_controller_submit_request(virt_dev->mmio_base, VIRTIO_BLK_T_IN,
                 &virt_dev->queue,
                 req, sizeof(*req),
-                (void*)buffer, virt_dev->block_size,
+                (void*)buffer, virt_dev->block_size * sector_count,
                 status);
     
     if (ret != 0) {
@@ -335,7 +329,7 @@ int virtio_blk_read(void *dev, uint64_t sector, void *buffer) {
 }
 
 // Write a sector
-int virtio_blk_write(void *dev, uint64_t sector, const void *buffer) {
+int virtio_blk_write(blk_device_t dev, uint64_t sector, const void *buffer, unsigned long sector_count) {
     virtio_blk_device_t *virt_dev = (virtio_blk_device_t*)dev;
 
     if (sector >= virt_dev->capacity) {
@@ -365,12 +359,12 @@ int virtio_blk_write(void *dev, uint64_t sector, const void *buffer) {
     return bus_controller_submit_request(virt_dev->mmio_base, VIRTIO_BLK_T_OUT,
                 &virt_dev->queue,
                 req, sizeof(*req),
-                (void*)buffer, virt_dev->block_size,
+                (void*)buffer, virt_dev->block_size * sector_count,
                 status);
 }
 
 // Flush device cache
-int virtio_blk_flush(void *dev) {
+int virtio_blk_flush(blk_device_t dev) {
     virtio_blk_device_t *virt_dev = (virtio_blk_device_t*)dev;
 
     if (!(virt_dev->features & VIRTIO_BLK_F_FLUSH)) {
@@ -384,55 +378,55 @@ int virtio_blk_flush(void *dev) {
                 0);
 }
 
-void virtio_blk_fetch(kernel_vtable_t *kvtable)
+override void blk_dev_fetch(core_ops *ops)
 {
-    bus_controller_fetch(kvtable);
-    kmm_fetch(kvtable);
-    str_fetch(kvtable);
-    pmm_fetch(kvtable);
-    serial_debug_fetch(kvtable);
+    bus_controller_fetch(ops);
+    kmm_fetch(ops);
+    str_fetch(ops);
+    pmm_fetch(ops);
+    serial_debug_fetch(ops);
 }
 
-void init(blk_dev_vtable_t *vtable)
+override void blk_dev_init(blk_dev_ops *ops)
 {
-    vtable->create = virtio_blk_create;
-    vtable->read_sectors = virtio_blk_read;
-    vtable->write_sector = virtio_blk_write;
-    vtable->flush = virtio_blk_flush;
+    ops->create = virtio_blk_create;
+    ops->read_sectors = virtio_blk_read;
+    ops->write_sector = virtio_blk_write;
+    ops->flush = virtio_blk_flush;
 }
 
-void virtio_blk_init(kernel_vtable_t* kvtable)
+override void blk_dev_start(core_ops* ops)
 {
-    DEBUG("Init");
+    /* DEBUG("Init"); */
     
-    void* blk_device_base = (void*)bus_controller_find_device(VIRTIO_BLK_DEVICE_ID);
-    bus_controller_init_device((void*)blk_device_base);
+    /* void* blk_device_base = (void*)bus_controller_find_device(VIRTIO_BLK_DEVICE_ID); */
+    /* bus_controller_init_device((void*)blk_device_base); */
 
-    DEBUG("Device Base: %x", blk_device_base);
+    /* DEBUG("Device Base: %x", blk_device_base); */
 
-    virtio_blk_device_t* dev = (virtio_blk_device_t*)virtio_blk_create(blk_device_base);
+    /* virtio_blk_device_t* dev = (virtio_blk_device_t*)virtio_blk_create(blk_device_base); */
 
-    // Test reading sectors
-    uint8_t* buffer = alloc(10);
-    int ret = virtio_blk_read(dev, 2, buffer);
-    if (ret != 0) {
-        ERROR("[GPT TEST] Failed to read sector 0, ret=%d", ret);
-        return;
-    }
+    /* // Test reading sectors */
+    /* uint8_t* buffer = alloc(10); */
+    /* int ret = virtio_blk_read(dev, 2, buffer); */
+    /* if (ret != 0) { */
+    /*     ERROR("[GPT TEST] Failed to read sector 0, ret=%d", ret); */
+    /*     return; */
+    /* } */
 
-    ret = virtio_blk_read(dev, 1, buffer);
-    if (ret != 0) {
-        ERROR("[GPT TEST] Failed to read sector 1 (GPT header), ret=%d", ret);
-        return;
-    }
+    /* ret = virtio_blk_read(dev, 1, buffer); */
+    /* if (ret != 0) { */
+    /*     ERROR("[GPT TEST] Failed to read sector 1 (GPT header), ret=%d", ret); */
+    /*     return; */
+    /* } */
 
-    // Check GPT signature
-    char sig[9] = {0};
-    for (int i = 0; i < 8; i++) {
-        sig[i] = buffer[i];
-    }
+    /* // Check GPT signature */
+    /* char sig[9] = {0}; */
+    /* for (int i = 0; i < 8; i++) { */
+    /*     sig[i] = buffer[i]; */
+    /* } */
 
-    DEBUG("[GPT TEST] GPT signature: %c%c%c%c%c%c%c%c",
-          sig[0], sig[1], sig[2], sig[3],
-          sig[4], sig[5], sig[6], sig[7]);
+    /* DEBUG("[GPT TEST] GPT signature: %c%c%c%c%c%c%c%c", */
+    /*       sig[0], sig[1], sig[2], sig[3], */
+    /*       sig[4], sig[5], sig[6], sig[7]); */
 }

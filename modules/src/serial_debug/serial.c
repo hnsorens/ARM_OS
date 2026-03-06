@@ -1,12 +1,11 @@
 
-#include "module.h"
+#include "serial_debug/serial_debug_impl.h"
+
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdint.h>
-
-#include "modules/vtables/serial_debug.h"
 
 // PL011 UART Registers (ARM Versatile Express base)
 #define UART0_BASE 0x09000000
@@ -31,9 +30,6 @@ static inline void mmio_write(uint32_t reg, uint32_t data) {
 static inline uint32_t mmio_read(uint32_t reg) {
     return *(volatile uint32_t*)reg;
 }
-
-vtable(serial_debug_vtable_t);
-start(init, serial_fetch, serial_init);
 
 void uart_putc(char c) {
     // Wait until transmit FIFO has space
@@ -665,17 +661,17 @@ int kprintf(char *format, ...) {
     return count;
 }
 
-void init(serial_debug_vtable_t *vtable)
+override void serial_debug_init(serial_debug_ops *ops)
 {
-  vtable->serial_printf = kprintf;
+  ops->serial_printf = kprintf;
 }
 
-void serial_fetch(kernel_vtable_t *kvtable)
+override void serial_debug_fetch(core_ops *ops)
 {
 
 }
 
-void serial_init(kernel_vtable_t *kvtable)
+override void serial_debug_start(core_ops *ops)
 {
     // Disable UART
   mmio_write(UART0_BASE + UARTCR, 0);

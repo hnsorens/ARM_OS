@@ -372,21 +372,15 @@ EFI_STATUS EFIAPI _ModuleEntryPoint(IN EFI_HANDLE ImageHandle,
   Status = LoadModules(SystemTable, &ModuleTable);
   MODULE* Modules = ModuleTable.Modules;
 
-  PRINT_VALUE("MODULE0", ModuleTable.Modules[0].ModuleBase);
-  PRINT_VALUE("MODULE1", ModuleTable.Modules[1].ModuleBase);
-  PRINT_VALUE("MODULE2", ModuleTable.Modules[2].ModuleBase);
-  // BREAK
 
   MEMORY_MAP MemoryMap;
   UINTN MemoryMapRegionsCount;
   ExitBootServices(ImageHandle, SystemTable, &MemoryMap, &MemoryMapRegionsCount);
 
-
   for (int i = 0; i < ModuleTable.ModuleCount; i++) {
     VOID *ModuleEntry = (VOID *)Modules[i].ModuleBase;
-    Modules[i].VTable = ((UINTN(*)(VOID))ModuleEntry)();
+    Modules[i].VTable = ((UINTN(*)(VOID*))ModuleEntry)(ModuleEntry);
   }
-
 
 
   KERNEL_ENTRY KernelEntry;

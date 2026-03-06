@@ -1,0 +1,43 @@
+{
+  "typeName": "kmm",
+  "description": "",
+  "layer": "hardware",
+  "vtable": [
+    {
+      "name": "kmalloc",
+      "signature": "void* (*kmm_kmalloc)( unsigned long size )",
+      "description": ""
+    },
+    {
+      "name": "kmalloc_aligned",
+      "signature": "void* (*kmm_kmalloc_aligned)( unsigned long size, unsigned long align )",
+      "description": ""
+    },
+    {
+      "name": "kcalloc",
+      "signature": "void* (*kmm_kcalloc)( unsigned long count, unsigned long size )",
+      "description": ""
+    },
+    {
+      "name": "krealloc",
+      "signature": "void* (*kmm_krealloc)( void* ptr, unsigned long size )",
+      "description": ""
+    },
+    {
+      "name": "kfree",
+      "signature": "void (*kmm_kfree)( void* ptr )",
+      "description": ""
+    },
+    {
+      "name": "ksalloc",
+      "signature": "void* (*kmm_ksalloc)( int order )",
+      "description": ""
+    },
+    {
+      "name": "ksfree",
+      "signature": "void (*kmm_ksfree)( int order, void* addr )",
+      "description": ""
+    }
+  ],
+  "extensions": []
+}
