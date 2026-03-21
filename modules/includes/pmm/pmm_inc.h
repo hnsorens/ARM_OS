@@ -5,10 +5,10 @@
 #include "pmm_driver.h"
 
 #ifdef __MAIN__
-#define GLOBAL __attribute__((visibility("hidden")))
-#define END = 0;
+#define GLOBAL
+#define END ;
 #else
-#define GLOBAL __attribute__((visibility("hidden"))) extern
+#define  GLOBAL
 #define END ;
 #endif
 
