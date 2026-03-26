@@ -16,4 +16,7 @@ typedef void (*init_fn_t)(void);
 #define __init_func __attribute__((section(".init_array"), used))
 #define MODULE_INIT(func) \
 static init_fn_t __init_ptr##func __init_func = func;
+#define __entry_func __attribute__((section(".entry_point"), used))
+#define KERNEL_ENTRY(func) \
+static init_fn_t __entry_ptr##func __entry_func = func;
 #endif

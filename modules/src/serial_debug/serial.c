@@ -681,3 +681,5 @@ void serial_debug_start()
 }
 
 MODULE_INIT(serial_debug_start);
+KERNEL_ENTRY(serial_debug_start);
+

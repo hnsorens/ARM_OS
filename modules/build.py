@@ -47,6 +47,7 @@ def build_kernel(config_path):
                     compile_cmd = [
                         sets['compiler'],
                         *sets['cflags'],
+                        "-fPIE",
                         f"-I{sets['shared_include']}",
                         f"-I{sets['base_src_dir']}",
                         *defines,
@@ -66,7 +67,7 @@ def build_kernel(config_path):
     print("--- Linking Kernel ELF ---")
     kernel_elf = os.path.join(sets['output_dir'], "kernel.elf")
     # Using the compiler as a linker driver is often safer for aarch64
-    link_cmd = [sets['linker'], "-o", kernel_elf, "-T", sets['linker_script'], *obj_files]
+    link_cmd = [sets['linker'], "-o", kernel_elf, "-pie", "-T", sets['linker_script'], *obj_files]
     
     if subprocess.run(link_cmd).returncode == 0:
         print(f"Build Finished: {kernel_elf}")

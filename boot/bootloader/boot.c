@@ -367,30 +367,20 @@ EFI_STATUS EFIAPI _ModuleEntryPoint(IN EFI_HANDLE ImageHandle,
 
   EFI_STATUS Status;
 
+  // Load Kernel
+  VOID *Kernel = NULL;
+  Status = LoadKernel(SystemTable, &Kernel);
+  if (EFI_ERROR(Status)) {
+      return Status;
+  }
 
-  MODULE_TABLE ModuleTable;
-  Status = LoadModules(SystemTable, &ModuleTable);
-  MODULE* Modules = ModuleTable.Modules;
-
-
+  // Get Memory Map and Exit Boot Services
   MEMORY_MAP MemoryMap;
   UINTN MemoryMapRegionsCount;
   ExitBootServices(ImageHandle, SystemTable, &MemoryMap, &MemoryMapRegionsCount);
 
-  for (int i = 0; i < ModuleTable.ModuleCount; i++) {
-    VOID *ModuleEntry = (VOID *)Modules[i].ModuleBase;
-    Modules[i].VTable = ((UINTN(*)(VOID*))ModuleEntry)(ModuleEntry);
-  }
-
-
-  KERNEL_ENTRY KernelEntry;
-  KernelEntry.MemoryMap = MemoryMap;
-  KernelEntry.ModuleTable = ModuleTable;
-  KernelEntry.RegionCount = MemoryMapRegionsCount;
-  KernelEntry.TotalMemory = 0;
-  KernelEntry.RuntimeServices = SystemTable->RuntimeServices;
-
-  ((KERNEL_CORE_VTABLE*)Modules[0].VTable)->kernel_entry(KernelEntry);
+  void (*entry)(void) = (void (*)(void))Kernel;
+  entry();
 
   return EFI_SUCCESS;
 }

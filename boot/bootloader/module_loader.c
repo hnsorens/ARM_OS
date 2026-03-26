@@ -1,11 +1,16 @@
 
 #include "module_loader.h"
 #include "Base.h"
+#include "Guid/FileInfo.h"
 #include "ProcessorBind.h"
+#include "Protocol/DevicePath.h"
 #include "Protocol/SimpleFileSystem.h"
 #include "Uefi/UefiBaseType.h"
 #include "Uefi/UefiMultiPhase.h"
 #include "Uefi/UefiSpec.h"
+
+#include "elf.h"
+#include <linux/limits.h>
 
 #define PRINT(str) SystemTable->ConOut->OutputString(SystemTable->ConOut, str);
 
@@ -133,321 +138,137 @@ MODULE_TYPE GetModuleType(CHAR8* Type)
   return -1;
 }
 
-// EFI_STATUS
-// GetModulesToLoad(
-//   IN  EFI_SYSTEM_TABLE *SystemTable, 
-//   IN  EFI_FILE_PROTOCOL *Root, 
-//   OUT UINTN* ModuleCount,
-//   OUT MODULE_LOAD** Modules)
-// {
-
-//   *ModuleCount = 0;
-
-//   EFI_STATUS Status;
-//   EFI_FILE_PROTOCOL *File;
-
-//   Status =
-//         Root->Open(Root, &File, L"\\modules.conf", EFI_FILE_MODE_READ, 0);
-//   if (EFI_ERROR(Status)) {
-//     Root->Close(Root);
-//     return Status;
-//   }
-  
-//   EFI_FILE_INFO *FileInfo;
-//   UINTN InfoSize = sizeof(EFI_FILE_INFO) + 128;
-
-//   Status = SystemTable->BootServices->AllocatePool(EfiLoaderData, InfoSize,
-//                                                     (VOID **)&FileInfo);
-//   if (EFI_ERROR(Status)) {
-//     File->Close(File);
-//     Root->Close(Root);
-//     return Status;
-//   }
-
-//   Status = File->GetInfo(File, &gEfiFileInfoGuid, &InfoSize, FileInfo);
-//   if (EFI_ERROR(Status)) {
-//     SystemTable->BootServices->FreePool(FileInfo);
-//     File->Close(File);
-//     Root->Close(Root);
-//     return Status;
-//   }
-
-//   EFI_PHYSICAL_ADDRESS ModuleMemory;
-
-//   Status = SystemTable->BootServices->AllocatePool(
-//       EfiLoaderData, FileInfo->Size, (VOID**)(&ModuleMemory));
-//   if (EFI_ERROR(Status)) {
-//     return Status;
-//   }
-
-//   UINTN FileSize = FileInfo->Size;
-//   Status = File->Read(File, &FileSize, (VOID *)ModuleMemory);
-//   File->Close(File);
-
-//   EFI_PHYSICAL_ADDRESS ModuleListMemory = 0;
-
-//   Status = SystemTable->BootServices->AllocatePool(
-//       EfiLoaderData, sizeof(MODULE_LOAD) * MAX_MODULE_COUNT, (VOID**)(&ModuleListMemory));
-//   if (EFI_ERROR(Status)) {
-//     return Status;
-//   }
-
-//   BOOLEAN ReadingFile = TRUE;
-//   CHAR8* FilePointer = (CHAR8*)ModuleMemory;
-//   while (ReadingFile)
-//   {
-//     #define CHECK_FILE_POINTER if (*FilePointer == 0) { ReadingFile = FALSE; break; }
-//     CHAR8* ModuleType;
-//     CHAR8* ModulePath;
-
-//     while (*FilePointer != '[') { CHECK_FILE_POINTER FilePointer++; }
-//     if (*FilePointer == '[')
-//     {
-//       FilePointer++;
-//     }
-//     else {
-//       ReadingFile = FALSE;
-//       break;
-//     }
-//     while (*FilePointer == ' ') { CHECK_FILE_POINTER FilePointer++; }
-
-//     ModuleType = FilePointer;
-//     while (*FilePointer != ' ' && *FilePointer != ']') { CHECK_FILE_POINTER FilePointer++; }
-
-//     if (*FilePointer == ']')
-//     {
-//       *FilePointer = 0;
-//       FilePointer++;
-//     }
-//     else {
-//       *FilePointer = 0;
-//       FilePointer++;
-//       while (*FilePointer == ' ') { CHECK_FILE_POINTER FilePointer++; }
-//       if (*FilePointer != ']')
-//       {
-//         ReadingFile = FALSE;
-//         break;
-//       }
-//     }
-
-//     while (*FilePointer == ' ') { CHECK_FILE_POINTER FilePointer++; }
-//     ModulePath = FilePointer;
-
-//     while (*FilePointer != ' ' && *FilePointer != '\n') { CHECK_FILE_POINTER FilePointer++; }
-//     *FilePointer = 0;
-//     FilePointer++;
-
-//     PRINT(ConvertString(SystemTable, ModulePath));
-//     PRINT(ConvertString(SystemTable, ModuleType));
-//     MODULE_LOAD module = MODULE_ENTRY(ConvertString(SystemTable, ModulePath), ConvertString(SystemTable, ModulePath), GetModuleType(ModuleType));
-//     ((MODULE_LOAD*)ModuleListMemory)[*ModuleCount] = module;
-//     (*ModuleCount)++;
-    
-    
-//   }
-
-//   SystemTable->BootServices->FreePool(FileInfo);
-
-//   return ModuleListMemory;
-// }
 EFI_STATUS
-GetModulesToLoad(
-  IN  EFI_SYSTEM_TABLE *SystemTable, 
-  IN  EFI_FILE_PROTOCOL *Root, 
-  OUT UINTN* ModuleCount,
-  OUT MODULE_LOAD** Modules)
+OpenFile(
+        IN CHAR16 *FileName,
+        IN EFI_FILE_PROTOCOL *Root,
+        IN EFI_SYSTEM_TABLE *SystemTable,
+        OUT CHAR8 **Buffer
+)
 {
-  EFI_STATUS Status;
-  EFI_FILE_PROTOCOL *File = NULL;
-  EFI_FILE_INFO *FileInfo = NULL;
-  CHAR8* FileBuffer = NULL;
-  MODULE_LOAD* ModuleList = NULL;
-  
-  // Initialize outputs
-  *ModuleCount = 0;
-  *Modules = NULL;
+    EFI_FILE_PROTOCOL *File = NULL;
+    EFI_FILE_INFO *FileInfo = NULL;
+    CHAR8 *FileBuffer = NULL;
 
-  // Open the modules.conf file
-  Status = Root->Open(Root, &File, L"\\modules.conf", EFI_FILE_MODE_READ, 0);
-  if (EFI_ERROR(Status)) {
-    return Status;
-  }
-  
-  // Get file info to determine size
-  UINTN InfoSize = sizeof(EFI_FILE_INFO) + 128;
-  Status = SystemTable->BootServices->AllocatePool(EfiLoaderData, InfoSize, (VOID **)&FileInfo);
-  if (EFI_ERROR(Status)) {
-    File->Close(File);
-    return Status;
-  }
+    EFI_STATUS Status;
+    Status = Root->Open(Root, &File, FileName, EFI_FILE_MODE_READ, 0);
+    if (EFI_ERROR(Status)) {
+        return Status;
+    }
 
-  Status = File->GetInfo(File, &gEfiFileInfoGuid, &InfoSize, FileInfo);
-  if (EFI_ERROR(Status)) {
-    SystemTable->BootServices->FreePool(FileInfo);
-    File->Close(File);
-    return Status;
-  }
+    // Get File info to determine size
+    UINTN InfoSize = sizeof(EFI_FILE_INFO) + 128;
+    Status = SystemTable->BootServices->AllocatePool(EfiLoaderData, InfoSize, (VOID **)&FileInfo);
+    if (EFI_ERROR(Status)) {
+        File->Close(File);
+        return Status;
+    }
 
-  // Allocate buffer for file content + null terminator
-  Status = SystemTable->BootServices->AllocatePool(
-      EfiLoaderData, FileInfo->FileSize + 1, (VOID**)&FileBuffer);
-  if (EFI_ERROR(Status)) {
-    SystemTable->BootServices->FreePool(FileInfo);
-    File->Close(File);
-    return Status;
-  }
+    Status = File->GetInfo(File, &gEfiFileInfoGuid, &InfoSize, FileInfo);
+    if (EFI_ERROR(Status)) {
+        SystemTable->BootServices->FreePool(FileInfo);
+        File->Close(File);
+        return Status;
+    }
 
-  // Read the entire file
-  UINTN ReadSize = FileInfo->FileSize;
-  Status = File->Read(File, &ReadSize, FileBuffer);
-  if (EFI_ERROR(Status) || ReadSize != FileInfo->FileSize) {
-    SystemTable->BootServices->FreePool(FileBuffer);
-    SystemTable->BootServices->FreePool(FileInfo);
-    File->Close(File);
-    return EFI_LOAD_ERROR;
-  }
-  
-  // Null-terminate the buffer
-  FileBuffer[FileInfo->FileSize] = '\0';
-  
-  // Clean up file resources
-  SystemTable->BootServices->FreePool(FileInfo);
-  File->Close(File);
-  FileInfo = NULL;
-  File = NULL;
+      // Allocate buffer for file content + null terminator
+      Status = SystemTable->BootServices->AllocatePool(
+          EfiLoaderData, FileInfo->FileSize + 1, (VOID**)&FileBuffer);
+      if (EFI_ERROR(Status)) {
+        SystemTable->BootServices->FreePool(FileInfo);
+        File->Close(File);
+        return Status;
+      }
 
-  // Allocate module list
-  Status = SystemTable->BootServices->AllocatePool(
-      EfiLoaderData, sizeof(MODULE_LOAD) * MAX_MODULE_COUNT, (VOID**)&ModuleList);
-  if (EFI_ERROR(Status)) {
-    SystemTable->BootServices->FreePool(FileBuffer);
-    return Status;
-  }
+      // Read the entire file
+      UINTN ReadSize = FileInfo->FileSize;
+      Status = File->Read(File, &ReadSize, FileBuffer);
+      if (EFI_ERROR(Status) || ReadSize != FileInfo->FileSize) {
+        SystemTable->BootServices->FreePool(FileBuffer);
+        SystemTable->BootServices->FreePool(FileInfo);
+        File->Close(File);
+        return EFI_LOAD_ERROR;
+      }
+      
+      // Null-terminate the buffer
+      FileBuffer[FileInfo->FileSize] = '\0';
+      
+      // Clean up file resources
+      SystemTable->BootServices->FreePool(FileInfo);
+      File->Close(File);
+      FileInfo = NULL;
+      File = NULL;
 
-  // Parse the file line by line
-  CHAR8* FilePointer = FileBuffer;
-  UINTN Count = 0;
-  
-  while (Count < MAX_MODULE_COUNT && *FilePointer != '\0') {
-    // Skip leading whitespace and empty lines
-    while (*FilePointer == ' ' || *FilePointer == '\t' || *FilePointer == '\n' || *FilePointer == '\r') {
-      if (*FilePointer == '\0') break;
-      FilePointer++;
-    }
-    
-    if (*FilePointer == '\0') break;
-    
-    // Check for comment line (starting with #)
-    if (*FilePointer == '#') {
-      // Skip to end of line
-      while (*FilePointer != '\n' && *FilePointer != '\0') FilePointer++;
-      continue;
-    }
-    
-    // Look for opening bracket
-    if (*FilePointer != '[') {
-      // Skip to next line if not a valid module entry
-      while (*FilePointer != '\n' && *FilePointer != '\0') FilePointer++;
-      continue;
-    }
-    
-    FilePointer++; // Skip '['
-    if (*FilePointer == '\0') break;
-    
-    // Skip spaces after '['
-    while (*FilePointer == ' ' || *FilePointer == '\t') {
-      if (*FilePointer == '\0') break;
-      FilePointer++;
-    }
-    
-    if (*FilePointer == '\0') break;
-    
-    // Get module type (text inside brackets)
-    CHAR8* ModuleTypeStart = FilePointer;
-    
-    // Find closing bracket
-    while (*FilePointer != ']' && *FilePointer != '\n' && *FilePointer != '\0') {
-      FilePointer++;
-    }
-    
-    if (*FilePointer != ']') {
-      // Invalid format, skip to next line
-      while (*FilePointer != '\n' && *FilePointer != '\0') FilePointer++;
-      continue;
-    }
-    
-    // Null-terminate module type
-    *FilePointer = '\0';  // Replace ']' with null terminator
-    FilePointer++; // Move past the null terminator
-    
-    // Skip whitespace after ']'
-    while (*FilePointer == ' ' || *FilePointer == '\t') {
-      if (*FilePointer == '\0') break;
-      FilePointer++;
-    }
-    
-    if (*FilePointer == '\0' || *FilePointer == '\n' || *FilePointer == '\r') {
-      // No path specified, skip this entry
-      // Move to next line
-      while (*FilePointer == '\n' || *FilePointer == '\r') FilePointer++;
-      continue;
-    }
-    
-    // Get module path (rest of the line)
-    CHAR8* ModulePathStart = FilePointer;
-    
-    // Find end of line
-    while (*FilePointer != '\n' && *FilePointer != '\r' && *FilePointer != '\0') {
-      FilePointer++;
-    }
-    
-    // Null-terminate module path
-    CHAR8 savedChar = *FilePointer;  // Save newline or null
-    *FilePointer = '\0';
-    
-    // Trim trailing whitespace from path
-    CHAR8* PathEnd = FilePointer - 1;
-    while (PathEnd >= ModulePathStart && (*PathEnd == ' ' || *PathEnd == '\t')) {
-      *PathEnd = '\0';
-      PathEnd--;
-    }
-    
-    // Convert strings
-    CHAR16* ModulePathWide = ConvertString(SystemTable, ModulePathStart);
-    CHAR16* ModuleTypeWide = ConvertString(SystemTable, ModuleTypeStart);
+      *Buffer = FileBuffer;
 
-    if (ModulePathWide && ModuleTypeWide) {
-      // Create module entry - FIXED: Use ModulePathWide for path, ModuleTypeWide for type
-      MODULE_LOAD module = MODULE_ENTRY(ModulePathWide, ModuleTypeWide, GetModuleType(ModuleTypeStart));
-      ModuleList[Count] = module;
-      Count++;
-    }
-    
-    // Restore saved character and move to next line
-    *FilePointer = savedChar;
-    
-    // Skip to next line
-    while (*FilePointer == '\n' || *FilePointer == '\r') {
-      if (*FilePointer == '\0') break;
-      FilePointer++;
-    }
-  }
+      return Status;
+}
 
-  // Free file buffer
-  SystemTable->BootServices->FreePool(FileBuffer);
-  
-  // Set outputs
-  *ModuleCount = Count;
-  *Modules = ModuleList;
-  
-  return EFI_SUCCESS;
+BOOLEAN
+VerifyElf(Elf64_Ehdr *header) {
+    return header->e_ident[0] == 0x7F && 
+            header->e_ident[1] == 'E' && 
+            header->e_ident[2] == 'L' &&
+            header->e_ident[3] == 'F';
 }
 
 EFI_STATUS
-LoadModules(EFI_SYSTEM_TABLE *SystemTable, MODULE_TABLE* ModuleTable)
-{
+CalculateElfSpan(Elf64_Ehdr *Ehdr, UINT64 *MinAddr, UINT64 *MaxAddr) {
+    Elf64_Phdr *Phdr = (Elf64_Phdr *)((UINT8 *)Ehdr + Ehdr->e_phoff);
+
+    UINT64 MinVaddr = 0xFFFFFFFFFFFFFFFF;
+    UINT64 MaxVaddr = 0;
+    BOOLEAN FoundLoadable = 0;
+
+    for (INTN i = 0; i < Ehdr->e_phnum; ++i) {
+        // only look at PT_LOAD segments
+        if (Phdr[i].p_type == PT_LOAD) {
+            if (Phdr[i].p_vaddr < MinVaddr) {
+                MinVaddr = Phdr[i].p_vaddr;
+            }
+            UINT64 EndVaddr = Phdr[i].p_vaddr + Phdr[i].p_memsz;
+            if (EndVaddr > MaxVaddr) {
+                MaxVaddr = EndVaddr;
+            }
+            FoundLoadable = TRUE;
+        }
+    }
+
+    if (!FoundLoadable) return EFI_LOAD_ERROR;
+    
+    *MinAddr = MinVaddr;
+    *MaxAddr = MaxVaddr;
+
+    return EFI_SUCCESS;
+}
+
+VOID*
+Memcpy(VOID *Dest, CONST VOID *Src, UINTN N) {
+    UINT8 *D = (UINT8 *)Dest;
+    CONST UINT8 *S = (CONST UINT8 *)Src;
+
+    while (N--) {
+        *D++ = *S++;
+    }
+    return Dest;
+}
+
+VOID*
+Memset(VOID *S, UINT8 C, UINTN N) {
+    UINT8 *P = (UINT8 *)S;
+
+    while (N--) {
+        *P++ = C;
+    }
+    return S;
+}
+
+EFI_STATUS
+OpenRoot(
+        IN EFI_SYSTEM_TABLE *SystemTable,
+        OUT EFI_FILE_PROTOCOL **Root
+) {
   EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *FileSystem;
-  EFI_FILE_PROTOCOL *Root;
 
   EFI_STATUS Status = SystemTable->BootServices->LocateProtocol(
       &gEfiSimpleFileSystemProtocolGuid, NULL, (VOID **)&FileSystem);
@@ -457,43 +278,77 @@ LoadModules(EFI_SYSTEM_TABLE *SystemTable, MODULE_TABLE* ModuleTable)
     return Status;
   }
 
-  Status = FileSystem->OpenVolume(FileSystem, &Root);
+  Status = FileSystem->OpenVolume(FileSystem, Root);
   if (EFI_ERROR(Status)) {
     SystemTable->ConOut->OutputString(SystemTable->ConOut,
                                       L"Failed to open root volume!");
     return Status;
   }
+}
 
-  UINTN ModuleCount;
-  MODULE_LOAD *Modules;
-  Status = GetModulesToLoad(SystemTable, Root, &ModuleCount, &Modules);
+EFI_STATUS
+LoadKernel(
+  IN   EFI_SYSTEM_TABLE *SystemTable,
+  OUT  VOID **Kernel
+)
+{
+    EFI_FILE_PROTOCOL *Root = NULL;
+    EFI_STATUS Status = OpenRoot(SystemTable, &Root);
+    if (EFI_ERROR(Status)) {
+        return Status;
+    }
 
+    // Open kernel elf
+    CHAR8 *FileBuffer = NULL;
+    Status = OpenFile(L"kernel.elf", Root, SystemTable, &FileBuffer);
+    if (EFI_ERROR(Status)) {
+        return Status;
+    }
 
-  Status = LoadModule(SystemTable, Root, Modules, ModuleCount);
+    // Get Elf Buffer
+    Elf64_Ehdr *Ehdr = (Elf64_Ehdr*)FileBuffer;
 
-  Root->Close(Root);
+    // Verify elf file
+    if (!VerifyElf(Ehdr)) return EFI_LOAD_ERROR;
 
-  EFI_PHYSICAL_ADDRESS ModuleListAddr;
-  SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiRuntimeServicesData, 1, &ModuleListAddr);
+    // Calculate size
+    UINT64 MaxAddr = 0;
+    UINT64 MinAddr = 0;
+    Status = CalculateElfSpan(Ehdr, &MinAddr, &MaxAddr);
+    if (EFI_ERROR(Status)) {
+        return Status;
+    }
 
-  MODULE* ModuleList = (MODULE*)ModuleListAddr;
-  for (int i = 0; i < ModuleCount; i++)
-  {
-    CHAR16* NameSrc = Modules[i].ModuleName;
-    char* NameDst = ModuleList[i].ModuleName;
-    do {
-      *NameDst = *NameSrc;
-      NameSrc++;
-      NameDst++;
-    }while (*NameSrc);
-    
-    ModuleList[i].ModuleBase = Modules[i].ModuleBase;
-    ModuleList[i].VTable = Modules[i].VTable;
-    ModuleList[i].Size = Modules[i].Info->FileSize;
-    ModuleList[i].Type = Modules[i].Type;
-  }
+    UINT64 KernelSize = MaxAddr - MinAddr;
+    VOID *KernelData = NULL;
 
-  ModuleTable->ModuleCount = ModuleCount;
-  ModuleTable->Modules = ModuleList;
-  return Status;
+    // Allocate Kernel Space
+    Status = SystemTable->BootServices->AllocatePool(
+        EfiLoaderData, KernelSize, &KernelData);
+    if (EFI_ERROR(Status)) {
+        SystemTable->BootServices->FreePool(KernelData);
+        return Status;
+    }
+
+    Elf64_Phdr *Phdr = (Elf64_Phdr *)((UINT8 *)Ehdr + Ehdr->e_phoff);
+
+    // Load Sections
+    for (INTN i = 0; i < Ehdr->e_phnum; ++i) {
+        // only look at PT_LOAD segments
+        if (Phdr[i].p_type == PT_LOAD) {
+            UINT64 RelativeOffset = Phdr[i].p_vaddr - MinAddr;
+            CHAR8 *Dest = (CHAR8 *)KernelData + RelativeOffset;
+
+            CHAR8 *Src = (CHAR8 *)Ehdr + Phdr[i].p_offset;
+            Memcpy(Dest, Src, Phdr[i].p_filesz);
+
+            if (Phdr[i].p_memsz > Phdr[i].p_filesz) {
+                Memset(Dest + Phdr[i].p_filesz, 0, Phdr[i].p_memsz - Phdr[i].p_filesz);
+            }
+        }
+    }
+
+    *Kernel = KernelData;
+
+    return EFI_SUCCESS;
 }
