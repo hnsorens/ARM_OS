@@ -1,4 +1,3 @@
-import sys
 import os
 
 from pycparser import parse_file, c_ast
@@ -7,48 +6,124 @@ from pathlib import Path
 class StructVisitor(c_ast.NodeVisitor):
     module_types = list()
     file_name = ''
-    def setFileName(self, f):
-        self.file_name = f
+    module_folder = ''
+    module_ops = None
+    extension_ops = list()
+    def setFileName(self, folder, file):
+        self.module_folder = Path(folder)
+        self.file_name = self.module_folder / f'{file}'
+        self.extension_ops.clear()
     def get_prefix(self, text):
-        return text.split('_vtable_t')[0]
-    def visit_Struct(self, node):
+        return text.split('_ops')[0]
+    def generate(self):
         with open(self.file_name, 'r') as f:
             source_lines = f.readlines()
-        if node.coord and str(node.coord).startswith(self.file_name):
-            if node.decls:
-                current_decl_line = node.coord.line + 3
-                current_decl_line2 = node.coord.line + 3
-                module_name = self.get_prefix(node.name)
-                strcture_file_path = Path("includes/modules/structures") / f"{module_name}.h"
-                open(strcture_file_path, 'a').close()
-                file_path = Path("includes/modules") / f"{module_name}.h"
-                self.module_types.append(f"{module_name.upper()}")
-                open(file_path, 'w').close()
-                with open(file_path, 'a', encoding='utf-8') as f:
-                    f.write(f"#ifndef {module_name.upper()}_H\n#define {module_name.upper()}_H\n")
-                    f.write(f'\n#include "modules/structures/{module_name}.h"\n#include "modules/vtables/{module_name}.h"\n\n#ifndef {module_name.upper()}\n#define {module_name.upper()} {module_name}\n#endif\n\n#define EXPAND(var) var\n#define CONCAT(a, b) a##b\n#define CONCAT_EXPAND(a, b) CONCAT(a, b)\n\n#ifdef __MAIN__\n#define GLOBAL __attribute__((visibility("hidden")))\n#define END = 0;\n#else\n#define GLOBAL __attribute__((visibility("hidden"))) extern \n#define END ;\n#endif\n\n')
-                    for decl in node.decls:
-                        # Skip members named 'init'
-                        if decl.name == 'init' or decl.name == "fetch":
-                            continue
-                        current_line = decl.coord.line
-                        for line_num in range(current_decl_line, current_line - 1):
-                            f.write(f'{source_lines[line_num].rstrip()} \n')
-                        member_name = decl.name
-                        member_type = self._get_function_type(decl.type, f"CONCAT_EXPAND({module_name.upper()}, _{member_name})")
-                        f.write(f'GLOBAL {member_type} END \n')
-                        current_decl_line = current_line
-                    f.write(f'#ifdef __MAIN__\n\n')
-                    f.write(f"static void {module_name}_fetch(kernel_vtable_t *kvtable){'{'}\n")
-                    f.write(f"\t{node.name}* module = ({node.name}*)kvtable->find_module_vtable_by_type(MODULE_{module_name.upper()});\n")
-                    for decl in node.decls:
-                        if decl.name == 'init' or decl.name == "fetch":
-                            continue
-                        
-                        member_name = decl.name
-                        f.write(f"\tCONCAT_EXPAND({module_name.upper()}, _{member_name}) = module->{member_name};\n");
-                    f.write(f'{'}'}\n#endif\n')
-                    f.write(f'\n#undef GLOBAL\n#undef {module_name.upper()}\n\n#endif')
+        module_name = self.module_ops.name.split('_ops')[0]
+        print(f"adding {module_name.upper()}")
+        self.module_types.append(f"{module_name.upper()}")
+        module_types_path = self.module_folder / f"{module_name}_types.h"
+        open(module_types_path, 'a').close()
+        module_inc_path = self.module_folder / f"{module_name}_inc.h"
+        open(module_inc_path, 'w').close()
+        with open(module_inc_path, 'a', encoding='utf-8') as f:
+            f.write(f'#ifndef __{module_name.upper()}_INC_H__\n')
+            f.write(f'#define __{module_name.upper()}_INC_H__\n\n')
+            f.write('\n')
+            f.write(f'#include "{module_name}_types.h"\n\n')
+            f.write('#ifndef CONCAT_HIDDEN\n')
+            f.write('#define CONCAT_HIDDEN(a, b) a ## b\n')
+            f.write('#define CONCAT(a, b) CONCAT_HIDDEN(a, b)\n')
+            f.write('#endif\n\n')
+            for decl in self.module_ops.decls:
+                if decl.name == 'start':
+                    continue
+                f.write(f'#define {module_name}_{decl.name} CONCAT({module_name.upper()}_NAME, _{decl.name}_func)\n')
+            f.write('\n')
+            current_line = 0
+            current_decl_line = self.module_ops.coord.line+1
+
+            for decl in self.module_ops.decls:
+                if decl.name == 'start' or decl.name == "fetch":
+                    continue
+                current_line = decl.coord.line
+                for line_num in range(current_decl_line, current_line - 1):
+                    f.write(f'{source_lines[line_num].rstrip()} \n')
+                member_name = decl.name
+                member_type = self._get_function_type(decl.type, f'{module_name}_{member_name}')
+                f.write(f'extern {member_type};\n')
+                current_decl_line = current_line
+            for ext in self.extension_ops:
+                ext_name = ext.name.split('_ext')[0]
+                f.write(f'#ifdef {ext_name.upper()}_EXTENSION\n')
+                for decl in ext:
+                    if decl.name == 'start' or decl.name == "fetch":
+                        continue
+                    current_line = decl.coord.line
+                    for line_num in range(current_decl_line, current_line - 1):
+                        f.write(f'{source_lines[line_num].rstrip()} \n')
+                    member_name = decl.name
+                    member_type = self._get_function_type(decl.type, f'{module_name}_{member_name}')
+                    f.write(f'extern {member_type};\n')
+                    current_decl_line = current_line
+                f.write('#endif\n')
+            f.write('#endif')
+        module_impl_path = self.module_folder / f"{module_name}_impl.h"
+        open(module_impl_path, 'w').close()
+        with open(module_impl_path, 'a', encoding='utf-8') as f:
+            f.write(f'#ifndef __{module_name.upper()}_INC_H__\n')
+            f.write(f'#define __{module_name.upper()}_INC_H__\n\n')
+            f.write('\n')
+            f.write(f'#include "{module_name}_types.h"\n\n')
+            f.write('#ifndef CONCAT_HIDDEN\n')
+            f.write('#define CONCAT_HIDDEN(a, b) a ## b\n')
+            f.write('#define CONCAT(a, b) CONCAT_HIDDEN(a, b)\n')
+            f.write('#endif\n\n')
+            for decl in self.module_ops.decls:
+                if decl.name == 'start':
+                    continue
+                f.write(f'#define {module_name}_{decl.name} CONCAT(IMPL_NAME, _{decl.name}_func)\n')
+            f.write('\n')
+            current_line = 0
+            current_decl_line = self.module_ops.coord.line+1
+
+            for decl in self.module_ops.decls:
+                if decl.name == 'start' or decl.name == "fetch":
+                    continue
+                current_line = decl.coord.line
+                for line_num in range(current_decl_line, current_line - 1):
+                    f.write(f'{source_lines[line_num].rstrip()} \n')
+                member_name = decl.name
+                member_type = self._get_function_type(decl.type, f'{module_name}_{member_name}')
+                f.write(f'__attribute__((used)) {member_type};\n')
+                current_decl_line = current_line
+            for ext in self.extension_ops:
+                ext_name = ext.name.split('_ext')[0]
+                f.write(f'#ifdef {ext_name.upper()}_EXTENSION\n')
+                for decl in ext:
+                    if decl.name == 'start' or decl.name == "fetch":
+                        continue
+                    current_line = decl.coord.line
+                    for line_num in range(current_decl_line, current_line - 1):
+                        f.write(f'{source_lines[line_num].rstrip()} \n')
+                    member_name = decl.name
+                    member_type = self._get_function_type(decl.type, f'{module_name}_{member_name}')
+                    f.write(f'__attribute__((used)) {member_type};\n')
+                    current_decl_line = current_line
+                f.write('#endif\n')
+            f.write('typedef void (*init_fn_t)(void);\n')
+            f.write('#define __init_func __attribute__((section(".init_array"), used))\n')
+            f.write('#define MODULE_INIT(func) \\\n')
+            f.write('static init_fn_t __init_ptr##func __init_func = func;\n')
+            f.write('#endif')
+    def visit_Struct(self, node):
+        print(node.name)
+        if not node.name:
+            return
+        if (node.name.endswith('_ext')):
+            self.extension_ops.append(node)
+        if (node.name.endswith('_ops')):
+            print('set')
+            self.module_ops = node
     def _get_function_type(self, n, name):
         if isinstance(n, c_ast.PtrDecl):
             # If the pointer points to a FuncDecl, it's a function pointer
@@ -192,9 +267,9 @@ class StructVisitor(c_ast.NodeVisitor):
         else:
             args.append("void")
             
-        return f"{ret_type} (*{name})( {', '.join(args)} )"
+        return f"{ret_type} {name}( {', '.join(args)} )"
     def create_modules_enum(self):
-        file_path = Path("includes") / "module_enum.h"
+        file_path = Path("include") / "module_enum.h"
         open(file_path, 'w').close()
         with open(file_path, 'a', encoding='utf-8') as f:
             f.write('#ifndef MODULE_ENUM_H\n#define MODULE_ENUM_H\n\ntypedef enum module_type_t {\n\tMODULE_KERNEL_CORE,\n')
@@ -202,7 +277,7 @@ class StructVisitor(c_ast.NodeVisitor):
                 f.write(f"\tMODULE_{module},\n")
             f.write('} module_type_t;\n\n')
             f.write('\n\n#endif')
-        file_path = Path("includes") / "module_names.h"
+        file_path = Path("include") / "module_names.h"
         open(file_path, 'w').close()
         with open(file_path, 'a', encoding='utf-8') as f:
             f.write('#ifndef MODULE_NAME_H\n#define MODULE_NAME_H\n\n[[gnu::unused]]')
@@ -211,29 +286,20 @@ class StructVisitor(c_ast.NodeVisitor):
                 f.write(f'\t"{module}",\n')
             f.write('};\n\n#endif')
 
-
-def parse_header(filename):
-    dir_path = Path("includes/modules/vtables")
-    dir_path.mkdir(exist_ok=True)
-    ast = parse_file(f'includes/modules/vtables/{filename}', use_cpp=True)
-    visitor = StructVisitor()
-    visitor.setFileName(f'includes/modules/vtables/{filename}')
-    visitor.visit(ast)
-
-    visitor.create_modules_enum()
-
 if __name__ == "__main__":
-    folder_path = 'includes/modules/vtables'
-    all_items = os.listdir(folder_path)
-    files_only = [item for item in all_items if os.path.isfile(os.path.join(folder_path, item))]
-    for filename in files_only:
-        if not filename.startswith('#'):
-            print(filename)
-            dir_path = Path("includes/modules/vtables")
-            dir_path.mkdir(exist_ok=True)
-            ast = parse_file(f'includes/modules/vtables/{filename}', use_cpp=True)
-            visitor = StructVisitor()
-            visitor.setFileName(f'includes/modules/vtables/{filename}')
+    folder_path = 'include'
+    visitor = StructVisitor()
+    for item_name in os.listdir(folder_path):
+        item_path = os.path.join(folder_path, item_name)
+        if os.path.isdir(item_path):
+            print(item_name)
+            folder = f'{folder_path}/{item_name}'
+            print(f'FILE: {folder}/{item_name}.h')
+            dir_path = Path(folder)
+            ast = parse_file(f'{folder}/{item_name}.h', use_cpp=True)
+            visitor.setFileName(f'{folder}', f'{item_name}.h')
             visitor.visit(ast)
+            visitor.generate()
+
 
     visitor.create_modules_enum()

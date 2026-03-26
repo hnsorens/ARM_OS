@@ -653,7 +653,7 @@ int vprintf(const char *format, va_list args) {
     return count;
 }
 
-int kprintf(char *format, ...) {
+int serial_debug_serial_printf(char *format, ...) {
     va_list args;
     va_start(args, format);
     int count = vprintf(format, args);
@@ -661,17 +661,7 @@ int kprintf(char *format, ...) {
     return count;
 }
 
-override void serial_debug_init(serial_debug_ops *ops)
-{
-  ops->serial_printf = kprintf;
-}
-
-override void serial_debug_fetch(core_ops *ops)
-{
-
-}
-
-override void serial_debug_start(core_ops *ops)
+void serial_debug_start()
 {
     // Disable UART
   mmio_write(UART0_BASE + UARTCR, 0);
@@ -687,5 +677,7 @@ override void serial_debug_start(core_ops *ops)
   // Enable UART, enable transmit & receive
   mmio_write(UART0_BASE + UARTCR, (1 << 0) | (1 << 8) | (1 << 9));
 
-  kprintf("UART Serial Out Initialized!\n");
+  serial_debug_serial_printf("UART Serial Out Initialized!\n");
 }
+
+MODULE_INIT(serial_debug_start);
