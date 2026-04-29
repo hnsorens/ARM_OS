@@ -1,0 +1,33 @@
+{
+    "compiler_settings": {
+        "compiler": "aarch64-linux-gnu-gcc",
+        "linker": "aarch64-linux-gnu-ld",
+        "linker_script": "linker.ld",
+        "base_src_dir": "./src",
+        "shared_include": "./include",
+        "output_dir": "./build",
+        "cflags": [
+            "-ffreestanding", 
+            "-O2", 
+            "-Wall", 
+            "-nostdlib",
+            "-fpie",
+            "-fvisibility=hidden",
+            "-mcmodel=small"
+        ],
+        "ldflags": [
+            "-pie",
+            "--no-dynamic-linker",
+            "-Bsymbolic",
+            "--fatal-warnings"
+        ]
+    },
+    "modules": [
+        {
+            "folder": "serial_debug",
+            "name": "serial",
+            "type": "SERIAL_DEBUG",
+            "dependencies": []
+        }
+    ]
+}

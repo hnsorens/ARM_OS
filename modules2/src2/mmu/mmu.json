@@ -1,0 +1,29 @@
+{
+  "umid": "mmu-driver-001",
+  "name": "Memory Management Unit",
+  "version": "1.0.0",
+  "description": "Memory Management Unit",
+  "moduleType": "mmu",
+  "icon": "database",
+  "source": "builtin",
+  "targetArchitectures": ["aarch64"],
+  "supportedExtensions": [],
+  "dependencies": [
+    {
+      "type": "pmm",
+      "description": "Physical Memory Manager for allocating memory",
+      "requiredExtensions": []
+    },
+    {
+      "type": "serial_debug",
+      "description": "Serial module for logs",
+      "requiredExtensions": []
+    }
+  ],
+  "configSchema": [
+
+  ],
+  "defaultConfig": {
+
+  }
+}

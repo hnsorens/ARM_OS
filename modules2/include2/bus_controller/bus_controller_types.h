@@ -1,0 +1,5 @@
+#ifndef BUS_CONTROLLER_TYPES_H
+#define BUS_CONTROLLER_TYPES_H
+
+
+#endif

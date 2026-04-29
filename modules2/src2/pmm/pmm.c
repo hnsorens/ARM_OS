@@ -1,0 +1,91 @@
+#include "pmm/pmm_impl.h"
+
+#include "buddy.h"
+
+#include "mmu/mmu_inc.h"
+#include "serial_debug/serial_debug_inc.h"
+
+buddy_allocator_t allocator;
+
+unsigned long calculate_total_memory(memory_region_t* regions, unsigned long region_count)
+{
+  unsigned long total_memory = 0;
+  for (int i = 0; i < region_count; i++)
+  {
+    total_memory += regions[i].size;
+  }
+  return total_memory * 4096;
+}
+
+void pmm_fetch(core_ops* ops)
+{
+  serial_debug_fetch(ops);
+  mmu_fetch(ops);
+}
+
+override void pmm_start(core_ops* kvtable)
+{
+  DEBUG ("Beggining PMM Initialization");
+  unsigned long region_count = kvtable->memory_regions_count();
+  memory_region_t* regions = kvtable->memory_regions();
+
+  unsigned long total_memory = calculate_total_memory(regions, region_count);
+
+  unsigned long buddy_allocator_size = buddy_get_memory_size(total_memory);
+  unsigned long buddy_allocator_page_count = (buddy_allocator_size / 4096) + 1;
+
+  unsigned long buddy_memory = 0;
+  for (int i = 0; i < region_count; i++)
+  {
+    if (regions[i].size > buddy_allocator_page_count && regions[i].memory_type == MEMORY_FREE)
+    {
+      buddy_memory = regions[i].start;
+      regions[i].size -= buddy_allocator_page_count;
+      regions[i].start += 4096 * buddy_allocator_page_count;
+      break;
+    }
+  }
+  DEBUG ("Initializing Buddy Allocator");
+  buddy_init(regions, region_count, &allocator, buddy_memory, total_memory);
+  DEBUG ("Successfully Initialized Buddy Allocator");
+  DEBUG ("done initializing PMM");
+}
+
+void* alloc_phys(unsigned long order)
+{
+  DEBUG("Physical Memory Allocation of size %d", order);
+  for (int i = 0; i < allocator.section_count; i++)
+  {
+    DEBUG("SECTION ORDER %d, %d", i, allocator.sections[i].block_count);
+  }
+  return (void*)buddy_alloc_phys(&allocator, order);
+}
+
+void free_phys(void* paddr, unsigned long order)
+{
+  buddy_free_phys(&allocator, (unsigned long)paddr, order);
+}
+
+void *page_alloc_kernel(void* vaddr, size_t size)
+{
+    return buddy_alloc_kernel(&allocator, (unsigned long)vaddr, size);
+}
+
+void page_free_kernel(void* vaddr, size_t size)
+{
+  return buddy_free_kernel(&allocator, (unsigned long)vaddr, size);
+}
+
+unsigned long memory_available()
+{
+  return buddy_memory_available(&allocator);
+}
+
+void pmm_init(pmm_ops *ops)
+{
+  ops->alloc_virt_kernel = page_alloc_kernel;
+  ops->free_virt_kernel = page_free_kernel;
+  ops->alloc_phys = alloc_phys;
+  ops->free_phys = free_phys;
+  ops->memory_available = memory_available;
+}
