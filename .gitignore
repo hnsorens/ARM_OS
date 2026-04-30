@@ -3,6 +3,7 @@ compile_commands.json
 QEMU_EFI.fd
 .cache/
 module_exectables/
+disk.img
 *.o
 *.elf
 *.efi
