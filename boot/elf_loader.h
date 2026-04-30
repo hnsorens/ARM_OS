@@ -3,6 +3,8 @@
 
 #include <efi.h>
 #include <efilib.h>
+
+#include "elf.h"
 #include "page_table.h"
 
 EFI_STATUS
