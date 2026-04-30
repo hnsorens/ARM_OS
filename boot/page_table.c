@@ -1,4 +1,5 @@
 #include "page_table.h"
+#include "boot_services.h"
 #include "efidef.h"
 #include "efierr.h"
 
@@ -45,7 +46,10 @@ static UINT64 Page_Order_Size(UINT64 Order)
 }
 
 EFI_STATUS
-Enable_Page_Table(IN PAGE_TABLE_T PageTable)
+Enable_Page_Table(
+        IN PAGE_TABLE_T LowerPageTable, 
+        IN PAGE_TABLE_T UpperPageTable
+        )
 {
     // Configure Memory Attributes
     UINT64 Mair = MAIR_ATTR(MAIR_NORMAL_WB, MAIR_IDX_NORMAL) |
@@ -68,8 +72,9 @@ Enable_Page_Table(IN PAGE_TABLE_T PageTable)
                    (TCR_T0SZ_48BIT << TCR_T0SZ_SHIFT);
     __asm__ volatile("msr tcr_el1, %0" : : "r"(Tcr));
 
-    // Set Page Table Base
-    __asm__ volatile("msr ttbr0_el1, %0" : : "r"((UINT64)PageTable));
+    // Set Page Table Bases
+    __asm__ volatile("msr ttbr0_el1, %0" : : "r"((UINT64)LowerPageTable));
+    __asm__ volatile("msr ttbr1_el1, %0" : : "r"((UINT64)UpperPageTable));
 
     // Invalidate TLB
     __asm__ volatile("dsb sy");
@@ -188,3 +193,50 @@ Map_Memory(
 
     return EFI_SUCCESS;
 }
+
+EFI_STATUS 
+Create_Identity_Page_Table(
+        IN EFI_SYSTEM_TABLE *SystemTable, 
+        IN UINTN TotalMemory,
+        OUT PAGE_TABLE_T *PageTable
+)
+{
+    EFI_STATUS Status;
+  // Allocate L0 table (512GB blocks)
+Status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiRuntimeServicesCode, 1, PageTable);
+            if (EFI_ERROR(Status))
+            {
+                SystemTable->BootServices->FreePages(*PageTable, 1);
+                return EFI_OUT_OF_RESOURCES;
+            }
+    Memset((VOID*)(*PageTable), 0, 4096);
+
+    // Calculate how many 512GB blocks we need
+    UINTN BlocksNeeded = (TotalMemory + 0x7FFFFFFFFFULL) / 0x8000000000ULL;
+    if (BlocksNeeded == 0) BlocksNeeded = 1; // At least one block
+
+    // For identity mapping, create 1GB block mappings in L1 tables
+    for (UINT64 Block = 0; Block < BlocksNeeded; Block++) {
+        // Allocate L1 table for this 512GB block
+        EFI_PHYSICAL_ADDRESS L1 = 0;
+        Status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiRuntimeServicesCode, 1, &L1);
+        if (EFI_ERROR(Status))
+        {
+            SystemTable->BootServices->FreePages(L1, 1);
+            return EFI_OUT_OF_RESOURCES;
+        }
+        Memset((VOID*)L1, 0, 4096);
+        
+        // Set L0 entry to point to L1 table
+        PageTable[Block] = (UINT64)L1 | ARM_TABLE_DESCRIPTOR;
+        
+        // Fill L1 table with 1GB block mappings for identity mapping
+        for (UINT16 L1Entry = 0; L1Entry < 512; ++L1Entry) {
+            UINT64 PhysicalAddress = (Block * 0x8000000000ULL) + (L1Entry * 0x40000000ULL);
+            ((EFI_PHYSICAL_ADDRESS*)L1)[L1Entry] = PhysicalAddress | ARM_KERNEL_FLAGS;
+        }
+    }
+
+    return EFI_SUCCESS;
+}
+

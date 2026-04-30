@@ -14,7 +14,7 @@ OpenRoot(
     EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *FS = NULL;
     EFI_STATUS Status;
 
-    // 1. Search the ENTIRE system for every handle that supports a filesystem
+    // Search the ENTIRE system for every handle that supports a filesystem
     Status = ST->BootServices->LocateHandleBuffer(
         ByProtocol, 
         &gEfiSimpleFileSystemProtocolGuid, 
@@ -28,7 +28,7 @@ OpenRoot(
         return Status;
     }
 
-    // 2. Try the first handle found (this is usually your boot disk)
+    // Try the first handle found (this is usually your boot disk)
     Status = ST->BootServices->HandleProtocol(
         Handles[0], 
         &gEfiSimpleFileSystemProtocolGuid, 

@@ -92,7 +92,10 @@ typedef struct PAGE_TABLE_INDICES
 
 
 EFI_STATUS
-Enable_Page_Table(IN PAGE_TABLE_T PageTable);
+Enable_Page_Table(
+        IN PAGE_TABLE_T LowerPageTable, 
+        IN PAGE_TABLE_T UpperPageTable
+);
 
 
 EFI_STATUS
@@ -105,6 +108,11 @@ Map_Memory(
         IN UINTN PageCount
 );
 
-
+EFI_STATUS 
+Create_Identity_Page_Table(
+        IN EFI_SYSTEM_TABLE *SystemTable, 
+        IN UINTN TotalMemory,
+        OUT PAGE_TABLE_T *PageTable
+);
 
 #endif
