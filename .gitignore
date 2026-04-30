@@ -6,4 +6,5 @@ module_exectables/
 *.o
 *.elf
 *.efi
+*.img
 *.disk
