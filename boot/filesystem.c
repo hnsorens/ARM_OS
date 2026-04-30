@@ -1,0 +1,128 @@
+#include "filesystem.h"
+
+static EFI_GUID gEfiSimpleFileSystemProtocolGuid = {0x964e5b22, 0x6459, 0x11d2, {0x8e, 0x39, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b}};
+static EFI_GUID gEfiFileInfoGuid = {0x09576e92, 0x6d3f, 0x11d2, {0x8e, 0x39, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b}};
+
+EFI_STATUS
+OpenRoot(
+    IN EFI_SYSTEM_TABLE *ST,
+    IN EFI_HANDLE ImageHandle,
+    OUT EFI_FILE_PROTOCOL **Root
+){
+    UINTN HandleCount = 0;
+    EFI_HANDLE *Handles = NULL;
+    EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *FS = NULL;
+    EFI_STATUS Status;
+
+    // 1. Search the ENTIRE system for every handle that supports a filesystem
+    Status = ST->BootServices->LocateHandleBuffer(
+        ByProtocol, 
+        &gEfiSimpleFileSystemProtocolGuid, 
+        NULL, 
+        &HandleCount, 
+        &Handles
+    );
+
+    if (Status != 0 || HandleCount == 0) {
+        ST->ConOut->OutputString(ST->ConOut, L"FAIL: No FAT32 volumes found in system database.\r\n");
+        return Status;
+    }
+
+    // 2. Try the first handle found (this is usually your boot disk)
+    Status = ST->BootServices->HandleProtocol(
+        Handles[0], 
+        &gEfiSimpleFileSystemProtocolGuid, 
+        (VOID **)&FS
+    );
+
+    if (Status == 0) {
+        Status = FS->OpenVolume(FS, Root);
+    }
+
+    // Clean up the memory allocated by LocateHandleBuffer
+    ST->BootServices->FreePool(Handles);
+    
+    return Status;
+}
+
+
+
+
+
+EFI_STATUS
+ReadFile(
+        IN CHAR16 *FileName,
+        IN EFI_FILE_PROTOCOL *Root,
+        IN EFI_SYSTEM_TABLE *SystemTable,
+        IN EFI_HANDLE ImageHandle,
+        OUT CHAR8 **Buffer
+)
+{
+    EFI_FILE_PROTOCOL *File = NULL;
+    EFI_FILE_INFO *FileInfo = NULL;
+    CHAR8 *FileBuffer = NULL;
+
+    EFI_STATUS Status;
+    Status = Root->Open(Root, &File, FileName, EFI_FILE_MODE_READ, 0);
+    if (EFI_ERROR(Status)) {
+        SystemTable->ConOut->OutputString(SystemTable->ConOut, L"Failed to open Root\n");
+        return Status;
+    }
+    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"Successfully Opened Root\n");
+
+    // Get File info to determine size
+    UINTN InfoSize = sizeof(EFI_FILE_INFO) + 128;
+    Status = SystemTable->BootServices->AllocatePool(EfiLoaderData, InfoSize, (VOID **)&FileInfo);
+    if (EFI_ERROR(Status)) {
+        SystemTable->ConOut->OutputString(SystemTable->ConOut, L"Failed to Allocate Kernel File Info\n");
+        File->Close(File);
+        return Status;
+    }
+    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"Successfully Allocated Kernel File Info\n");
+
+    Status = File->GetInfo(File, &gEfiFileInfoGuid, &InfoSize, FileInfo);
+    if (EFI_ERROR(Status)) {
+        SystemTable->ConOut->OutputString(SystemTable->ConOut, L"Failed to get File Info\n");
+        SystemTable->BootServices->FreePool(FileInfo);
+        File->Close(File);
+        return Status;
+    }
+    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"Successfully Kernel File Info\n");
+
+      // Allocate buffer for file content + null terminator
+      Status = SystemTable->BootServices->AllocatePool(
+          EfiLoaderData, FileInfo->FileSize + 1, (VOID**)&FileBuffer);
+      if (EFI_ERROR(Status)) {
+        SystemTable->ConOut->OutputString(SystemTable->ConOut, L"Failed to Allocate Kernel Space\n");
+        SystemTable->BootServices->FreePool(FileInfo);
+        File->Close(File);
+        return Status;
+      }
+      SystemTable->ConOut->OutputString(SystemTable->ConOut, L"Successfully Allocated Kernel Space\n");
+
+      // Read the entire file
+      UINTN ReadSize = FileInfo->FileSize;
+      Status = File->Read(File, &ReadSize, FileBuffer);
+      if (EFI_ERROR(Status) || ReadSize != FileInfo->FileSize) {
+          SystemTable->ConOut->OutputString(SystemTable->ConOut, L"Failed to Read File\n");
+        SystemTable->BootServices->FreePool(FileBuffer);
+        SystemTable->BootServices->FreePool(FileInfo);
+        File->Close(File);
+        return Status;
+      }
+      SystemTable->ConOut->OutputString(SystemTable->ConOut, L"Successfully Read Kernel\n");
+      
+      // Null-terminate the buffer
+      FileBuffer[FileInfo->FileSize] = '\0';
+      
+      // Clean up file resources
+      SystemTable->BootServices->FreePool(FileInfo);
+      File->Close(File);
+      FileInfo = NULL;
+      File = NULL;
+
+      *Buffer = FileBuffer;
+
+      return EFI_SUCCESS;
+}
+

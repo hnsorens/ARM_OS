@@ -3,6 +3,24 @@
 
 
 #define MEMORY_MAP_ENTRY_INDEX(Index) ((EFI_MEMORY_DESCRIPTOR*)((char*)EfiMemoryMap + RegionSize * Index))
+
+
+VOID*
+memcpy(VOID *Dest, CONST VOID *Src, UINTN N)
+{
+    UINT8 *D = Dest;
+    CONST UINT8 *S = Src;
+    while (N--) *D++ = *S++;
+    return Dest;
+}
+
+VOID* 
+memset(VOID *S, UINT32 C, UINTN N) {
+    UINT8* P = (UINT8*)S;
+    while (N--) *P++ = (UINT8)C;
+    return S;
+}
+
 static
 VOID
 SwapEfiMemoryRegions(
@@ -192,7 +210,7 @@ EFI_STATUS ExitBootServices(IN EFI_HANDLE ImageHandle,
       &MemoryMap.DescriptorSize, &MemoryMap.DescriptorVersion);
 
   if (Status != EFI_BUFFER_TOO_SMALL) {
-    Print(u"Unexpected error getting memory map size!");
+    SystemTable->ConOut->OutputString(SystemTable->ConOut, u"Unexpected error getting memory map size!");
     return Status;
   }
 
@@ -202,7 +220,7 @@ EFI_STATUS ExitBootServices(IN EFI_HANDLE ImageHandle,
       EfiLoaderData, MemoryMap.MemoryMapSize, (void **)&MemoryMap.MemoryMap);
 
   if (EFI_ERROR(Status)) {
-    Print(u"Failed to allocate memory map buffer!");
+    SystemTable->ConOut->OutputString(SystemTable->ConOut, u"Failed to allocate memory map buffer!");
     return Status;
   }
 
@@ -212,7 +230,7 @@ EFI_STATUS ExitBootServices(IN EFI_HANDLE ImageHandle,
       &MemoryMap.DescriptorSize, &MemoryMap.DescriptorVersion);
 
   if (EFI_ERROR(Status)) {
-    Print(u"Failed to get memory map!");
+    SystemTable->ConOut->OutputString(SystemTable->ConOut, u"Failed to get memory map!");
     return Status;
   }
 
@@ -226,7 +244,7 @@ EFI_STATUS ExitBootServices(IN EFI_HANDLE ImageHandle,
         &MemoryMap.DescriptorSize, &MemoryMap.DescriptorVersion);
 
     if (EFI_ERROR(Status)) {
-      Print(u"Failed to get updated memory map!");
+      SystemTable->ConOut->OutputString(SystemTable->ConOut, u"Failed to get updated memory map!");
       SystemTable->BootServices->FreePool(MemoryMap.MemoryMap);
       return Status;
     }
@@ -236,7 +254,7 @@ EFI_STATUS ExitBootServices(IN EFI_HANDLE ImageHandle,
   }
 
   if (EFI_ERROR(Status)) {
-    Print(u"ExitBootServices failed!");
+    SystemTable->ConOut->OutputString(SystemTable->ConOut, u"ExitBootServices failed!");
     SystemTable->BootServices->FreePool(MemoryMap.MemoryMap);
     return Status;
   }
