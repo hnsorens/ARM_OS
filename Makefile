@@ -86,8 +86,7 @@ $(MODULE_COMBINED_OBJS): $(BUILD_DIR)/modules/%.o:
 # --- 4. FINAL KERNEL LINK ---
 $(KERNEL_BIN): $(BUILD_DIR)/kernel/kernel.o $(MODULE_COMBINED_OBJS)
 	@echo "Linking final Kernel binary"
-	$(LD) $(K_LDFLAGS) $^ -o $(BUILD_DIR)/kernel.elf
-	$(OBJCOPY) -O binary $(BUILD_DIR)/kernel.elf $@
+	$(LD) $(K_LDFLAGS) $^ -o $(BUILD_DIR)/kernel.bin
 
 # --- 5. DISK IMAGE ---
 $(IMG): $(BOOTLOADER) $(KERNEL_BIN)

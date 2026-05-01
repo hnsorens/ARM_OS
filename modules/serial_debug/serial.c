@@ -1,6 +1,5 @@
 
 
-#include "serial_debug/serial_debug_impl.h"
 
 #include <stdarg.h>
 #include <stddef.h>
@@ -682,7 +681,4 @@ void serial_debug_start()
   serial_debug_serial_printf("UART Serial Out Initialized!\n");
   while (1);
 }
-
-MODULE_INIT(serial_debug_start);
-KERNEL_ENTRY(serial_debug_start);
 

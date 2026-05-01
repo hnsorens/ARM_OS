@@ -197,6 +197,7 @@ EFI_STATUS ExitBootServices(IN EFI_HANDLE ImageHandle,
                                    OUT MEMORY_MAP *KernelMemoryMap,
                                    OUT UINTN *RegionCount) {
   EFI_MEMORY_MAP MemoryMap;
+  SystemTable->ConOut->OutputString(SystemTable->ConOut, L"Beginning to Exit Boot Services!\n");
 
   MemoryMap.MemoryMapSize = 0;
   MemoryMap.MemoryMap = NULL;
@@ -213,6 +214,7 @@ EFI_STATUS ExitBootServices(IN EFI_HANDLE ImageHandle,
     SystemTable->ConOut->OutputString(SystemTable->ConOut, u"Unexpected error getting memory map size!");
     return Status;
   }
+  SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[Boot] Got Memory Map Size!\n");
 
   // allocate space for memory map buffer
   MemoryMap.MemoryMapSize += 2 * MemoryMap.DescriptorSize;
@@ -223,6 +225,7 @@ EFI_STATUS ExitBootServices(IN EFI_HANDLE ImageHandle,
     SystemTable->ConOut->OutputString(SystemTable->ConOut, u"Failed to allocate memory map buffer!");
     return Status;
   }
+  SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[Boot] Allocated Memory Map Buffer!\n");
 
   // populate memory map buffer with memory map
   Status = SystemTable->BootServices->GetMemoryMap(
@@ -233,6 +236,8 @@ EFI_STATUS ExitBootServices(IN EFI_HANDLE ImageHandle,
     SystemTable->ConOut->OutputString(SystemTable->ConOut, u"Failed to get memory map!");
     return Status;
   }
+
+  SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[Boot] Got Memory Map!\n");
 
   // exit boot services
   Status = SystemTable->BootServices->ExitBootServices(ImageHandle,

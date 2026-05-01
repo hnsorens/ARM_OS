@@ -56,7 +56,6 @@ efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
         SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[Boot] Failed to Exit Boot Services!\n");
         return Status;
     }
-    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[Boot] Exited Boot Services!\n");
 
     // Enable page tables
     Enable_Page_Table(LowerPageTable, UpperPageTable);
