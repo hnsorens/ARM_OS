@@ -26,11 +26,10 @@ EFI_CFLAGS  = -target aarch64-unknown-windows -I$(EFI_INC) \
 EFI_LDFLAGS = -target aarch64-unknown-windows -fuse-ld=lld-link -nostdlib \
               -Wl,-entry:efi_main -Wl,-subsystem:efi_application
 
-KERNEL_ADDR = 0xFFFFFFFF80000000
 KFLAGS      = -ffreestanding -fno-stack-protector -fno-stack-check \
               -mgeneral-regs-only -fno-builtin -nostdlib -mcmodel=large \
               -fno-pic -fno-plt -c
-K_LDFLAGS   = -static -Ttext $(KERNEL_ADDR) -e _start -nostdlib
+K_LDFLAGS   = -static -T kernel.ld -nostdlib
 
 # --- File Discovery ---
 BOOT_SRCS   = $(wildcard boot/*.c)

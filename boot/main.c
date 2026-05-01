@@ -32,6 +32,8 @@ efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
 
     EFI_STATUS Status;
 
+    serial_debug_start();
+
     EFI_FILE_PROTOCOL* Root = NULL;
     Status = OpenRoot(SystemTable, ImageHandle, &Root);
     if (EFI_ERROR(Status))
@@ -45,8 +47,8 @@ efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     CHAR8* Buffer;
     ReadFile(L"\\kernel.bin", Root, SystemTable, ImageHandle, &Buffer);
 
-    PAGE_TABLE_T LowerPageTable;
-    PAGE_TABLE_T UpperPageTable;
+    PAGE_TABLE_T LowerPageTable = 0;
+    PAGE_TABLE_T UpperPageTable = 0;
 
     Status = Load_Kernel(SystemTable, Buffer, &UpperPageTable);
     if (EFI_ERROR(Status))
@@ -71,7 +73,6 @@ efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     }
     SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[Boot] Created Lower Identity Page Table!\n");
 
-    serial_debug_start();
 
     MEMORY_MAP MemoryMap;
     UINTN MemoryMapRegionsCount;

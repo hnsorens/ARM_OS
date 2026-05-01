@@ -1,6 +1,16 @@
 #include "elf_loader.h"
+#include "serial.h"
 
 #define PAGE_SIZE 4096
+
+VOID*
+Memcpy(VOID *Dest, CONST VOID *Src, UINTN N)
+{
+    UINT8 *D = Dest;
+    CONST UINT8 *S = Src;
+    while (N--) *D++ = *S++;
+    return Dest;
+}
 
 static BOOLEAN
 Verify_Elf(Elf64_Ehdr *Header)
@@ -44,8 +54,11 @@ Load_Kernel(
                 SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[Boot] Failed to Allocate Kernel Load Segment!\n");
                 return EFI_OUT_OF_RESOURCES;
             }
+            serial_debug_serial_printf("Physical: %lx, VirtualL %lx, Pagesize: %lu, Pmemz: %lu\n", SegmentPhysicalAddress, Phdr[I].p_vaddr, SegmentPageCount, Phdr[I].p_memsz);
 
-            Status = Map_Memory(SystemTable, UpperPageTable, Phdr[I].p_vaddr, SegmentPhysicalAddress, 0, SegmentPageCount);
+            Memcpy((VOID*)SegmentPhysicalAddress, ((UINT8*)Ehdr + Phdr[I].p_offset), Phdr[I].p_memsz);
+
+            Status = Map_Memory(SystemTable, UpperPageTable, Phdr[I].p_vaddr - 0xFFFF000000000000, SegmentPhysicalAddress, 0, SegmentPageCount);
             if (EFI_ERROR(Status))
             {
                 SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[Boot] Failed to Map Kernel Load Segment!\n");

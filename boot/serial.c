@@ -669,6 +669,6 @@ void serial_debug_start()
   // Enable UART, enable transmit & receive
   mmio_write(UART0_BASE + UARTCR, (1 << 0) | (1 << 8) | (1 << 9));
 
-  serial_debug_serial_printf("UART Serial Out Initialized!\n");
+  serial_debug_serial_printf("[Boot] UART Serial Out Initialized!\n");
 }
 
