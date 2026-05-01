@@ -103,7 +103,13 @@ $(IMG): $(BOOTLOADER) $(KERNEL_BIN)
 run: $(IMG)
 	qemu-system-aarch64 -m 16G -cpu cortex-a72 -M virt -bios $(QEMU_FW) \
 		-serial stdio -drive file=$(IMG),format=raw,if=none,id=d0 \
-		-device virtio-blk-device,drive=d0
+		-device virtio-blk-device,drive=d0 \
+        -gdb tcp::1234
+
+debug:
+	$(MAKE) run & \
+	sleep 10 && \
+	kitty -- aarch64-linux-gnu-gdb -ex "target remote :1234"
 
 clean:
 	rm -rf $(BUILD_DIR) $(IMG)

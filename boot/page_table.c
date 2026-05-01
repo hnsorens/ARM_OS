@@ -3,6 +3,8 @@
 #include "efidef.h"
 #include "efierr.h"
 
+#include "serial.h"
+
 VOID*
 Memset(
         IN VOID* Ptr, 
@@ -56,7 +58,7 @@ Enable_Page_Table(
                     MAIR_ATTR(MAIR_DEVICE_nGnRE, MAIR_IDX_DEVICE);
     __asm__ volatile("msr mair_el1, %0" : : "r"(Mair));
 
-    
+    serial_debug_serial_printf("[Boot] Set Mair!\n");
     // Configure Translation Control
     UINT64 Tcr = (TCR_TBI_DISABLE << TCR_TBI_SHIFT) |
                    (TCR_IPS_40BIT << TCR_IPS_SHIFT) |
@@ -71,10 +73,13 @@ Enable_Page_Table(
                    (TCR_T0SZ_48BIT << TCR_T1SZ_SHIFT) |
                    (TCR_T0SZ_48BIT << TCR_T0SZ_SHIFT);
     __asm__ volatile("msr tcr_el1, %0" : : "r"(Tcr));
+    serial_debug_serial_printf("[Boot] Set TCR!\n");
 
     // Set Page Table Bases
     __asm__ volatile("msr ttbr0_el1, %0" : : "r"((UINT64)LowerPageTable));
     __asm__ volatile("msr ttbr1_el1, %0" : : "r"((UINT64)UpperPageTable));
+
+    serial_debug_serial_printf("[Boot] Set Page Table Pointers!\n");
 
     // Invalidate TLB
     __asm__ volatile("dsb sy");
@@ -82,12 +87,16 @@ Enable_Page_Table(
     __asm__ volatile("dsb sy");
     __asm__ volatile("isb");
 
+    serial_debug_serial_printf("[Boot] Invalidated TLB!\n");
+
     // Enable MMU
     UINT64 Sctlr;
     __asm__ volatile("mrs %0, sctlr_el1" : "=r"(Sctlr));
     Sctlr |= SCTLR_M_ENABLE | SCTLR_C_ENABLE | SCTLR_I_ENABLE;
     __asm__ volatile("msr sctlr_el1, %0" : : "r"(Sctlr));
     __asm__ volatile("isb");
+
+    serial_debug_serial_printf("[Boot] Enabled MMU!\n");
 
     return EFI_SUCCESS;
 }
@@ -207,7 +216,7 @@ Status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiRuntimeSe
             if (EFI_ERROR(Status))
             {
                 SystemTable->BootServices->FreePages(*PageTable, 1);
-                return EFI_OUT_OF_RESOURCES;
+                return Status;
             }
     Memset((VOID*)(*PageTable), 0, 4096);
 
@@ -223,12 +232,12 @@ Status = SystemTable->BootServices->AllocatePages(AllocateAnyPages, EfiRuntimeSe
         if (EFI_ERROR(Status))
         {
             SystemTable->BootServices->FreePages(L1, 1);
-            return EFI_OUT_OF_RESOURCES;
+            return Status;
         }
         Memset((VOID*)L1, 0, 4096);
         
         // Set L0 entry to point to L1 table
-        PageTable[Block] = (UINT64)L1 | ARM_TABLE_DESCRIPTOR;
+        ((EFI_PHYSICAL_ADDRESS*)*PageTable)[Block] = (UINT64)L1 | ARM_TABLE_DESCRIPTOR;
         
         // Fill L1 table with 1GB block mappings for identity mapping
         for (UINT16 L1Entry = 0; L1Entry < 512; ++L1Entry) {

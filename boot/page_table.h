@@ -71,12 +71,12 @@ typedef struct PAGE_TABLE_INDICES
 #define TCR_IRGN0_SHIFT    8
 #define TCR_T0SZ_SHIFT     0
 
-#define TCR_TBI_DISABLE    0b00
-#define TCR_IPS_40BIT      25UL
-#define TCR_TG_4KB         0b00
-#define TCR_SH_INNER       0b11
-#define TCR_RGN_WB         0b01
-#define TCR_T0SZ_48BIT     (64 - 48)
+#define TCR_TBI_DISABLE    0b00ULL
+#define TCR_IPS_40BIT      0b10ULL
+#define TCR_TG_4KB         0b00ULL
+#define TCR_SH_INNER       0b11ULL
+#define TCR_RGN_WB         0b01ULL
+#define TCR_T0SZ_48BIT     (64ULL - 48ULL)
 
 // MAIR_EL1 Macros  
 #define MAIR_NORMAL_WB     0xFFUL
