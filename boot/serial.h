@@ -2,7 +2,6 @@
 #define SERIAL_H
 
 #include <efi.h>
-#include <efilib.h>
 
 UINTN
 Boot_Log(

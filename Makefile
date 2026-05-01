@@ -52,6 +52,7 @@ dirs:
 
 # --- 1. BOOTLOADER BUILD ---
 $(BUILD_DIR)/boot/%.o: boot/%.c
+	clang-format -i $<
 	$(CLANG) $(EFI_CFLAGS) $< -o $@
 
 $(BOOTLOADER): $(BOOT_OBJS)
@@ -62,6 +63,7 @@ $(BOOTLOADER): $(BOOT_OBJS)
 $(BUILD_DIR)/kernel/kernel.o: $(wildcard kernel/*.c)
 	@echo "Combining Kernel objects into $@"
 	@for src in $^; do \
+		clang-format -i $$src; \
 		obj=$(BUILD_DIR)/kernel/$$(basename $${src%.c}.tmp.o); \
 		$(CC) $(KFLAGS) $$src -o $$obj; \
 	done
@@ -76,6 +78,7 @@ $(MODULE_COMBINED_OBJS): $(BUILD_DIR)/modules/%.o:
 	@mkdir -p $(OBJ_DIR)
 	@echo "Combining Module $(SRC_DIR) into $@"
 	@for src in $(wildcard $(SRC_DIR)/*.c); do \
+		clang-format -i %%src; \
 		obj=$(OBJ_DIR)/$$(basename $${src%.c}.tmp.o); \
 		$(CC) $(KFLAGS) $$src -o $$obj; \
 	done

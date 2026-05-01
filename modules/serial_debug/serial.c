@@ -116,7 +116,7 @@ static char *itoa(int64_t num, char *str, int base, bool uppercase) {
     }
     
     // Convert using unsigned function
-    utoa((uint64_t)num, ptr, base, uppercase);
+    utoa((uint64_t)num, ptr, base,                    uppercase);
     
     // Add minus sign if needed
     if (negative) {
