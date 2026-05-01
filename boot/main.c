@@ -78,7 +78,7 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
 		Boot_Log("Failed to allocate stack\n", 25);
 		return Status;
 	}
-	Boot_Log("Allocated Stack!\n", 17);
+	Boot_Log("Allocated Stack\n", 16);
 
 	Status = Map_Memory(SystemTable, &UpperPageTable, 0xFFFF800000000000,
 			    StackPhysicalAddress, 0, STACK_SIZE_PAGES);

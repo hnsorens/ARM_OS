@@ -51,7 +51,7 @@ Enable_Page_Table(IN PAGE_TABLE_T LowerPageTable,
 		      MAIR_ATTR(MAIR_DEVICE_nGnRE, MAIR_IDX_DEVICE);
 	__asm__ volatile("msr mair_el1, %0" : : "r"(Mair));
 
-	Boot_Log("Set mair!\n", 10);
+	Boot_Log("Set mair\n", 9);
 
 	// Configure Translation Control
 	UINT64 Tcr = (TCR_TBI_DISABLE << TCR_TBI_SHIFT) |
