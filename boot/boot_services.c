@@ -1,4 +1,5 @@
 #include "boot_services.h"
+#include "serial.h"
 
 
 
@@ -197,7 +198,6 @@ EFI_STATUS ExitBootServices(IN EFI_HANDLE ImageHandle,
                                    OUT MEMORY_MAP *KernelMemoryMap,
                                    OUT UINTN *RegionCount) {
   EFI_MEMORY_MAP MemoryMap;
-  SystemTable->ConOut->OutputString(SystemTable->ConOut, L"Beginning to Exit Boot Services!\n");
 
   MemoryMap.MemoryMapSize = 0;
   MemoryMap.MemoryMap = NULL;
@@ -211,10 +211,10 @@ EFI_STATUS ExitBootServices(IN EFI_HANDLE ImageHandle,
       &MemoryMap.DescriptorSize, &MemoryMap.DescriptorVersion);
 
   if (Status != EFI_BUFFER_TOO_SMALL) {
-    SystemTable->ConOut->OutputString(SystemTable->ConOut, u"Unexpected error getting memory map size!");
+    Boot_Log("Failed to get memory map size\n", 30);
     return Status;
   }
-  SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[Boot] Got Memory Map Size!\n");
+  Boot_Log("Got memory map size\n", 20);
 
   // allocate space for memory map buffer
   MemoryMap.MemoryMapSize += 2 * MemoryMap.DescriptorSize;
@@ -222,10 +222,10 @@ EFI_STATUS ExitBootServices(IN EFI_HANDLE ImageHandle,
       EfiLoaderData, MemoryMap.MemoryMapSize, (void **)&MemoryMap.MemoryMap);
 
   if (EFI_ERROR(Status)) {
-    SystemTable->ConOut->OutputString(SystemTable->ConOut, u"Failed to allocate memory map buffer!");
+    Boot_Log("Failed to allocate memory map buffer\n", 37);
     return Status;
   }
-  SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[Boot] Allocated Memory Map Buffer!\n");
+  Boot_Log("Allocated memory map buffer\n", 28);
 
   // populate memory map buffer with memory map
   Status = SystemTable->BootServices->GetMemoryMap(
@@ -233,11 +233,11 @@ EFI_STATUS ExitBootServices(IN EFI_HANDLE ImageHandle,
       &MemoryMap.DescriptorSize, &MemoryMap.DescriptorVersion);
 
   if (EFI_ERROR(Status)) {
-    SystemTable->ConOut->OutputString(SystemTable->ConOut, u"Failed to get memory map!");
+    Boot_Log("Failed to get memory map\n", 25);
     return Status;
   }
 
-  SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[Boot] Got Memory Map!\n");
+  Boot_Log("Found memory map\n", 17);
 
   // exit boot services
   Status = SystemTable->BootServices->ExitBootServices(ImageHandle,
@@ -249,7 +249,7 @@ EFI_STATUS ExitBootServices(IN EFI_HANDLE ImageHandle,
         &MemoryMap.DescriptorSize, &MemoryMap.DescriptorVersion);
 
     if (EFI_ERROR(Status)) {
-      SystemTable->ConOut->OutputString(SystemTable->ConOut, u"Failed to get updated memory map!");
+      Boot_Log("Failed to get updated memory map\n", 33);
       SystemTable->BootServices->FreePool(MemoryMap.MemoryMap);
       return Status;
     }
@@ -259,7 +259,7 @@ EFI_STATUS ExitBootServices(IN EFI_HANDLE ImageHandle,
   }
 
   if (EFI_ERROR(Status)) {
-    SystemTable->ConOut->OutputString(SystemTable->ConOut, u"ExitBootServices failed!");
+    Boot_Log("ExitBootServices failed\n", 24);
     SystemTable->BootServices->FreePool(MemoryMap.MemoryMap);
     return Status;
   }

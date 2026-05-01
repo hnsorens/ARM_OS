@@ -1,4 +1,5 @@
 #include "filesystem.h"
+#include "serial.h"
 
 static EFI_GUID gEfiSimpleFileSystemProtocolGuid = {0x964e5b22, 0x6459, 0x11d2, {0x8e, 0x39, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b}};
 static EFI_GUID gEfiFileInfoGuid = {0x09576e92, 0x6d3f, 0x11d2, {0x8e, 0x39, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b}};
@@ -24,7 +25,8 @@ OpenRoot(
     );
 
     if (Status != 0 || HandleCount == 0) {
-        ST->ConOut->OutputString(ST->ConOut, L"FAIL: No FAT32 volumes found in system database.\r\n");
+        Boot_Log("No Fat32 volumes found in system\n", 33);
+
         return Status;
     }
 
@@ -65,52 +67,52 @@ ReadFile(
     EFI_STATUS Status;
     Status = Root->Open(Root, &File, FileName, EFI_FILE_MODE_READ, 0);
     if (EFI_ERROR(Status)) {
-        SystemTable->ConOut->OutputString(SystemTable->ConOut, L"Failed to open Root\n");
+        Boot_Log("Failed to open root\n", 20);
         return Status;
     }
-    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"Successfully Opened Root\n");
+    Boot_Log("Opened Root\n", 12);
 
     // Get File info to determine size
     UINTN InfoSize = sizeof(EFI_FILE_INFO) + 128;
     Status = SystemTable->BootServices->AllocatePool(EfiLoaderData, InfoSize, (VOID **)&FileInfo);
     if (EFI_ERROR(Status)) {
-        SystemTable->ConOut->OutputString(SystemTable->ConOut, L"Failed to Allocate Kernel File Info\n");
+        Boot_Log("Failed to allocate kernel file info\n", 36);
         File->Close(File);
         return Status;
     }
-    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"Successfully Allocated Kernel File Info\n");
+    Boot_Log("Allocated kernel file info\n", 27);
 
     Status = File->GetInfo(File, &gEfiFileInfoGuid, &InfoSize, FileInfo);
     if (EFI_ERROR(Status)) {
-        SystemTable->ConOut->OutputString(SystemTable->ConOut, L"Failed to get File Info\n");
+        Boot_Log("Failed to get file info\n", 24);
         SystemTable->BootServices->FreePool(FileInfo);
         File->Close(File);
         return Status;
     }
-    SystemTable->ConOut->OutputString(SystemTable->ConOut, L"Successfully Kernel File Info\n");
+    Boot_Log("Found kernel file info\n", 23);
 
       // Allocate buffer for file content + null terminator
       Status = SystemTable->BootServices->AllocatePool(
           EfiLoaderData, FileInfo->FileSize + 1, (VOID**)&FileBuffer);
       if (EFI_ERROR(Status)) {
-        SystemTable->ConOut->OutputString(SystemTable->ConOut, L"Failed to Allocate Kernel Space\n");
+        Boot_Log("Failed to allocate kernel space\n", 32);
         SystemTable->BootServices->FreePool(FileInfo);
         File->Close(File);
         return Status;
       }
-      SystemTable->ConOut->OutputString(SystemTable->ConOut, L"Successfully Allocated Kernel Space\n");
+      Boot_Log("Allocated kernel space\n", 23);
 
       // Read the entire file
       UINTN ReadSize = FileInfo->FileSize;
       Status = File->Read(File, &ReadSize, FileBuffer);
       if (EFI_ERROR(Status) || ReadSize != FileInfo->FileSize) {
-          SystemTable->ConOut->OutputString(SystemTable->ConOut, L"Failed to Read File\n");
+          Boot_Log("Failed to read file\n", 20);
         SystemTable->BootServices->FreePool(FileBuffer);
         SystemTable->BootServices->FreePool(FileInfo);
         File->Close(File);
         return Status;
       }
-      SystemTable->ConOut->OutputString(SystemTable->ConOut, L"Successfully Read Kernel\n");
+      Boot_Log("Read Kernel\n", 12);
       
       // Null-terminate the buffer
       FileBuffer[FileInfo->FileSize] = '\0';

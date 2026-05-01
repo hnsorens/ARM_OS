@@ -1,5 +1,4 @@
 #include "elf_loader.h"
-#include "serial.h"
 
 #define PAGE_SIZE 4096
 
@@ -55,7 +54,6 @@ Load_Kernel(
                 SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[Boot] Failed to Allocate Kernel Load Segment!\n");
                 return EFI_OUT_OF_RESOURCES;
             }
-            serial_debug_serial_printf("Physical: %lx, VirtualL %lx, Pagesize: %lu, Pmemz: %lu\n", SegmentPhysicalAddress, Phdr[I].p_vaddr, SegmentPageCount, Phdr[I].p_memsz);
 
             Memcpy((VOID*)SegmentPhysicalAddress, ((UINT8*)Ehdr + Phdr[I].p_offset), Phdr[I].p_memsz);
 

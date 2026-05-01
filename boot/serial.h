@@ -4,8 +4,14 @@
 #include <efi.h>
 #include <efilib.h>
 
-void serial_debug_start();
+UINTN
+Boot_Log(
+        IN CONST CHAR8 *Str, 
+        IN UINTN N
+);
 
-int serial_debug_serial_printf(char *format, ...);
+VOID
+Boot_Log_Start();
+
 
 #endif

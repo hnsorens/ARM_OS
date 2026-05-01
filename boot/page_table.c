@@ -1,5 +1,4 @@
 #include "page_table.h"
-#include "boot_services.h"
 #include "efidef.h"
 #include "efierr.h"
 
@@ -58,7 +57,8 @@ Enable_Page_Table(
                     MAIR_ATTR(MAIR_DEVICE_nGnRE, MAIR_IDX_DEVICE);
     __asm__ volatile("msr mair_el1, %0" : : "r"(Mair));
 
-    serial_debug_serial_printf("[Boot] Set Mair!\n");
+    Boot_Log("Set mair!\n", 10);
+
     // Configure Translation Control
     UINT64 Tcr = (TCR_TBI_DISABLE << TCR_TBI_SHIFT) |
                    (TCR_IPS_40BIT << TCR_IPS_SHIFT) |
@@ -73,13 +73,13 @@ Enable_Page_Table(
                    (TCR_T0SZ_48BIT << TCR_T1SZ_SHIFT) |
                    (TCR_T0SZ_48BIT << TCR_T0SZ_SHIFT);
     __asm__ volatile("msr tcr_el1, %0" : : "r"(Tcr));
-    serial_debug_serial_printf("[Boot] Set TCR!\n");
+    Boot_Log("Set TCR\n", 8);
 
     // Set Page Table Bases
     __asm__ volatile("msr ttbr0_el1, %0" : : "r"((UINT64)LowerPageTable));
     __asm__ volatile("msr ttbr1_el1, %0" : : "r"((UINT64)UpperPageTable));
 
-    serial_debug_serial_printf("[Boot] Set Page Table Pointers!\n");
+    Boot_Log("Set page table pointers\n", 24);
 
     // Invalidate TLB
     __asm__ volatile("dsb sy");
@@ -87,7 +87,7 @@ Enable_Page_Table(
     __asm__ volatile("dsb sy");
     __asm__ volatile("isb");
 
-    serial_debug_serial_printf("[Boot] Invalidated TLB!\n");
+    Boot_Log("Invalidated TLB\n", 16);
 
     // Enable MMU
     UINT64 Sctlr;
@@ -96,7 +96,7 @@ Enable_Page_Table(
     __asm__ volatile("msr sctlr_el1, %0" : : "r"(Sctlr));
     __asm__ volatile("isb");
 
-    serial_debug_serial_printf("[Boot] Enabled MMU!\n");
+    Boot_Log("Enabled MMU\n", 12);
 
     return EFI_SUCCESS;
 }
