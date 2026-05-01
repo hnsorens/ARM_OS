@@ -25,7 +25,8 @@ EFI_STATUS
 Load_Kernel(
         IN EFI_SYSTEM_TABLE *SystemTable,
         IN CHAR8 *KernelElfBuffer,
-        OUT PAGE_TABLE_T *UpperPageTable
+        OUT PAGE_TABLE_T *UpperPageTable,
+        OUT EFI_VIRTUAL_ADDRESS *Entry
 )
 {
     EFI_STATUS Status;
@@ -66,6 +67,8 @@ Load_Kernel(
             }
         }
     }
+
+    *Entry = Ehdr->e_entry;
 
     return EFI_SUCCESS;
 }

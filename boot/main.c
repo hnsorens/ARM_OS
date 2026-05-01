@@ -26,6 +26,18 @@ void IntToHexStr(UINT64 Value, CHAR16* Buffer) {
 
 #define PRINT_NUMBER(label, number) {CHAR16 Buffer[50]; IntToHexStr((number), Buffer); SystemTable->ConOut->OutputString(SystemTable->ConOut, (label)); SystemTable->ConOut->OutputString(SystemTable->ConOut, Buffer); SystemTable->ConOut->OutputString(SystemTable->ConOut, L"\n");}
 
+VOID
+Jump_To_Kernel(EFI_VIRTUAL_ADDRESS Entry)
+{
+    __asm__ volatile (
+            "mov x0, %0\n\t"
+            "br x0"
+            :
+            : "r"(Entry)
+            : "x0"
+            );
+}
+
 EFI_STATUS
 EFIAPI
 efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
@@ -50,7 +62,8 @@ efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
     PAGE_TABLE_T LowerPageTable = 0;
     PAGE_TABLE_T UpperPageTable = 0;
 
-    Status = Load_Kernel(SystemTable, Buffer, &UpperPageTable);
+    EFI_VIRTUAL_ADDRESS Entry = 0;
+    Status = Load_Kernel(SystemTable, Buffer, &UpperPageTable, &Entry);
     if (EFI_ERROR(Status))
     {
         SystemTable->ConOut->OutputString(SystemTable->ConOut, L"[Boot] Failed to Load Kernel!\n");
@@ -87,6 +100,8 @@ efi_main (EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
 
     // Enable page tables
     Enable_Page_Table(LowerPageTable, UpperPageTable);
+
+    Jump_To_Kernel(Entry);
 
     while(1) { __asm__ volatile("wfi"); }
     return EFI_SUCCESS;
