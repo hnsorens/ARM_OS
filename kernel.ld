@@ -22,6 +22,14 @@ SECTIONS
         . = ALIGN(4K);
     }
 
+    . = ALIGN(4K);
+    .k_vtables : {
+        __vtable_all_start = .;
+        KEEP(*(.k_vtables.all))
+        . = ALIGN(8);
+        __vtable_all_end = .;
+     }
+
     .data ALIGN(4K) : AT(ADDR(.data) - _kernel_virtual_base)
     {
         _data = .;

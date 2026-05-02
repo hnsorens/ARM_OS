@@ -7,6 +7,9 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "serial.h"
+
+
 // PL011 UART Registers (ARM Versatile Express base)
 #define UART0_BASE 0x09000000
 
@@ -653,7 +656,7 @@ int vprintf(const char *format, va_list args) {
     return count;
 }
 
-int serial_debug_serial_printf(char *format, ...) {
+int serial_debug_serial_printf(const char *format, ...) {
     va_list args;
     va_start(args, format);
     int count = vprintf(format, args);
@@ -661,24 +664,7 @@ int serial_debug_serial_printf(char *format, ...) {
     return count;
 }
 
-__attribute__((visibility("default")))
-void serial_debug_start()
-{
-    // Disable UART
-  mmio_write(UART0_BASE + UARTCR, 0);
-  
-  // Set baud rate to 115200
-  // (UARTCLK = 24MHz, baud = 115200)
-  mmio_write(UART0_BASE + UARTIBRD, 13);
-  mmio_write(UART0_BASE + UARTFBRD, 1);
-  
-  // Set line control: 8 bits, no parity, 1 stop bit, FIFOs enabled
-  mmio_write(UART0_BASE + UARTLCR_H, (1 << 4) | (1 << 5) | (1 << 6));
-  
-  // Enable UART, enable transmit & receive
-  mmio_write(UART0_BASE + UARTCR, (1 << 0) | (1 << 8) | (1 << 9));
 
-  serial_debug_serial_printf("UART Serial Out Initialized!\n");
-  while (1);
-}
-
+REGISTER_MODULE(0, SerialDeviceInterface, {
+        .printf = serial_debug_serial_printf
+});
