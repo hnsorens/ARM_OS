@@ -8,6 +8,7 @@
 #include "serial.h"
 #include "bootinfo.h"
 #include "kernel_loader.h"
+#include "module_registry.h"
 
 #define STACK_SIZE_PAGES 0x100
 

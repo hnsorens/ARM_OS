@@ -136,7 +136,7 @@ Load_Module(EFI_SYSTEM_TABLE *SystemTable, EFI_HANDLE ImageHandle,
 	NameBuffer[NameLength + 4] = 'f';
 	NameBuffer[NameLength + 5] = '\0';
 
-	CHAR8 *ModuleBuffer;
+	CHAR8 *ModuleBuffer = 0;
 	ReadFile(NameBuffer, Root, SystemTable, ImageHandle, &ModuleBuffer);
 
 	Load_Elf(SystemTable, ModuleBuffer, 0, PageTable, Entry);

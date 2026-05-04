@@ -13,4 +13,7 @@ VOID
 Boot_Log_Start();
 
 
+int serial_debug_serial_printf(const char *format, ...);
+
+
 #endif
