@@ -120,6 +120,7 @@ Load_Module(EFI_SYSTEM_TABLE *SystemTable, EFI_HANDLE ImageHandle,
 	    EFI_FILE_PROTOCOL *Root, CHAR8 *Name, PAGE_TABLE_T *PageTable,
 	    EFI_VIRTUAL_ADDRESS *Entry)
 {
+	Boot_Log("Loading a module\n", 17);
 	CHAR16 NameBuffer[256];
 
 	NameBuffer[0] = '\\';
@@ -153,6 +154,7 @@ static VOID Parse_Config(EFI_SYSTEM_TABLE *SystemTable, EFI_HANDLE ImageHandle,
 	INT32 InSection = 0;
 
 	while (Line != 0) {
+		Boot_Log(Line, Strlen(Line));
 		// Skip comments and empty lines
 		if (Line[0] == ';' || Line[0] == '#' || Line[0] == '\r' ||
 		    Line[0] == '\n' || Line[0] == '\0') {
@@ -164,6 +166,7 @@ static VOID Parse_Config(EFI_SYSTEM_TABLE *SystemTable, EFI_HANDLE ImageHandle,
 		if (Line[0] == '[') {
 			if (Strncmp(Line, "[Modules]", 9) == 0) {
 				InSection = 1;
+				Boot_Log("[] IN MODULE\n", 13);
 			} else {
 				InSection = 0;
 			}
@@ -177,6 +180,8 @@ static VOID Parse_Config(EFI_SYSTEM_TABLE *SystemTable, EFI_HANDLE ImageHandle,
 				CHAR8 *Name = Trim(Line);
 				CHAR8 *Status = Trim(EqualSign + 1);
 
+				Boot_Log("[] Found Something\n", 19);
+
 				if (Status[0] == 'Y' || Status[0] == 'y') {
 					EFI_VIRTUAL_ADDRESS Entry;
 					Load_Module(SystemTable, ImageHandle,
@@ -185,6 +190,7 @@ static VOID Parse_Config(EFI_SYSTEM_TABLE *SystemTable, EFI_HANDLE ImageHandle,
 				}
 			}
 		}
+		Line = Strtok(0, "\n");
 	}
 }
 

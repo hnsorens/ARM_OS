@@ -17,7 +17,7 @@ BUILD_DIR  = build
 BOOTLOADER = $(BUILD_DIR)/bootloader.efi
 KERNEL_BIN = $(BUILD_DIR)/kernel.bin
 IMG        = disk.img
-KERNEL_CONFIG = kernel.ini
+KERNEL_INI = kernel.ini
 
 # --- Flags ---
 EFI_CFLAGS  = -target aarch64-unknown-windows -I$(EFI_INC) \
@@ -102,7 +102,7 @@ $(IMG): $(BOOTLOADER) $(KERNEL_BIN)
 	mmd -i $(IMG)@@1M ::/EFI/BOOT
 	mcopy -i $(IMG)@@1M $(BOOTLOADER) ::/EFI/BOOT/BOOTAA64.EFI
 	mcopy -i $(IMG)@@1M $(KERNEL_BIN) ::/kernel.elf
-    mcopy -i $(IMG)@@1M $(KERNEL_CONFIG) ::/kernel.ini
+	mcopy -i $(IMG)@@1M $(KERNEL_INI) ::/kernel.ini
 
 run: $(IMG)
 	qemu-system-aarch64 -m 16G -cpu cortex-a72 -M virt -bios $(QEMU_FW) \

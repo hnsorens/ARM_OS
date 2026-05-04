@@ -24,6 +24,9 @@ Load_Elf(IN EFI_SYSTEM_TABLE *SystemTable, IN CHAR8 *ElfBuffer,
 	 IN UINT64 LoadOffset, OUT PAGE_TABLE_T *UpperPageTable,
 	 OUT EFI_VIRTUAL_ADDRESS *Entry)
 {
+	if (!ElfBuffer)
+		return EFI_LOAD_ERROR;
+
 	EFI_STATUS Status;
 
 	Elf64_Ehdr *Ehdr = (Elf64_Ehdr *)ElfBuffer;
