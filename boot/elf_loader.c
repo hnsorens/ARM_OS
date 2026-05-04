@@ -4,7 +4,7 @@
 
 #define PAGE_SIZE 4096
 
-VOID *Memcpy(VOID *Dest, CONST VOID *Src, UINTN N)
+static VOID *Memcpy(VOID *Dest, CONST VOID *Src, UINTN N)
 {
 	UINT8 *D = Dest;
 	CONST UINT8 *S = Src;
@@ -20,12 +20,13 @@ static BOOLEAN Verify_Elf(Elf64_Ehdr *Header)
 }
 
 EFI_STATUS
-Load_Kernel(IN EFI_SYSTEM_TABLE *SystemTable, IN CHAR8 *KernelElfBuffer,
-	    OUT PAGE_TABLE_T *UpperPageTable, OUT EFI_VIRTUAL_ADDRESS *Entry)
+Load_Elf(IN EFI_SYSTEM_TABLE *SystemTable, IN CHAR8 *ElfBuffer,
+	 IN UINT64 LoadOffset, OUT PAGE_TABLE_T *UpperPageTable,
+	 OUT EFI_VIRTUAL_ADDRESS *Entry)
 {
 	EFI_STATUS Status;
 
-	Elf64_Ehdr *Ehdr = (Elf64_Ehdr *)KernelElfBuffer;
+	Elf64_Ehdr *Ehdr = (Elf64_Ehdr *)ElfBuffer;
 
 	// Verify that Kernel is an Elf File
 	if (!Verify_Elf(Ehdr)) {
@@ -35,7 +36,7 @@ Load_Kernel(IN EFI_SYSTEM_TABLE *SystemTable, IN CHAR8 *KernelElfBuffer,
 		return EFI_LOAD_ERROR;
 	}
 
-	Link_Elf_Module(0xFFFF800000000000, KernelElfBuffer);
+	Link_Elf_Module(LoadOffset + 0xFFFF800000000000, ElfBuffer);
 
 	Elf64_Phdr *Phdr = (Elf64_Phdr *)((UINT8 *)Ehdr + Ehdr->e_phoff);
 
@@ -70,7 +71,6 @@ Load_Kernel(IN EFI_SYSTEM_TABLE *SystemTable, IN CHAR8 *KernelElfBuffer,
 				return EFI_LOAD_ERROR;
 			}
 		}
-		EFI_VIRTUAL_ADDRESS ModBase = 0xFFFF800000000000;
 	}
 
 	*Entry = Ehdr->e_entry;

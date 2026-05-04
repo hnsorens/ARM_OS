@@ -7,6 +7,7 @@
 #include "elf_loader.h"
 #include "serial.h"
 #include "bootinfo.h"
+#include "kernel_loader.h"
 
 #define STACK_SIZE_PAGES 0x100
 
@@ -41,14 +42,16 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
 	Boot_Log("Opened root\n", 12);
 
 	// Read kernel elf file
-	CHAR8 *Buffer;
-	ReadFile(L"\\kernel.bin", Root, SystemTable, ImageHandle, &Buffer);
+	//CHAR8 *Buffer;
+	//ReadFile(L"\\kernel.bin", Root, SystemTable, ImageHandle, &Buffer);
 
 	PAGE_TABLE_T LowerPageTable = 0;
 	PAGE_TABLE_T UpperPageTable = 0;
 
-	EFI_VIRTUAL_ADDRESS Entry = 0;
-	Status = Load_Kernel(SystemTable, Buffer, &UpperPageTable, &Entry);
+	EFI_VIRTUAL_ADDRESS Entry;
+	Load_Kernel(SystemTable, ImageHandle, Root, L"\\kernel.ini", &Entry,
+		    &UpperPageTable);
+
 	if (EFI_ERROR(Status)) {
 		Boot_Log("Failed to load kernel\n", 22);
 		return Status;
@@ -56,7 +59,7 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
 	Boot_Log("Loaded kernel\n", 14);
 
 	// Free loaded elf file after its use is finished
-	SystemTable->BootServices->FreePool(Buffer);
+	//SystemTable->BootServices->FreePool(Buffer);
 
 	// Allocate Boot Info Struct
 	BootInfoStruct *BootInfo = 0;
