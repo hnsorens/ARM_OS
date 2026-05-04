@@ -29,7 +29,7 @@ EFI_LDFLAGS = -target aarch64-unknown-windows -fuse-ld=lld-link -nostdlib \
 KFLAGS      = -ffreestanding -fno-stack-protector -fno-stack-check \
               -mgeneral-regs-only -fno-builtin -nostdlib -mcmodel=large \
               -fno-pic -fno-plt -c
-K_LDFLAGS   = -static -T kernel.ld -nostdlib
+K_LDFLAGS   = -static -T kernel.ld -nostdlib --emit-relocs
 
 # --- File Discovery ---
 BOOT_SRCS   = $(wildcard boot/*.c)

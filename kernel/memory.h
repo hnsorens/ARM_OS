@@ -3,6 +3,8 @@
 
 #include "../boot/bootinfo.h"
 
-void* kernel_alloc(BootInfoStruct *bootInfo, unsigned long pageCount);
+void setup_kernel_allocator(BootInfoStruct *bootInfo);
+void* kernel_alloc_page();
+void kernel_free_page(void *page);
 
 #endif

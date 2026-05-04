@@ -111,7 +111,10 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
 	// Enable page tables
 	Enable_Page_Table(LowerPageTable, UpperPageTable);
 
-	Jump_To_Kernel(Entry, 0,
+	BootInfo->memoryMapSize = MemoryMapRegionsCount;
+	BootInfo->memoryRegions = (MemoryRegion *)MemoryMap;
+
+	Jump_To_Kernel(Entry, (EFI_VIRTUAL_ADDRESS)BootInfo,
 		       0xFFFF800000000000 + (4096 * STACK_SIZE_PAGES));
 
 	while (1) {

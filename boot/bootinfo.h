@@ -15,12 +15,10 @@ typedef struct MemoryRegion
   MemoryType type;
 } MemoryRegion;
 
-#pragma pack(push, 1)
 typedef struct BootInfoStruct
 {
-    unsigned long memoryMapSize;
     MemoryRegion *memoryRegions;
+    unsigned long memoryMapSize;
 } BootInfoStruct;
-#pragma pack(pop)
 
 #endif

@@ -5,7 +5,7 @@ SECTIONS
 {
     . = 1M;
 
-    _kernel_virtual_base = 0xFFFF800000000000;
+    _kernel_virtual_base = 0;
 
     .text (_kernel_virtual_base + .) : AT(ADDR(.text) - _kernel_virtual_base)
     {

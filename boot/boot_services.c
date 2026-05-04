@@ -105,11 +105,11 @@ static EFI_STATUS GetKernelMemoryMap(IN EFI_MEMORY_MAP *EfiMemoryMap,
 	Current = EfiMemoryMap->MemoryMap;
 
 	int CurrentRegion = 0;
-	MEMORY_TYPE LastType = MEMORY_UNKNOWN;
+	MEMORY_TYPE LastType = EFI_MEMORY_UNKNOWN;
 
 	for (int i = 0; i < MemoryMapEntryCount; i++) {
-		if (MemoryMap[CurrentRegion].Start < 0x40000000000) {
-			MemoryMap[CurrentRegion].Type = MEMORY_USED;
+		if (0) {
+			MemoryMap[CurrentRegion].Type = EFI_MEMORY_USED;
 		} else {
 			switch (Current->Type) {
 			case EfiReservedMemoryType:
@@ -122,17 +122,17 @@ static EFI_STATUS GetKernelMemoryMap(IN EFI_MEMORY_MAP *EfiMemoryMap,
 			case EfiPersistentMemory:
 			case EfiUnusableMemory:
 			case EfiACPIReclaimMemory:
-				MemoryMap[CurrentRegion].Type = MEMORY_USED;
+				MemoryMap[CurrentRegion].Type = EFI_MEMORY_USED;
 				break;
 			case EfiBootServicesCode:
 			case EfiBootServicesData:
 			case EfiConventionalMemory:
 			case EfiLoaderData:
 			case EfiLoaderCode:
-				MemoryMap[CurrentRegion].Type = MEMORY_FREE;
+				MemoryMap[CurrentRegion].Type = EFI_MEMORY_FREE;
 				break;
 			default:
-				MemoryMap[CurrentRegion].Type = MEMORY_USED;
+				MemoryMap[CurrentRegion].Type = EFI_MEMORY_USED;
 				break;
 			}
 		}

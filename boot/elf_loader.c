@@ -1,5 +1,7 @@
 #include "elf_loader.h"
 
+#include "linker.h"
+
 #define PAGE_SIZE 4096
 
 VOID *Memcpy(VOID *Dest, CONST VOID *Src, UINTN N)
@@ -33,6 +35,8 @@ Load_Kernel(IN EFI_SYSTEM_TABLE *SystemTable, IN CHAR8 *KernelElfBuffer,
 		return EFI_LOAD_ERROR;
 	}
 
+	Link_Elf_Module(0xFFFF800000000000, KernelElfBuffer);
+
 	Elf64_Phdr *Phdr = (Elf64_Phdr *)((UINT8 *)Ehdr + Ehdr->e_phoff);
 
 	for (INTN I = 0; I < Ehdr->e_phnum; ++I) {
@@ -55,10 +59,10 @@ Load_Kernel(IN EFI_SYSTEM_TABLE *SystemTable, IN CHAR8 *KernelElfBuffer,
 			       ((UINT8 *)Ehdr + Phdr[I].p_offset),
 			       Phdr[I].p_memsz);
 
-			Status = Map_Memory(
-				SystemTable, UpperPageTable,
-				Phdr[I].p_vaddr - 0xFFFF000000000000,
-				SegmentPhysicalAddress, 0, SegmentPageCount);
+			Status = Map_Memory(SystemTable, UpperPageTable,
+					    (Phdr[I].p_vaddr),
+					    SegmentPhysicalAddress, 0,
+					    SegmentPageCount);
 			if (EFI_ERROR(Status)) {
 				SystemTable->ConOut->OutputString(
 					SystemTable->ConOut,
@@ -66,6 +70,7 @@ Load_Kernel(IN EFI_SYSTEM_TABLE *SystemTable, IN CHAR8 *KernelElfBuffer,
 				return EFI_LOAD_ERROR;
 			}
 		}
+		EFI_VIRTUAL_ADDRESS ModBase = 0xFFFF800000000000;
 	}
 
 	*Entry = Ehdr->e_entry;
