@@ -15,5 +15,8 @@ Boot_Log_Start();
 
 int serial_debug_serial_printf(const char *format, ...);
 
+VOID Boot_Log_Int(IN UINT64 Val);
+
+VOID Boot_Log_Hex(IN UINT64 Val);
 
 #endif

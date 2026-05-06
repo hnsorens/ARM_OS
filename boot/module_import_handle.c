@@ -1,6 +1,7 @@
 #include "module_import_handle.h"
 
 #include "module_registry.h"
+#include "serial.h"
 
 #define MODULE_IMPORT_HANDLE_INITIAL_SIZE 32
 
@@ -45,13 +46,20 @@ VOID AddModuleImportHandle(EFI_SYSTEM_TABLE *SystemTable,
 	}
 
 	Memcpy(&ModuleImportHandleArray[ModuleImportHandleCapacity],
-	       &ModuleImportHandleArray, sizeof(MODULE_IMPORT_HANDLE));
+	       &ModuleImportHandle, sizeof(MODULE_IMPORT_HANDLE));
 	ModuleImportHandleCapacity++;
 }
 
 VOID HandleModuleImports()
 {
 	for (UINTN I = 0; I < ModuleImportHandleCapacity; ++I) {
+		Boot_Log("HEHE HAHA\n", 10);
+		Boot_Log(ModuleImportHandleArray[I].NameString, 5);
+		Boot_Log_Hex((UINT64)(ModuleImportHandleArray[I].NameString));
+		Boot_Log("\n", 1);
+		Boot_Log(ModuleImportHandleArray[I].TypeString, 5);
+		Boot_Log_Hex((UINT64)(ModuleImportHandleArray[I].TypeString));
+		Boot_Log("\n", 1);
 		VOID *VTableSource = 0;
 		if (!ModuleImportHandleArray[I].NameString) {
 			VTableSource = registry_get_any(
@@ -62,7 +70,17 @@ VOID HandleModuleImports()
 				ModuleImportHandleArray[I].NameString);
 		}
 
+		Boot_Log_Hex((UINT64)ModuleImportHandleArray[I].VTablePtr);
+		Boot_Log("\n", 1);
+		Boot_Log_Hex((UINT64)VTableSource);
+		Boot_Log("\n", 1);
+
 		Memcpy(ModuleImportHandleArray[I].VTablePtr, VTableSource,
 		       8); // Change the size so it is gud
+		//
+		Boot_Log_Hex(*(UINT64 *)ModuleImportHandleArray[I].VTablePtr);
+		Boot_Log("\n", 1);
+		Boot_Log_Hex(*(UINT64 *)VTableSource);
+		Boot_Log("\n", 1);
 	}
 }

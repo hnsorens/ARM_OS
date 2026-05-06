@@ -50,6 +50,46 @@ Boot_Log(IN CONST CHAR8 *Str, IN UINTN N)
 	return N + 7;
 }
 
+VOID Boot_Log_Hex(IN UINT64 Val)
+{
+	CHAR8 HexChars[] = "0123456789ABCDEF";
+	CHAR8 Buffer[18]; // "0x" + 16 hex digits
+
+	Buffer[0] = '0';
+	Buffer[1] = 'x';
+
+	// Fill buffer from right to left (LSB to MSB)
+	for (INTN i = 17; i >= 2; i--) {
+		Buffer[i] = HexChars[Val & 0xF];
+		Val >>= 4;
+	}
+
+	Uart_PutS(Buffer, 18);
+}
+
+VOID Boot_Log_Int(IN UINT64 Val)
+{
+	CHAR8 Buffer[20]; // UINT64_MAX is 20 digits long
+	INTN i = 0;
+
+	// Handle 0 explicitly
+	if (Val == 0) {
+		Uart_PutC('0');
+		return;
+	}
+
+	// Extract digits in reverse order
+	while (Val > 0) {
+		Buffer[i++] = (CHAR8)((Val % 10) + '0');
+		Val /= 10;
+	}
+
+	// Print digits in correct order (reverse the buffer)
+	for (INTN j = i - 1; j >= 0; j--) {
+		Uart_PutC(Buffer[j]);
+	}
+}
+
 VOID Boot_Log_Start()
 {
 	// Disable UART

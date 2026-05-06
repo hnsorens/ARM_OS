@@ -124,9 +124,9 @@ Load_Elf(IN EFI_SYSTEM_TABLE *SystemTable, IN CHAR8 *ElfBuffer,
 			if (Dot) {
 				*Dot = '\0';
 				CHAR8 *NameString = Dot + 1;
-				VOID *VTableAddress =
-					(VOID *)(Shdr[I].sh_addr +
-						 0xFFFF800000000000);
+				VOID *VTableAddress = (VOID *)(Shdr[I].sh_addr);
+
+				Boot_Log_Hex((UINT64)VTableAddress);
 
 				Boot_Log("Adding Module\n", 14);
 				Boot_Log(NameString, Strlen(NameString));
@@ -147,16 +147,21 @@ Load_Elf(IN EFI_SYSTEM_TABLE *SystemTable, IN CHAR8 *ElfBuffer,
 			CHAR8 *NameString = 0;
 			if (Dot) {
 				*Dot = '\0';
-				CHAR8 *NameString = Dot + 1;
+				NameString = Dot + 1;
 			}
 
 			MODULE_IMPORT_HANDLE ImportHandle;
 			ImportHandle.TypeString = TypeString;
 			ImportHandle.NameString = NameString;
-			ImportHandle.VTablePtr =
-				(VOID *)(Shdr[I].sh_addr + 0xFFFF800000000000);
+			ImportHandle.VTablePtr = (VOID *)(Shdr[I].sh_addr);
+
+			Boot_Log_Hex((UINT64)ImportHandle.VTablePtr);
 
 			AddModuleImportHandle(SystemTable, ImportHandle);
+			Boot_Log_Hex((UINT64)NameString);
+			Boot_Log_Hex((UINT64)TypeString);
+			Boot_Log(NameString, Strlen(NameString));
+			Boot_Log(TypeString, Strlen(TypeString));
 		}
 	}
 

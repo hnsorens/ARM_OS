@@ -142,7 +142,7 @@ Load_Module(EFI_SYSTEM_TABLE *SystemTable, EFI_HANDLE ImageHandle,
 	Load_Elf(SystemTable, ModuleBuffer, Offsethehe, PageTable, Entry);
 	Offsethehe += (4096 * 10); // FOR TESTING FIX LATER SO ITS ACTUAL VALUE
 
-	SystemTable->BootServices->FreePool(ModuleBuffer);
+	//SystemTable->BootServices->FreePool(ModuleBuffer);
 
 	return EFI_SUCCESS;
 }
