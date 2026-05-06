@@ -117,8 +117,7 @@ Load_Elf(IN EFI_SYSTEM_TABLE *SystemTable, IN CHAR8 *ElfBuffer,
 		CONST CHAR8 *SectionName = (UINT8 *)ShStrTab + Shdr[I].sh_name;
 
 		Boot_Log(SectionName, Strlen(SectionName));
-		if (Strncmp(SectionName, ".export", 7) == 0) 
-        {
+		if (Strncmp(SectionName, ".export", 7) == 0) {
 			CONST CHAR8 *TypeString = SectionName + 8;
 			CHAR8 *Dot = StrChr(TypeString, '.');
 
@@ -126,8 +125,8 @@ Load_Elf(IN EFI_SYSTEM_TABLE *SystemTable, IN CHAR8 *ElfBuffer,
 				*Dot = '\0';
 				CHAR8 *NameString = Dot + 1;
 				VOID *VTableAddress =
-					(VOID *)((UINT8 *)Ehdr +
-						 Shdr[I].sh_offset);
+					(VOID *)(Shdr[I].sh_addr +
+						 0xFFFF800000000000);
 
 				Boot_Log("Adding Module\n", 14);
 				Boot_Log(NameString, Strlen(NameString));
@@ -139,26 +138,26 @@ Load_Elf(IN EFI_SYSTEM_TABLE *SystemTable, IN CHAR8 *ElfBuffer,
 				ModuleMetadata.name = NameString;
 				registry_put(ModuleMetadata);
 			}
+		} else if (Strncmp(SectionName, ".import", 7) == 0) {
+			CONST CHAR8 *TypeString = SectionName + 8;
+			CHAR8 *Dot = StrChr(TypeString, '.');
+
+			Boot_Log("Adding Module Handle\n", 21);
+
+			CHAR8 *NameString = 0;
+			if (Dot) {
+				*Dot = '\0';
+				CHAR8 *NameString = Dot + 1;
+			}
+
+			MODULE_IMPORT_HANDLE ImportHandle;
+			ImportHandle.TypeString = TypeString;
+			ImportHandle.NameString = NameString;
+			ImportHandle.VTablePtr =
+				(VOID *)(Shdr[I].sh_addr + 0xFFFF800000000000);
+
+			AddModuleImportHandle(SystemTable, ImportHandle);
 		}
-        else if (Strncmp(SectionName, ".import", 7) == 0)
-        {
-            CONST CHAR8 *TypeString = SectionName + 8;
-            CHAR8 *Dot = StrChr(TypeString, '.');
-
-            CHAR8 *NameString = 0;
-            if (Dot)
-            {
-                *Dot = '\0';
-                CHAR8 *NameString = Dot + 1;
-            }
-
-            MODULE_IMPORT_HANDLE ImportHandle;
-            ImportHandle.TypeString = TypeString;
-            ImportHandle.NameString = NameString;
-            ImportHandle.VTablePtr = (VOID*)((UINT8)Ehdr + Shdr[I].sh_offset);
-
-            AddModuleImportHandle(SystemTable, ImportHandle);
-        }
 	}
 
 	*Entry = Ehdr->e_entry;

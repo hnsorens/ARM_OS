@@ -9,6 +9,7 @@
 #include "bootinfo.h"
 #include "kernel_loader.h"
 #include "module_registry.h"
+#include "module_import_handle.h"
 
 #define STACK_SIZE_PAGES 0x100
 
@@ -50,6 +51,8 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
 	SystemTable->BootServices->AllocatePool(
 		EfiRuntimeServicesCode, 1024 * 1024, &ModuleRegistryBlock);
 	registry_init((VOID *)ModuleRegistryBlock, 1024 * 1024, 10);
+
+	ModuleImportHandleInit(SystemTable);
 
 	PAGE_TABLE_T LowerPageTable = 0;
 	PAGE_TABLE_T UpperPageTable = 0;
@@ -119,6 +122,9 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
 
 	// Enable page tables
 	Enable_Page_Table(LowerPageTable, UpperPageTable);
+
+	// Do this after page table are enabled, so that the code is accessible in memory
+	HandleModuleImports();
 
 	BootInfo->memoryMapSize = MemoryMapRegionsCount;
 	BootInfo->memoryRegions = (MemoryRegion *)MemoryMap;

@@ -1,21 +1,20 @@
 #include "../modules/serial_debug/serial.h"
 
-#include "module_registery.h"
-#include "memory.h"
 #include "../boot/bootinfo.h"
 
-extern Metadata __vtable_all_start[];
-extern Metadata __vtable_all_end[];
+__attribute__((section(".import.serial.first_serial_hehe"), used,
+	       aligned(8))) static const SerialDeviceInterface serial;
 
 int global_variable = 0;
 
 int _start(BootInfoStruct *BootInfo)
 {
+	serial_debug_serial_printf("TEST\n");
+	serial_debug_serial_printf("%lx\n", serial.printf);
+	serial.printf("TEST IS WORKING\n");
+	serial_debug_serial_printf("TEST IS DONE\n");
 	serial_debug_serial_printf("Metadata Name %lx\n",
 				   BootInfo->memoryMapSize);
-	setup_kernel_allocator(BootInfo);
-	serial_debug_serial_printf("Allocated memory\n");
-	build_module_registry(BootInfo);
 	serial_debug_serial_printf("Setup registry\n");
 	while (1)
 		;

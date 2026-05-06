@@ -113,6 +113,8 @@ CHAR8 *Trim(CHAR8 *S)
 	return S;
 }
 
+UINTN Offsethehe = 0;
+
 EFI_STATUS
 Load_Module(EFI_SYSTEM_TABLE *SystemTable, EFI_HANDLE ImageHandle,
 	    EFI_FILE_PROTOCOL *Root, CHAR8 *Name, PAGE_TABLE_T *PageTable,
@@ -137,7 +139,8 @@ Load_Module(EFI_SYSTEM_TABLE *SystemTable, EFI_HANDLE ImageHandle,
 	CHAR8 *ModuleBuffer = 0;
 	ReadFile(NameBuffer, Root, SystemTable, ImageHandle, &ModuleBuffer);
 
-	Load_Elf(SystemTable, ModuleBuffer, 0, PageTable, Entry);
+	Load_Elf(SystemTable, ModuleBuffer, Offsethehe, PageTable, Entry);
+	Offsethehe += (4096 * 10); // FOR TESTING FIX LATER SO ITS ACTUAL VALUE
 
 	SystemTable->BootServices->FreePool(ModuleBuffer);
 
