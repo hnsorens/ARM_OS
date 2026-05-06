@@ -14,4 +14,10 @@ typedef struct MODULE_IMPORT_HANDLE
 VOID
 AddModuleImportHandle(EFI_SYSTEM_TABLE *SystemTable, MODULE_IMPORT_HANDLE ModuleImportHandle);
 
+VOID
+HandleModuleImports();
+
+VOID
+ModuleImportHandleInit(EFI_SYSTEM_TABLE *SystemTable);
+
 #endif
