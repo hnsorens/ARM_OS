@@ -1,6 +1,6 @@
 #include "kernel_loader.h"
 
-VOID *Memcpy(VOID *Dest, CONST VOID *Src, UINTN N)
+static VOID *Memcpy(VOID *Dest, CONST VOID *Src, UINTN N)
 {
 	UINT8 *D = Dest;
 	CONST UINT8 *S = Src;
@@ -9,8 +9,7 @@ VOID *Memcpy(VOID *Dest, CONST VOID *Src, UINTN N)
 	return Dest;
 }
 
-INT32
-Strncmp(CONST CHAR8 *S1, CONST CHAR8 *S2, UINTN N)
+static INT32 Strncmp(CONST CHAR8 *S1, CONST CHAR8 *S2, UINTN N)
 {
 	while (N--) {
 		if (*S1 != *S2)
@@ -23,7 +22,7 @@ Strncmp(CONST CHAR8 *S1, CONST CHAR8 *S2, UINTN N)
 	return 0;
 }
 
-CHAR8 *Strchr(CONST CHAR8 *S, CHAR8 C)
+static CHAR8 *Strchr(CONST CHAR8 *S, CHAR8 C)
 {
 	while (*S != C) {
 		if (!*S)
@@ -33,8 +32,7 @@ CHAR8 *Strchr(CONST CHAR8 *S, CHAR8 C)
 	return (CHAR8 *)S;
 }
 
-INT32
-Strlen(CONST CHAR8 *S)
+static INT32 Strlen(CONST CHAR8 *S)
 {
 	UINT32 I = 0;
 	while (S[I])

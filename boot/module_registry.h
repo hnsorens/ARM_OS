@@ -42,9 +42,9 @@ typedef struct {
     void* vtable_ptr;
 } module_meta_t;
 
-registry_t registry_init(void* block, size_t block_size, size_t max_expected_types);
-int registry_put(registry_t* reg, module_meta_t meta);
-void* registry_get(registry_t* reg, const char* type, const char* name);
-void* registry_get_any(registry_t* reg, const char* type);
+void registry_init(void* block, size_t block_size, size_t max_expected_types);
+int registry_put(module_meta_t meta);
+void* registry_get(const char* type, const char* name);
+void* registry_get_any(const char* type);
 
 #endif

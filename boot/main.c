@@ -46,6 +46,11 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
 	//CHAR8 *Buffer;
 	//ReadFile(L"\\kernel.bin", Root, SystemTable, ImageHandle, &Buffer);
 
+	VOID *ModuleRegistryBlock = 0;
+	SystemTable->BootServices->AllocatePool(
+		EfiRuntimeServicesCode, 1024 * 1024, &ModuleRegistryBlock);
+	registry_init((VOID *)ModuleRegistryBlock, 1024 * 1024, 10);
+
 	PAGE_TABLE_T LowerPageTable = 0;
 	PAGE_TABLE_T UpperPageTable = 0;
 

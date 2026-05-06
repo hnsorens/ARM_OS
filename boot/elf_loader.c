@@ -1,8 +1,34 @@
 #include "elf_loader.h"
 
 #include "linker.h"
+#include "module_registry.h"
+#include "serial.h"
+#include "module_import_handle.h"
 
 #define PAGE_SIZE 4096
+
+static INT32 Strncmp(CONST CHAR8 *S1, CONST CHAR8 *S2, UINTN N)
+{
+	while (N--) {
+		if (*S1 != *S2)
+			return *(UINT8 *)S1 - *(UINT8 *)S2;
+		if (*S1 == 0)
+			break;
+		S1++;
+		S2++;
+	}
+	return 0;
+}
+
+static CHAR8 *StrChr(CONST CHAR8 *S, UINT8 C)
+{
+	while (*S != C) {
+		if (!*S)
+			return 0;
+		S++;
+	}
+	return (CHAR8 *)S;
+}
 
 static VOID *Memcpy(VOID *Dest, CONST VOID *Src, UINTN N)
 {
@@ -17,6 +43,14 @@ static BOOLEAN Verify_Elf(Elf64_Ehdr *Header)
 {
 	return Header->e_ident[0] == 0x7F && Header->e_ident[1] == 'E' &&
 	       Header->e_ident[2] == 'L' && Header->e_ident[3] == 'F';
+}
+
+static INT32 Strlen(CONST CHAR8 *S)
+{
+	UINT32 I = 0;
+	while (S[I])
+		I++;
+	return I;
 }
 
 EFI_STATUS
@@ -42,6 +76,9 @@ Load_Elf(IN EFI_SYSTEM_TABLE *SystemTable, IN CHAR8 *ElfBuffer,
 	Link_Elf_Module(LoadOffset + 0xFFFF800000000000, ElfBuffer);
 
 	Elf64_Phdr *Phdr = (Elf64_Phdr *)((UINT8 *)Ehdr + Ehdr->e_phoff);
+	Elf64_Shdr *Shdr = (Elf64_Shdr *)((UINT8 *)Ehdr + Ehdr->e_shoff);
+	CHAR8 *ShStrTab =
+		(CHAR8 *)((UINT8 *)Ehdr + Shdr[Ehdr->e_shstrndx].sh_offset);
 
 	for (INTN I = 0; I < Ehdr->e_phnum; ++I) {
 		// only look at PT_LOAD segments
@@ -74,6 +111,54 @@ Load_Elf(IN EFI_SYSTEM_TABLE *SystemTable, IN CHAR8 *ElfBuffer,
 				return EFI_LOAD_ERROR;
 			}
 		}
+	}
+
+	for (INTN I = 0; I < Ehdr->e_shnum; ++I) {
+		CONST CHAR8 *SectionName = (UINT8 *)ShStrTab + Shdr[I].sh_name;
+
+		Boot_Log(SectionName, Strlen(SectionName));
+		if (Strncmp(SectionName, ".export", 7) == 0) 
+        {
+			CONST CHAR8 *TypeString = SectionName + 8;
+			CHAR8 *Dot = StrChr(TypeString, '.');
+
+			if (Dot) {
+				*Dot = '\0';
+				CHAR8 *NameString = Dot + 1;
+				VOID *VTableAddress =
+					(VOID *)((UINT8 *)Ehdr +
+						 Shdr[I].sh_offset);
+
+				Boot_Log("Adding Module\n", 14);
+				Boot_Log(NameString, Strlen(NameString));
+				Boot_Log(TypeString, Strlen(TypeString));
+
+				module_meta_t ModuleMetadata;
+				ModuleMetadata.vtable_ptr = VTableAddress;
+				ModuleMetadata.type = TypeString;
+				ModuleMetadata.name = NameString;
+				registry_put(ModuleMetadata);
+			}
+		}
+        else if (Strncmp(SectionName, ".import", 7) == 0)
+        {
+            CONST CHAR8 *TypeString = SectionName + 8;
+            CHAR8 *Dot = StrChr(TypeString, '.');
+
+            CHAR8 *NameString = 0;
+            if (Dot)
+            {
+                *Dot = '\0';
+                CHAR8 *NameString = Dot + 1;
+            }
+
+            MODULE_IMPORT_HANDLE ImportHandle;
+            ImportHandle.TypeString = TypeString;
+            ImportHandle.NameString = NameString;
+            ImportHandle.VTablePtr = (VOID*)((UINT8)Ehdr + Shdr[I].sh_offset);
+
+            AddModuleImportHandle(SystemTable, ImportHandle);
+        }
 	}
 
 	*Entry = Ehdr->e_entry;
