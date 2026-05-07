@@ -1,5 +1,6 @@
 #include "module_import_handle.h"
 
+#include "memory_constants.h"
 #include "module_registry.h"
 #include "serial.h"
 
@@ -21,7 +22,7 @@ static VOID *Memcpy(VOID *Dest, CONST VOID *Src, UINTN N)
 VOID ModuleImportHandleInit(EFI_SYSTEM_TABLE *SystemTable)
 {
 	EFI_STATUS Status = SystemTable->BootServices->AllocatePool(
-		EfiLoaderData,
+		FREE_AFTER_BOOT,
 		sizeof(MODULE_IMPORT_HANDLE) *
 			MODULE_IMPORT_HANDLE_INITIAL_SIZE,
 		(VOID *)&ModuleImportHandleArray);
@@ -33,7 +34,7 @@ VOID AddModuleImportHandle(EFI_SYSTEM_TABLE *SystemTable,
 	if (ModuleImportHandleCapacity == ModuleImportHandleSize) {
 		MODULE_IMPORT_HANDLE *NewArray = 0;
 		EFI_STATUS Status = SystemTable->BootServices->AllocatePool(
-			EfiLoaderData,
+			FREE_AFTER_BOOT,
 			sizeof(MODULE_IMPORT_HANDLE) * ModuleImportHandleSize *
 				2,
 			(VOID *)&NewArray);
@@ -64,11 +65,11 @@ VOID HandleModuleImports()
 		UINTN VTableSize = 0;
 		if (!ModuleImportHandleArray[I].NameString) {
 			RegistryGetAny(ModuleImportHandleArray[I].TypeString,
-					 &VTableSource, &VTableSize);
+				       &VTableSource, &VTableSize);
 		} else {
-            RegistryGet(ModuleImportHandleArray[I].TypeString,
-				     ModuleImportHandleArray[I].NameString,
-				     &VTableSource, &VTableSize);
+			RegistryGet(ModuleImportHandleArray[I].TypeString,
+				    ModuleImportHandleArray[I].NameString,
+				    &VTableSource, &VTableSize);
 		}
 
 		Boot_Log_Hex((UINT64)ModuleImportHandleArray[I].VTablePtr);

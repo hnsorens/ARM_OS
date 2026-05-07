@@ -5,6 +5,7 @@
 #include "serial.h"
 #include "module_import_handle.h"
 #include "elf.h"
+#include "memory_constants.h"
 
 #define PAGE_SIZE 4096
 
@@ -88,7 +89,7 @@ Load_Elf(IN EFI_SYSTEM_TABLE *SystemTable, IN CHAR8 *ElfBuffer,
 				((Phdr[I].p_memsz - 1) / PAGE_SIZE) + 1;
 			EFI_PHYSICAL_ADDRESS SegmentPhysicalAddress = 0;
 			Status = SystemTable->BootServices->AllocatePages(
-				AllocateAnyPages, EfiRuntimeServicesCode,
+				AllocateAnyPages, KEEP_AFTER_BOOT,
 				SegmentPageCount, &SegmentPhysicalAddress);
 			if (EFI_ERROR(Status)) {
 				SystemTable->ConOut->OutputString(

@@ -1,5 +1,6 @@
 #include "boot_services.h"
 #include "serial.h"
+#include "memory_constants.h"
 
 #define MEMORY_MAP_ENTRY_INDEX(Index) \
 	((EFI_MEMORY_DESCRIPTOR *)((char *)EfiMemoryMap + RegionSize * Index))
@@ -189,7 +190,7 @@ EFI_STATUS ExitBootServices(IN EFI_HANDLE ImageHandle,
 	// allocate space for memory map buffer
 	MemoryMap.MemoryMapSize += 2 * MemoryMap.DescriptorSize;
 	Status = SystemTable->BootServices->AllocatePool(
-		EfiLoaderData, MemoryMap.MemoryMapSize,
+		KEEP_AFTER_BOOT, MemoryMap.MemoryMapSize,
 		(void **)&MemoryMap.MemoryMap);
 
 	if (EFI_ERROR(Status)) {

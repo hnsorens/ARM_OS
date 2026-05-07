@@ -1,7 +1,7 @@
 #include "page_table.h"
 #include "efidef.h"
 #include "efierr.h"
-
+#include "memory_constants.h"
 #include "serial.h"
 
 VOID *Memset(IN VOID *Ptr, IN UINT32 Value, IN UINT64 N)
@@ -110,7 +110,7 @@ Map_Memory(IN EFI_SYSTEM_TABLE *SystemTable, IN PAGE_TABLE_T *PageTable,
 	// Initialize root page table if it doesn't exist
 	if (!*PageTable) {
 		Status = SystemTable->BootServices->AllocatePages(
-			AllocateAnyPages, EfiRuntimeServicesCode, 1, PageTable);
+			AllocateAnyPages, KEEP_AFTER_BOOT, 1, PageTable);
 		if (EFI_ERROR(Status)) {
 			SystemTable->BootServices->FreePages(*PageTable, 1);
 			return EFI_OUT_OF_RESOURCES;
@@ -132,7 +132,7 @@ Map_Memory(IN EFI_SYSTEM_TABLE *SystemTable, IN PAGE_TABLE_T *PageTable,
 		EFI_PHYSICAL_ADDRESS *P1;
 		if (!(P0[Idx.P0] & ARM_TABLE_DESCRIPTOR)) {
 			Status = SystemTable->BootServices->AllocatePages(
-				AllocateAnyPages, EfiRuntimeServicesCode, 1,
+				AllocateAnyPages, KEEP_AFTER_BOOT, 1,
 				(EFI_PHYSICAL_ADDRESS *)(&P1));
 			if (EFI_ERROR(Status)) {
 				SystemTable->BootServices->FreePages(
@@ -155,7 +155,7 @@ Map_Memory(IN EFI_SYSTEM_TABLE *SystemTable, IN PAGE_TABLE_T *PageTable,
 		UINT64 *P2;
 		if (!(P1[Idx.P1] & ARM_TABLE_DESCRIPTOR)) {
 			Status = SystemTable->BootServices->AllocatePages(
-				AllocateAnyPages, EfiRuntimeServicesCode, 1,
+				AllocateAnyPages, KEEP_AFTER_BOOT, 1,
 				(EFI_PHYSICAL_ADDRESS *)(&P2));
 			if (EFI_ERROR(Status)) {
 				SystemTable->BootServices->FreePages(
@@ -178,7 +178,7 @@ Map_Memory(IN EFI_SYSTEM_TABLE *SystemTable, IN PAGE_TABLE_T *PageTable,
 		EFI_PHYSICAL_ADDRESS *P3;
 		if (!(P2[Idx.P2] & ARM_TABLE_DESCRIPTOR)) {
 			Status = SystemTable->BootServices->AllocatePages(
-				AllocateAnyPages, EfiRuntimeServicesCode, 1,
+				AllocateAnyPages, KEEP_AFTER_BOOT, 1,
 				(EFI_PHYSICAL_ADDRESS *)(&P3));
 			if (EFI_ERROR(Status)) {
 				SystemTable->BootServices->FreePages(
@@ -209,7 +209,7 @@ Create_Identity_Page_Table(IN EFI_SYSTEM_TABLE *SystemTable,
 	EFI_STATUS Status;
 	// Allocate L0 table (512GB blocks)
 	Status = SystemTable->BootServices->AllocatePages(
-		AllocateAnyPages, EfiRuntimeServicesCode, 1, PageTable);
+		AllocateAnyPages, KEEP_AFTER_BOOT, 1, PageTable);
 	if (EFI_ERROR(Status)) {
 		SystemTable->BootServices->FreePages(*PageTable, 1);
 		return Status;
@@ -226,7 +226,7 @@ Create_Identity_Page_Table(IN EFI_SYSTEM_TABLE *SystemTable,
 		// Allocate L1 table for this 512GB block
 		EFI_PHYSICAL_ADDRESS L1 = 0;
 		Status = SystemTable->BootServices->AllocatePages(
-			AllocateAnyPages, EfiRuntimeServicesCode, 1, &L1);
+			AllocateAnyPages, KEEP_AFTER_BOOT, 1, &L1);
 		if (EFI_ERROR(Status)) {
 			SystemTable->BootServices->FreePages(L1, 1);
 			return Status;

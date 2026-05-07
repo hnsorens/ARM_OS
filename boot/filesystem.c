@@ -1,4 +1,5 @@
 #include "filesystem.h"
+#include "memory_constants.h"
 
 static EFI_GUID gEfiSimpleFileSystemProtocolGuid = {
 	0x964e5b22,
@@ -66,7 +67,7 @@ ReadFile(IN CHAR16 *FileName, IN EFI_FILE_PROTOCOL *Root,
 	// Get File info to determine size
 	UINTN InfoSize = sizeof(EFI_FILE_INFO) + 128;
 	Status = SystemTable->BootServices->AllocatePool(
-		EfiLoaderData, InfoSize, (VOID **)&FileInfo);
+		FREE_AFTER_BOOT, InfoSize, (VOID **)&FileInfo);
 	if (EFI_ERROR(Status)) {
 		Boot_Log("Failed to allocate kernel file info\n", 36);
 		File->Close(File);
@@ -85,7 +86,7 @@ ReadFile(IN CHAR16 *FileName, IN EFI_FILE_PROTOCOL *Root,
 
 	// Allocate buffer for file content + null terminator
 	Status = SystemTable->BootServices->AllocatePool(
-		EfiLoaderData, FileInfo->FileSize + 1, (VOID **)&FileBuffer);
+		FREE_AFTER_BOOT, FileInfo->FileSize + 1, (VOID **)&FileBuffer);
 	if (EFI_ERROR(Status)) {
 		Boot_Log("Failed to allocate kernel space\n", 32);
 		SystemTable->BootServices->FreePool(FileInfo);

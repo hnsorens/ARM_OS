@@ -1,3 +1,4 @@
+#include "memory_constants.h"
 #include <efi.h>
 #include <efilib.h>
 
@@ -47,8 +48,8 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
 	//ReadFile(L"\\kernel.bin", Root, SystemTable, ImageHandle, &Buffer);
 
 	VOID *ModuleRegistryBlock = 0;
-	SystemTable->BootServices->AllocatePool(
-		EfiRuntimeServicesCode, 1024 * 1024, &ModuleRegistryBlock);
+	SystemTable->BootServices->AllocatePool(KEEP_AFTER_BOOT, 1024 * 1024,
+						&ModuleRegistryBlock);
 	RegistryInit((VOID *)ModuleRegistryBlock, 1024 * 1024, 10);
 
 	ModuleImportHandleInit(SystemTable);
@@ -71,9 +72,8 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
 
 	// Allocate Boot Info Struct
 	BootInfoStruct *BootInfo = 0;
-	Status = SystemTable->BootServices->AllocatePool(EfiRuntimeServicesCode,
-							 sizeof(BootInfoStruct),
-							 (VOID **)&BootInfo);
+	Status = SystemTable->BootServices->AllocatePool(
+		KEEP_AFTER_BOOT, sizeof(BootInfoStruct), (VOID **)&BootInfo);
 	if (EFI_ERROR(Status)) {
 		Boot_Log("Failed to allocate boot info\n", 29);
 		return Status;
@@ -83,7 +83,7 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
 	// Allocate Stack
 	EFI_PHYSICAL_ADDRESS StackPhysicalAddress = 0;
 	Status = SystemTable->BootServices->AllocatePages(
-		AllocateAnyPages, EfiRuntimeServicesCode, STACK_SIZE_PAGES,
+		AllocateAnyPages, KEEP_AFTER_BOOT, STACK_SIZE_PAGES,
 		&StackPhysicalAddress);
 	if (EFI_ERROR(Status)) {
 		Boot_Log("Failed to allocate stack\n", 25);
