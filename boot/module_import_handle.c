@@ -61,13 +61,14 @@ VOID HandleModuleImports()
 		Boot_Log_Hex((UINT64)(ModuleImportHandleArray[I].TypeString));
 		Boot_Log("\n", 1);
 		VOID *VTableSource = 0;
+		UINTN VTableSize = 0;
 		if (!ModuleImportHandleArray[I].NameString) {
-			VTableSource = registry_get_any(
-				ModuleImportHandleArray[I].TypeString);
+			RegistryGetAny(ModuleImportHandleArray[I].TypeString,
+					 &VTableSource, &VTableSize);
 		} else {
-			VTableSource = registry_get(
-				ModuleImportHandleArray[I].TypeString,
-				ModuleImportHandleArray[I].NameString);
+            RegistryGet(ModuleImportHandleArray[I].TypeString,
+				     ModuleImportHandleArray[I].NameString,
+				     &VTableSource, &VTableSize);
 		}
 
 		Boot_Log_Hex((UINT64)ModuleImportHandleArray[I].VTablePtr);
@@ -76,7 +77,7 @@ VOID HandleModuleImports()
 		Boot_Log("\n", 1);
 
 		Memcpy(ModuleImportHandleArray[I].VTablePtr, VTableSource,
-		       8); // Change the size so it is gud
+		       VTableSize); // Change the size so it is gud
 		//
 		Boot_Log_Hex(*(UINT64 *)ModuleImportHandleArray[I].VTablePtr);
 		Boot_Log("\n", 1);

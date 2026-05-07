@@ -50,7 +50,7 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
 	VOID *ModuleRegistryBlock = 0;
 	SystemTable->BootServices->AllocatePool(
 		EfiRuntimeServicesCode, 1024 * 1024, &ModuleRegistryBlock);
-	registry_init((VOID *)ModuleRegistryBlock, 1024 * 1024, 10);
+	RegistryInit((VOID *)ModuleRegistryBlock, 1024 * 1024, 10);
 
 	ModuleImportHandleInit(SystemTable);
 

@@ -2,169 +2,169 @@
 
 /* --- Internal Helpers --- */
 
-registry_t reg;
+REGISTRY Reg;
 
-static void *k_memset(void *s, int c, size_t n)
+static void *Memset(void *S, INT32 C, UINTN N)
 {
-	unsigned char *p = (unsigned char *)s;
-	while (n--)
-		*p++ = (unsigned char)c;
-	return s;
+    unsigned char *P = (unsigned char *)S;
+    while (N--)
+        *P++ = (unsigned char)C;
+    return S;
 }
 
-static int k_strcmp(const char *s1, const char *s2)
+static INT32 Strcmp(const char *S1, const char *S2)
 {
-	while (*s1 && (*s1 == *s2)) {
-		s1++;
-		s2++;
-	}
-	return *(unsigned char *)s1 - *(unsigned char *)s2;
+    while (*S1 && (*S1 == *S2)) {
+        S1++;
+        S2++;
+    }
+    return *(unsigned char *)S1 - *(unsigned char *)S2;
 }
 
-static void k_strlcpy(char *dest, const char *src, size_t n)
+static void Strlcpy(char *Dest, const char *Src, UINTN N)
 {
-	size_t i;
-	for (i = 0; i < n - 1 && src[i] != '\0'; i++)
-		dest[i] = src[i];
-	dest[i] = '\0';
+    UINTN I;
+    for (I = 0; I < N - 1 && Src[I] != '\0'; I++)
+        Dest[I] = Src[I];
+    Dest[I] = '\0';
 }
 
-static uint64_t k_hash(const char *str)
+static UINT64 Hash(const char *Str)
 {
-	uint64_t hash = 0xcbf29ce484222325;
-	while (*str) {
-		hash ^= (uint8_t)*str++;
-		hash *= 0x100000001b3;
-	}
-	return hash;
+    UINT64 HashValue = 0xcbf29ce484222325;
+    while (*Str) {
+        HashValue ^= (uint8_t)*Str++;
+        HashValue *= 0x100000001b3;
+    }
+    return HashValue;
 }
 
 /* --- Core Logic --- */
 
-void registry_init(void *block, size_t block_size, size_t max_expected_types)
+void RegistryInit(void *Block, UINTN BlockSize, UINTN MaxExpectedTypes)
 {
-	k_memset(block, 0, block_size);
+    Memset(Block, 0, BlockSize);
 
-	// 1. Allocate the Master Type Table at the very start of the block
-	reg.type_table = (type_entry_t *)block;
-	reg.type_capacity = max_expected_types;
-	reg.type_count = 0;
+    // 1. Allocate the Master Type Table at the very start of the block
+    Reg.TypeTable = (TYPE_ENTRY *)Block;
+    Reg.TypeCapacity = MaxExpectedTypes;
+    Reg.TypeCount = 0;
 
-	// 2. Set up the pool for Sub-Maps (offset by the size of the Master Table)
-	size_t table_size = sizeof(type_entry_t) * max_expected_types;
-	reg.pool_ptr = (uint8_t *)block + table_size;
-	reg.pool_remaining = block_size - table_size;
+    // 2. Set up the pool for Sub-Maps (offset by the size of the Master Table)
+    UINTN TableSize = sizeof(TYPE_ENTRY) * MaxExpectedTypes;
+    Reg.PoolPtr = (uint8_t *)Block + TableSize;
+    Reg.PoolRemaining = BlockSize - TableSize;
 }
 
-int registry_put(module_meta_t meta)
+INT32 RegistryPut(MODULE_META Meta)
 {
-	uint64_t t_hash = k_hash(meta.type);
+    UINT64 THash = Hash(Meta.Type);
 
-	// 1. Find or Create Type in the Master Map using Linear Probing
-	uint32_t t_idx = t_hash % reg.type_capacity;
-	uint32_t t_start = t_idx;
+    // 1. Find or Create Type in the Master Map using Linear Probing
+    UINT32 TIdx = THash % Reg.TypeCapacity;
+    UINT32 TStart = TIdx;
 
-	while (reg.type_table[t_idx].occupied) {
-		if (reg.type_table[t_idx].type_hash == t_hash)
-			break;
-		t_idx = (t_idx + 1) % reg.type_capacity;
-		if (t_idx == t_start)
-			return -1; // Master Map is full!
-	}
+    while (Reg.TypeTable[TIdx].Occupied) {
+        if (Reg.TypeTable[TIdx].TypeHash == THash)
+            break;
+        TIdx = (TIdx + 1) % Reg.TypeCapacity;
+        if (TIdx == TStart)
+            return -1; // Master Map is full!
+    }
 
-	type_entry_t *type_bucket = &reg.type_table[t_idx];
+    TYPE_ENTRY *TypeBucket = &Reg.TypeTable[TIdx];
 
-	if (!type_bucket->occupied) {
-		// Initialize new Sub-Map
-		size_t submap_sz =
-			sizeof(instance_entry_t) * SUBMAP_INITIAL_CAPACITY;
-		if (reg.pool_remaining < submap_sz)
-			return -2; // Out of memory
+    if (!TypeBucket->Occupied) {
+        // Initialize new Sub-Map
+        UINTN SubmapSz = sizeof(INSTANCE_ENTRY) * SUBMAP_INITIAL_CAPACITY;
+        if (Reg.PoolRemaining < SubmapSz)
+            return -2; // Out of memory
 
-		type_bucket->type_hash = t_hash;
-		k_strlcpy(type_bucket->type_str, meta.type, MAX_STR_LEN);
-		type_bucket->instance_table = (instance_entry_t *)reg.pool_ptr;
-		type_bucket->instance_capacity = SUBMAP_INITIAL_CAPACITY;
-		type_bucket->occupied = 1;
+        TypeBucket->TypeHash = THash;
+        Strlcpy(TypeBucket->TypeString, Meta.Type, MAX_STR_LEN);
+        TypeBucket->InstanceTable = (INSTANCE_ENTRY *)Reg.PoolPtr;
+        TypeBucket->InstanceCapacity = SUBMAP_INITIAL_CAPACITY;
+        TypeBucket->Occupied = 1;
 
-		reg.pool_ptr += submap_sz;
-		reg.pool_remaining -= submap_sz;
-		reg.type_count++;
-	}
+        Reg.PoolPtr += SubmapSz;
+        Reg.PoolRemaining -= SubmapSz;
+        Reg.TypeCount++;
+    }
 
-	// 2. Insert into the Instance Sub-Map using Linear Probing
-	uint64_t n_hash = k_hash(meta.name);
-	uint32_t n_idx = n_hash % type_bucket->instance_capacity;
-	uint32_t n_start = n_idx;
+    // 2. Insert into the Instance Sub-Map using Linear Probing
+    UINT64 NHash = Hash(Meta.Name);
+    UINT32 NIdx = NHash % TypeBucket->InstanceCapacity;
+    UINT32 NStart = NIdx;
 
-	while (type_bucket->instance_table[n_idx].occupied) {
-		// Handle duplicate put (optional: update vtable or error)
-		if (type_bucket->instance_table[n_idx].name_hash == n_hash)
-			break;
+    while (TypeBucket->InstanceTable[NIdx].Occupied) {
+        // Handle duplicate put
+        if (TypeBucket->InstanceTable[NIdx].NameHash == NHash)
+            break;
 
-		n_idx = (n_idx + 1) % type_bucket->instance_capacity;
-		if (n_idx == n_start)
-			return -3; // Sub-Map is full!
-	}
+        NIdx = (NIdx + 1) % TypeBucket->InstanceCapacity;
+        if (NIdx == NStart)
+            return -3; // Sub-Map is full!
+    }
 
-	instance_entry_t *entry = &type_bucket->instance_table[n_idx];
-	entry->name_hash = n_hash;
-	entry->vtable_ptr = meta.vtable_ptr;
-	k_strlcpy(entry->name_str, meta.name, MAX_STR_LEN);
-	entry->occupied = 1;
+    INSTANCE_ENTRY *Entry = &TypeBucket->InstanceTable[NIdx];
+    Entry->NameHash = NHash;
+    Entry->VTablePtr = Meta.VTablePtr;
+    Entry->VTableSize = Meta.VTableSize;
+    Strlcpy(Entry->NameString, Meta.Name, MAX_STR_LEN);
+    Entry->Occupied = 1;
 
-	return 0;
+    return 0;
 }
 
-void *registry_get(const char *type, const char *name)
+void RegistryGet(const char *Type, const char *Name, void **Ptr, UINTN *Size)
 {
-	uint64_t t_hash = k_hash(type);
-	uint32_t t_idx = t_hash % reg.type_capacity;
-	uint32_t t_start = t_idx;
+    UINT64 THash = Hash(Type);
+    UINT32 TIdx = THash % Reg.TypeCapacity;
+    UINT32 TStart = TIdx;
 
-	while (reg.type_table[t_idx].occupied) {
-		if (reg.type_table[t_idx].type_hash == t_hash) {
-			type_entry_t *sub = &reg.type_table[t_idx];
-			uint64_t n_hash = k_hash(name);
-			uint32_t n_idx = n_hash % sub->instance_capacity;
-			uint32_t n_start = n_idx;
+    while (Reg.TypeTable[TIdx].Occupied) {
+        if (Reg.TypeTable[TIdx].TypeHash == THash) {
+            TYPE_ENTRY *Sub = &Reg.TypeTable[TIdx];
+            UINT64 NHash = Hash(Name);
+            UINT32 NIdx = NHash % Sub->InstanceCapacity;
+            UINT32 NStart = NIdx;
 
-			while (sub->instance_table[n_idx].occupied) {
-				if (sub->instance_table[n_idx].name_hash ==
-				    n_hash) {
-					return sub->instance_table[n_idx]
-						.vtable_ptr;
-				}
-				n_idx = (n_idx + 1) % sub->instance_capacity;
-				if (n_idx == n_start)
-					break;
-			}
-			return NULL;
-		}
-		t_idx = (t_idx + 1) % reg.type_capacity;
-		if (t_idx == t_start)
-			break;
-	}
-	return NULL;
+            while (Sub->InstanceTable[NIdx].Occupied) {
+                if (Sub->InstanceTable[NIdx].NameHash == NHash) {
+                    *Ptr = Sub->InstanceTable[NIdx].VTablePtr;
+                    *Size = Sub->InstanceTable[NIdx].VTableSize;
+                }
+                NIdx = (NIdx + 1) % Sub->InstanceCapacity;
+                if (NIdx == NStart)
+                    break;
+            }
+            return;
+        }
+        TIdx = (TIdx + 1) % Reg.TypeCapacity;
+        if (TIdx == TStart)
+            break;
+    }
 }
 
-void *registry_get_any(const char *type)
+void RegistryGetAny(const char *Type, void **Ptr, UINTN *Size)
 {
-	uint64_t t_hash = k_hash(type);
-	uint32_t t_idx = t_hash % reg.type_capacity;
-	uint32_t t_start = t_idx;
+    UINT64 THash = Hash(Type);
+    UINT32 TIdx = THash % Reg.TypeCapacity;
+    UINT32 TStart = TIdx;
 
-	while (reg.type_table[t_idx].occupied) {
-		if (reg.type_table[t_idx].type_hash == t_hash) {
-			type_entry_t *sub = &reg.type_table[t_idx];
-			for (size_t i = 0; i < sub->instance_capacity; i++) {
-				if (sub->instance_table[i].occupied)
-					return sub->instance_table[i].vtable_ptr;
-			}
-		}
-		t_idx = (t_idx + 1) % reg.type_capacity;
-		if (t_idx == t_start)
-			break;
-	}
-	return NULL;
+    while (Reg.TypeTable[TIdx].Occupied) {
+        if (Reg.TypeTable[TIdx].TypeHash == THash) {
+            TYPE_ENTRY *Sub = &Reg.TypeTable[TIdx];
+            for (UINTN I = 0; I < Sub->InstanceCapacity; I++) {
+                if (Sub->InstanceTable[I].Occupied) {
+                    *Ptr = Sub->InstanceTable[I].VTablePtr;
+                    *Size = Sub->InstanceTable[I].VTableSize;
+                    return;
+                }
+            }
+        }
+        TIdx = (TIdx + 1) % Reg.TypeCapacity;
+        if (TIdx == TStart)
+            break;
+    }
 }

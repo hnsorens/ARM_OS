@@ -132,11 +132,12 @@ Load_Elf(IN EFI_SYSTEM_TABLE *SystemTable, IN CHAR8 *ElfBuffer,
 				Boot_Log(NameString, Strlen(NameString));
 				Boot_Log(TypeString, Strlen(TypeString));
 
-				module_meta_t ModuleMetadata;
-				ModuleMetadata.vtable_ptr = VTableAddress;
-				ModuleMetadata.type = TypeString;
-				ModuleMetadata.name = NameString;
-				registry_put(ModuleMetadata);
+				MODULE_META ModuleMetadata;
+				ModuleMetadata.VTablePtr = VTableAddress;
+				ModuleMetadata.Type = TypeString;
+				ModuleMetadata.Name = NameString;
+				ModuleMetadata.VTableSize = Shdr[I].sh_size;
+				RegistryPut(ModuleMetadata);
 			}
 		} else if (Strncmp(SectionName, ".import", 7) == 0) {
 			CONST CHAR8 *TypeString = SectionName + 8;

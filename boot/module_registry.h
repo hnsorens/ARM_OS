@@ -1,50 +1,54 @@
 #ifndef REGISTRY_H
 #define REGISTRY_H
 
-
-#include "stdint.h"
-#include "stddef.h"
+#include <efi.h>
+#include <efilib.h>
 
 #define NULL ((void*)0)
 #define MAX_STR_LEN 32
 #define SUBMAP_INITIAL_CAPACITY 16
 
 /* Data for a single module instance */
-typedef struct {
-    char name_str[MAX_STR_LEN];
-    uint64_t name_hash;
-    void* vtable_ptr;
-    uint32_t occupied;
-} instance_entry_t;
+typedef struct INSTANCE_ENTRY
+{
+    CHAR8 NameString[MAX_STR_LEN];
+    UINT64 NameHash;
+    VOID *VTablePtr;
+    UINT64 VTableSize;
+    UINT32 Occupied;
+} INSTANCE_ENTRY;
 
 /* Data for a module category (Type) */
-typedef struct {
-    char type_str[MAX_STR_LEN];
-    uint64_t type_hash;
-    instance_entry_t* instance_table;
-    size_t instance_capacity;
-    uint32_t occupied;
-} type_entry_t;
+typedef struct TYPE_ENTRY
+{
+    CHAR8 TypeString[MAX_STR_LEN];
+    UINT64 TypeHash;
+    INSTANCE_ENTRY *InstanceTable;
+    UINTN InstanceCapacity;
+    UINT32 Occupied;
+} TYPE_ENTRY;
 
 /* The Master Control Structure */
-typedef struct {
-    type_entry_t* type_table;
-    size_t type_capacity;
-    size_t type_count;
-    
-    uint8_t* pool_ptr;      /* Where we carve out new Sub-Maps */
-    size_t pool_remaining;
-} registry_t;
+typedef struct REGISTRY
+{
+    TYPE_ENTRY *TypeTable;
+    UINTN TypeCapacity;
+    UINTN TypeCount;
+    UINT8 *PoolPtr;
+    UINTN PoolRemaining;
+} REGISTRY;
 
-typedef struct {
-    const char* type;
-    const char* name;
-    void* vtable_ptr;
-} module_meta_t;
+typedef struct MODULE_META 
+{
+    CONST CHAR8 *Type;
+    CONST CHAR8 *Name;
+    VOID *VTablePtr;
+    UINT64 VTableSize;
+} MODULE_META;
 
-void registry_init(void* block, size_t block_size, size_t max_expected_types);
-int registry_put(module_meta_t meta);
-void* registry_get(const char* type, const char* name);
-void* registry_get_any(const char* type);
+VOID RegistryInit(VOID *Block, UINTN BlockSize, UINTN MaxExpectedTypes);
+INT32 RegistryPut(MODULE_META Meta);
+VOID RegistryGet(CONST CHAR8 *Type, CONST CHAR8 *Name, VOID** Ptr, UINT64 *Size);
+VOID RegistryGetAny(CONST CHAR8 *type, VOID** ptr, UINT64 *Size);
 
 #endif
