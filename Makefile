@@ -10,12 +10,12 @@ EFI_INC    = $(SYSROOT)/include/efi
 EFI_LIB    = $(SYSROOT)/lib
 QEMU_FW    = /usr/share/edk2/aarch64/QEMU_EFI.fd
 
-# NEW: Build Directory
+# Build Directory
 BUILD_DIR  = build
 
 # --- Targets ---
 BOOTLOADER = $(BUILD_DIR)/bootloader.efi
-KERNEL_BIN = $(BUILD_DIR)/kernel.bin
+KERNEL_ELF = $(BUILD_DIR)/kernel.elf
 IMG        = disk.img
 KERNEL_INI = kernel.ini
 
@@ -30,26 +30,29 @@ EFI_LDFLAGS = -target aarch64-unknown-windows -fuse-ld=lld-link -nostdlib \
 KFLAGS      = -ffreestanding -fno-stack-protector -fno-stack-check \
               -mgeneral-regs-only -fno-builtin -nostdlib -mcmodel=large \
               -fno-pic -fno-plt -c
+
+# Use the kernel linker script for both kernel and modules
 K_LDFLAGS   = -static -T kernel.ld -nostdlib --emit-relocs
 
 # --- File Discovery ---
 BOOT_SRCS   = $(wildcard boot/*.c)
 BOOT_OBJS   = $(patsubst boot/%.c, $(BUILD_DIR)/boot/%.o, $(BOOT_SRCS))
 
+KERNEL_SRCS = $(wildcard kernel/*.c)
+KERNEL_OBJS = $(patsubst kernel/%.c, $(BUILD_DIR)/kernel/%.o, $(KERNEL_SRCS))
+
 MODULE_DIRS = $(wildcard modules/*/)
-# This creates build/modules/serial_debug.o for example
-MODULE_COMBINED_OBJS = $(patsubst modules/%/, $(BUILD_DIR)/modules/%.o, $(MODULE_DIRS))
+MODULE_ELFS = $(patsubst modules/%/, $(BUILD_DIR)/modules/%.elf, $(MODULE_DIRS))
 
 .PHONY: all clean run dirs
 
-all: dirs $(BOOTLOADER) $(KERNEL_BIN) $(IMG)
+all: dirs $(BOOTLOADER) $(KERNEL_ELF) $(MODULE_ELFS) $(IMG)
 
 # Create the build directory structure
 dirs:
 	@mkdir -p $(BUILD_DIR)/boot
 	@mkdir -p $(BUILD_DIR)/kernel
 	@mkdir -p $(BUILD_DIR)/modules
-	@for dir in $(MODULE_DIRS); do mkdir -p $(BUILD_DIR)/$$dir; done
 
 # --- 1. BOOTLOADER BUILD ---
 $(BUILD_DIR)/boot/%.o: boot/%.c
@@ -57,42 +60,36 @@ $(BUILD_DIR)/boot/%.o: boot/%.c
 	$(CLANG) $(EFI_CFLAGS) $< -o $@
 
 $(BOOTLOADER): $(BOOT_OBJS)
-	@echo "Linking Bootloader with Clang/LLD"
+	@echo "Linking Bootloader"
 	$(CLANG) $(EFI_LDFLAGS) $(BOOT_OBJS) -o $@
 
-# --- 2. KERNEL BUILD (Aggregate into build/kernel/kernel.o) ---
-$(BUILD_DIR)/kernel/kernel.o: $(wildcard kernel/*.c)
-	@echo "Combining Kernel objects into $@"
-	@for src in $^; do \
-		clang-format -i $$src; \
-		obj=$(BUILD_DIR)/kernel/$$(basename $${src%.c}.tmp.o); \
-		$(CC) $(KFLAGS) $$src -o $$obj; \
-	done
-	$(LD) -r $(BUILD_DIR)/kernel/*.tmp.o -o $@
-	@rm $(BUILD_DIR)/kernel/*.tmp.o
+# --- 2. KERNEL BUILD ---
+$(BUILD_DIR)/kernel/%.o: kernel/%.c
+	@clang-format -i $<
+	$(CC) $(KFLAGS) $< -o $@
 
-# --- 3. MODULES BUILD (One .o per module folder) ---
-$(MODULE_COMBINED_OBJS): $(BUILD_DIR)/modules/%.o:
-	$(eval SUB_DIR_NAME := $(patsubst $(BUILD_DIR)/modules/%.o, %, $@))
+$(KERNEL_ELF): $(KERNEL_OBJS)
+	@echo "Linking standalone Kernel: $@"
+	$(LD) $(K_LDFLAGS) $(KERNEL_OBJS) -o $@
+
+# --- 3. MODULES BUILD (One ELF per module folder) ---
+$(MODULE_ELFS): $(BUILD_DIR)/modules/%.elf:
+	$(eval SUB_DIR_NAME := $(patsubst $(BUILD_DIR)/modules/%.elf, %, $@))
 	$(eval SRC_DIR := modules/$(SUB_DIR_NAME))
 	$(eval OBJ_DIR := $(BUILD_DIR)/modules/$(SUB_DIR_NAME))
 	@mkdir -p $(OBJ_DIR)
-	@echo "Combining Module $(SRC_DIR) into $@"
+	@echo "Linking Module Executable: $(SUB_DIR_NAME) -> $@"
 	@for src in $(wildcard $(SRC_DIR)/*.c); do \
-		clang-format -i %%src; \
-		obj=$(OBJ_DIR)/$$(basename $${src%.c}.tmp.o); \
+		clang-format -i $$src; \
+		obj=$(OBJ_DIR)/$$(basename $${src%.c}.o); \
 		$(CC) $(KFLAGS) $$src -o $$obj; \
 	done
-	$(LD) -r $(OBJ_DIR)/*.tmp.o -o $@
+	$(LD) $(K_LDFLAGS) $(OBJ_DIR)/*.o -o $@
 	@rm -rf $(OBJ_DIR)
 
-# --- 4. FINAL KERNEL LINK ---
-$(KERNEL_BIN): $(BUILD_DIR)/kernel/kernel.o $(MODULE_COMBINED_OBJS)
-	@echo "Linking final Kernel binary"
-	$(LD) $(K_LDFLAGS) $^ -o $(BUILD_DIR)/kernel.bin
-
-# --- 5. DISK IMAGE ---
-$(IMG): $(BOOTLOADER) $(KERNEL_BIN)
+# --- 4. DISK IMAGE ---
+$(IMG): $(BOOTLOADER) $(KERNEL_ELF) $(MODULE_ELFS)
+	@echo "Building Disk Image"
 	@rm -f $(IMG)
 	truncate -s 128M $(IMG)
 	sgdisk -o $(IMG)
@@ -100,20 +97,22 @@ $(IMG): $(BOOTLOADER) $(KERNEL_BIN)
 	mformat -i $(IMG)@@1M -F -H 2048 -c 1 -v "ESP" ::
 	mmd -i $(IMG)@@1M ::/EFI
 	mmd -i $(IMG)@@1M ::/EFI/BOOT
+	mmd -i $(IMG)@@1M ::/modules
+	# Copy Core Files
 	mcopy -i $(IMG)@@1M $(BOOTLOADER) ::/EFI/BOOT/BOOTAA64.EFI
-	mcopy -i $(IMG)@@1M $(KERNEL_BIN) ::/kernel.elf
+	mcopy -i $(IMG)@@1M $(KERNEL_ELF) ::/kernel.elf
 	mcopy -i $(IMG)@@1M $(KERNEL_INI) ::/kernel.ini
+	# Copy all separate Module ELFs
+	@for mod in $(MODULE_ELFS); do \
+		echo "Adding module: $$mod"; \
+		mcopy -i $(IMG)@@1M $$mod ::/modules/; \
+	done
 
 run: $(IMG)
 	qemu-system-aarch64 -m 16G -cpu cortex-a72 -M virt -bios $(QEMU_FW) \
 		-serial stdio -drive file=$(IMG),format=raw,if=none,id=d0 \
 		-device virtio-blk-device,drive=d0 \
-        -gdb tcp::1234
-
-debug:
-	$(MAKE) run & \
-	sleep 10 && \
-	kitty -- aarch64-linux-gnu-gdb -ex "target remote :1234"
+		-gdb tcp::1234
 
 clean:
 	rm -rf $(BUILD_DIR) $(IMG)

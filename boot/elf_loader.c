@@ -55,10 +55,52 @@ static INT32 Strlen(CONST CHAR8 *S)
 	return I;
 }
 
+static UINTN GetElfSpanPages(void *ElfFileBuffer)
+{
+	Elf64_Ehdr *Header = (Elf64_Ehdr *)ElfFileBuffer;
+
+	// Basic ELF Magic Check
+	if (Header->e_ident[0] != 0x7f || Header->e_ident[1] != 'E') {
+		return 0;
+	}
+
+	UINT64 MinAddr = (UINT64)-1;
+	UINT64 MaxAddr = 0;
+	INT32 Found = 0;
+
+	Elf64_Phdr *PhdrTable =
+		(Elf64_Phdr *)((uint8_t *)ElfFileBuffer + Header->e_phoff);
+
+	for (UINT32 I = 0; I < Header->e_phnum; I++) {
+		// PT_LOAD segment check
+		if (PhdrTable[I].p_type == PT_LOAD) {
+			UINT64 Start = PhdrTable[I].p_vaddr;
+			UINT64 End = Start + PhdrTable[I].p_memsz;
+
+			if (Start < MinAddr)
+				MinAddr = Start;
+			if (End > MaxAddr)
+				MaxAddr = End;
+			Found = 1;
+		}
+	}
+
+	if (!Found)
+		return 0;
+
+	// Manual Page Alignment and Span Calculation
+	// Page Size is 4096 (0x1000)
+	UINT64 SpanStart = MinAddr & ~((UINT64)4095);
+	UINT64 SpanEnd = (MaxAddr + 4095) & ~((UINT64)4095);
+
+	return (UINTN)((SpanEnd - SpanStart) / 4096);
+}
+
+UINTN LoadOffset = 0;
+
 EFI_STATUS
 Load_Elf(IN EFI_SYSTEM_TABLE *SystemTable, IN CHAR8 *ElfBuffer,
-	 IN UINT64 LoadOffset, OUT PAGE_TABLE_T *UpperPageTable,
-	 OUT EFI_VIRTUAL_ADDRESS *Entry)
+	 OUT PAGE_TABLE_T *UpperPageTable, OUT EFI_VIRTUAL_ADDRESS *Entry)
 {
 	if (!ElfBuffer)
 		return EFI_LOAD_ERROR;
@@ -76,6 +118,7 @@ Load_Elf(IN EFI_SYSTEM_TABLE *SystemTable, IN CHAR8 *ElfBuffer,
 	}
 
 	Link_Elf_Module(LoadOffset + 0xFFFF800000000000, ElfBuffer);
+	LoadOffset += GetElfSpanPages(ElfBuffer) * 4096;
 
 	Elf64_Phdr *Phdr = (Elf64_Phdr *)((UINT8 *)Ehdr + Ehdr->e_phoff);
 	Elf64_Shdr *Shdr = (Elf64_Shdr *)((UINT8 *)Ehdr + Ehdr->e_shoff);

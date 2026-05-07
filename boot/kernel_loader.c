@@ -116,8 +116,6 @@ CHAR8 *Trim(CHAR8 *S)
 	return S;
 }
 
-UINTN Offsethehe = 0;
-
 EFI_STATUS
 Load_Module(EFI_SYSTEM_TABLE *SystemTable, EFI_HANDLE ImageHandle,
 	    EFI_FILE_PROTOCOL *Root, CHAR8 *Name, PAGE_TABLE_T *PageTable,
@@ -126,26 +124,39 @@ Load_Module(EFI_SYSTEM_TABLE *SystemTable, EFI_HANDLE ImageHandle,
 	Boot_Log("Loading a module\n", 17);
 	CHAR16 NameBuffer[256];
 
-	NameBuffer[0] = '\\';
+	Memcpy(NameBuffer, L"\\modules\\", 18);
 
 	UINTN NameLength = Strlen(Name);
 	for (UINTN I = 0; I < NameLength; ++I) {
-		NameBuffer[I + 1] = Name[I];
+		NameBuffer[I + 9] = Name[I];
 	}
 
-	NameBuffer[NameLength + 1] = '.';
-	NameBuffer[NameLength + 2] = 'e';
-	NameBuffer[NameLength + 3] = 'l';
-	NameBuffer[NameLength + 4] = 'f';
-	NameBuffer[NameLength + 5] = '\0';
+	NameBuffer[NameLength + 9] = '.';
+	NameBuffer[NameLength + 10] = 'e';
+	NameBuffer[NameLength + 11] = 'l';
+	NameBuffer[NameLength + 12] = 'f';
+	NameBuffer[NameLength + 13] = '\0';
 
 	CHAR8 *ModuleBuffer = 0;
 	ReadFile(NameBuffer, Root, SystemTable, ImageHandle, &ModuleBuffer);
 
-	Load_Elf(SystemTable, ModuleBuffer, Offsethehe, PageTable, Entry);
-	Offsethehe += (4096 * 10); // FOR TESTING FIX LATER SO ITS ACTUAL VALUE
+	Load_Elf(SystemTable, ModuleBuffer, PageTable, Entry);
 
-	//SystemTable->BootServices->FreePool(ModuleBuffer);
+	return EFI_SUCCESS;
+}
+
+EFI_STATUS
+Load_Kernel_Elf(EFI_SYSTEM_TABLE *SystemTable, EFI_HANDLE ImageHandle,
+		EFI_FILE_PROTOCOL *Root, PAGE_TABLE_T *PageTable,
+		EFI_VIRTUAL_ADDRESS *Entry)
+{
+	Boot_Log("Loading Kernel Elf\n", 17);
+
+	CHAR8 *KernelBuffer = 0;
+	ReadFile(L"\\kernel.elf", Root, SystemTable, ImageHandle,
+		 &KernelBuffer);
+
+	Load_Elf(SystemTable, KernelBuffer, PageTable, Entry);
 
 	return EFI_SUCCESS;
 }
@@ -201,8 +212,7 @@ Load_Kernel(EFI_SYSTEM_TABLE *SystemTable, EFI_HANDLE ImageHandle,
 {
 	EFI_STATUS Status;
 
-	Load_Module(SystemTable, ImageHandle, Root, "Kernel", UpperPageTable,
-		    Entry);
+	Load_Kernel_Elf(SystemTable, ImageHandle, Root, UpperPageTable, Entry);
 
 	Boot_Log("Loaded kernel core\n", 19);
 

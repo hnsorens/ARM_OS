@@ -9,9 +9,9 @@ int global_variable = 0;
 
 int _start(BootInfoStruct *BootInfo)
 {
-	serial_debug_serial_printf("TEST STARTING\n");
+	//serial_debug_serial_printf("TEST STARTING\n");
 	serial.printf("FUNCTION CALL FROM VTABLE\n");
-	serial_debug_serial_printf("TEST SUCCESS\n");
+	//serial_debug_serial_printf("TEST SUCCESS\n");
 	while (1)
 		;
 }
