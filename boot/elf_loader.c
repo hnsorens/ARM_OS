@@ -4,6 +4,7 @@
 #include "module_registry.h"
 #include "serial.h"
 #include "module_import_handle.h"
+#include "elf.h"
 
 #define PAGE_SIZE 4096
 
@@ -114,7 +115,7 @@ Load_Elf(IN EFI_SYSTEM_TABLE *SystemTable, IN CHAR8 *ElfBuffer,
 	}
 
 	for (INTN I = 0; I < Ehdr->e_shnum; ++I) {
-		CONST CHAR8 *SectionName = (UINT8 *)ShStrTab + Shdr[I].sh_name;
+		CONST CHAR8 *SectionName = (CHAR8 *)ShStrTab + Shdr[I].sh_name;
 
 		Boot_Log(SectionName, Strlen(SectionName));
 		if (Strncmp(SectionName, ".export", 7) == 0) {

@@ -1,5 +1,8 @@
 #include "kernel_loader.h"
 
+#include "elf_loader.h"
+#include "filesystem.h"
+
 static VOID *Memcpy(VOID *Dest, CONST VOID *Src, UINTN N)
 {
 	UINT8 *D = Dest;

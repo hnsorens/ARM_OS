@@ -4,7 +4,6 @@
 #include "boot_services.h"
 #include "filesystem.h"
 #include "page_table.h"
-#include "elf_loader.h"
 #include "serial.h"
 #include "bootinfo.h"
 #include "kernel_loader.h"
