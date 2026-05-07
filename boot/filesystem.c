@@ -1,5 +1,6 @@
 #include "filesystem.h"
 #include "memory_constants.h"
+#include "serial.h"
 
 static EFI_GUID gEfiSimpleFileSystemProtocolGuid = {
 	0x964e5b22,

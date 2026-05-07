@@ -2,6 +2,7 @@
 
 #include "elf_loader.h"
 #include "filesystem.h"
+#include "serial.h"
 
 static VOID *Memcpy(VOID *Dest, CONST VOID *Src, UINTN N)
 {

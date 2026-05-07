@@ -2,7 +2,6 @@
 #define FILESYSTEM_H
 
 #include <efi.h>
-#include "serial.h"
 
 EFI_STATUS
 OpenRoot(

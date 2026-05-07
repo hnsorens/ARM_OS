@@ -2,7 +2,6 @@
 
 #include "linker.h"
 #include "module_registry.h"
-#include "serial.h"
 #include "module_import_handle.h"
 #include "elf.h"
 #include "memory_constants.h"
