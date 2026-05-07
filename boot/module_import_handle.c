@@ -54,13 +54,6 @@ VOID AddModuleImportHandle(EFI_SYSTEM_TABLE *SystemTable,
 VOID HandleModuleImports()
 {
 	for (UINTN I = 0; I < ModuleImportHandleCapacity; ++I) {
-		Boot_Log("HEHE HAHA\n", 10);
-		Boot_Log(ModuleImportHandleArray[I].NameString, 5);
-		Boot_Log_Hex((UINT64)(ModuleImportHandleArray[I].NameString));
-		Boot_Log("\n", 1);
-		Boot_Log(ModuleImportHandleArray[I].TypeString, 5);
-		Boot_Log_Hex((UINT64)(ModuleImportHandleArray[I].TypeString));
-		Boot_Log("\n", 1);
 		VOID *VTableSource = 0;
 		UINTN VTableSize = 0;
 		if (!ModuleImportHandleArray[I].NameString) {
@@ -72,17 +65,7 @@ VOID HandleModuleImports()
 				    &VTableSource, &VTableSize);
 		}
 
-		Boot_Log_Hex((UINT64)ModuleImportHandleArray[I].VTablePtr);
-		Boot_Log("\n", 1);
-		Boot_Log_Hex((UINT64)VTableSource);
-		Boot_Log("\n", 1);
-
 		Memcpy(ModuleImportHandleArray[I].VTablePtr, VTableSource,
 		       VTableSize); // Change the size so it is gud
-		//
-		Boot_Log_Hex(*(UINT64 *)ModuleImportHandleArray[I].VTablePtr);
-		Boot_Log("\n", 1);
-		Boot_Log_Hex(*(UINT64 *)VTableSource);
-		Boot_Log("\n", 1);
 	}
 }

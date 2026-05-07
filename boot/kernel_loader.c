@@ -158,7 +158,6 @@ static VOID Parse_Config(EFI_SYSTEM_TABLE *SystemTable, EFI_HANDLE ImageHandle,
 	INT32 InSection = 0;
 
 	while (Line != 0) {
-		Boot_Log(Line, Strlen(Line));
 		// Skip comments and empty lines
 		if (Line[0] == ';' || Line[0] == '#' || Line[0] == '\r' ||
 		    Line[0] == '\n' || Line[0] == '\0') {
@@ -170,7 +169,6 @@ static VOID Parse_Config(EFI_SYSTEM_TABLE *SystemTable, EFI_HANDLE ImageHandle,
 		if (Line[0] == '[') {
 			if (Strncmp(Line, "[Modules]", 9) == 0) {
 				InSection = 1;
-				Boot_Log("[] IN MODULE\n", 13);
 			} else {
 				InSection = 0;
 			}
@@ -183,8 +181,6 @@ static VOID Parse_Config(EFI_SYSTEM_TABLE *SystemTable, EFI_HANDLE ImageHandle,
 				*EqualSign = '\0'; // Split the string
 				CHAR8 *Name = Trim(Line);
 				CHAR8 *Status = Trim(EqualSign + 1);
-
-				Boot_Log("[] Found Something\n", 19);
 
 				if (Status[0] == 'Y' || Status[0] == 'y') {
 					EFI_VIRTUAL_ADDRESS Entry;

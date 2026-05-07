@@ -118,7 +118,6 @@ Load_Elf(IN EFI_SYSTEM_TABLE *SystemTable, IN CHAR8 *ElfBuffer,
 	for (INTN I = 0; I < Ehdr->e_shnum; ++I) {
 		CONST CHAR8 *SectionName = (CHAR8 *)ShStrTab + Shdr[I].sh_name;
 
-		Boot_Log(SectionName, Strlen(SectionName));
 		if (Strncmp(SectionName, ".export", 7) == 0) {
 			CONST CHAR8 *TypeString = SectionName + 8;
 			CHAR8 *Dot = StrChr(TypeString, '.');
@@ -127,12 +126,6 @@ Load_Elf(IN EFI_SYSTEM_TABLE *SystemTable, IN CHAR8 *ElfBuffer,
 				*Dot = '\0';
 				CHAR8 *NameString = Dot + 1;
 				VOID *VTableAddress = (VOID *)(Shdr[I].sh_addr);
-
-				Boot_Log_Hex((UINT64)VTableAddress);
-
-				Boot_Log("Adding Module\n", 14);
-				Boot_Log(NameString, Strlen(NameString));
-				Boot_Log(TypeString, Strlen(TypeString));
 
 				MODULE_META ModuleMetadata;
 				ModuleMetadata.VTablePtr = VTableAddress;
@@ -145,8 +138,6 @@ Load_Elf(IN EFI_SYSTEM_TABLE *SystemTable, IN CHAR8 *ElfBuffer,
 			CONST CHAR8 *TypeString = SectionName + 8;
 			CHAR8 *Dot = StrChr(TypeString, '.');
 
-			Boot_Log("Adding Module Handle\n", 21);
-
 			CHAR8 *NameString = 0;
 			if (Dot) {
 				*Dot = '\0';
@@ -158,13 +149,7 @@ Load_Elf(IN EFI_SYSTEM_TABLE *SystemTable, IN CHAR8 *ElfBuffer,
 			ImportHandle.NameString = NameString;
 			ImportHandle.VTablePtr = (VOID *)(Shdr[I].sh_addr);
 
-			Boot_Log_Hex((UINT64)ImportHandle.VTablePtr);
-
 			AddModuleImportHandle(SystemTable, ImportHandle);
-			Boot_Log_Hex((UINT64)NameString);
-			Boot_Log_Hex((UINT64)TypeString);
-			Boot_Log(NameString, Strlen(NameString));
-			Boot_Log(TypeString, Strlen(TypeString));
 		}
 	}
 

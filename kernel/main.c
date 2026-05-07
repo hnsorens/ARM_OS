@@ -9,17 +9,9 @@ int global_variable = 0;
 
 int _start(BootInfoStruct *BootInfo)
 {
-	serial_debug_serial_printf("TEST %lx\n", &serial);
-	serial_debug_serial_printf("ASD %lx\n", serial);
-	serial_debug_serial_printf("%lx\n", &serial.printf);
-	serial_debug_serial_printf("HEHE %lx %lx\n",
-				   *(unsigned long *)&serial.printf,
-				   serial_debug_serial_printf);
-	serial.printf("TEST IS WORKING\n");
-	serial_debug_serial_printf("TEST IS DONE\n");
-	serial_debug_serial_printf("Metadata Name %lx\n",
-				   BootInfo->memoryMapSize);
-	serial_debug_serial_printf("Setup registry\n");
+	serial_debug_serial_printf("TEST STARTING\n");
+	serial.printf("FUNCTION CALL FROM VTABLE\n");
+	serial_debug_serial_printf("TEST SUCCESS\n");
 	while (1)
 		;
 }
