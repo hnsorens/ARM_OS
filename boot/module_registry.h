@@ -8,6 +8,12 @@
 #define MAX_STR_LEN 32
 #define SUBMAP_INITIAL_CAPACITY 16
 
+typedef struct MODULE_DEPENDENCY
+{
+    struct INSTANCE_ENTRY *Entry;
+    struct MODULE_DEPENDENCY *Next;
+} MODULE_DEPENDENCY;
+
 /* Data for a single module instance */
 typedef struct INSTANCE_ENTRY
 {
@@ -15,6 +21,10 @@ typedef struct INSTANCE_ENTRY
     UINT64 NameHash;
     VOID *VTablePtr;
     UINT64 VTableSize;
+    MODULE_DEPENDENCY *DependenciesHead;
+    VOID (*Entry)(VOID *);
+    BOOLEAN Initialized;
+    struct INSTANCE_ENTRY *Next;
     UINT32 Occupied;
 } INSTANCE_ENTRY;
 
@@ -44,11 +54,14 @@ typedef struct MODULE_META
     CONST CHAR8 *Name;
     VOID *VTablePtr;
     UINT64 VTableSize;
+    VOID (*Entry)(VOID *);
 } MODULE_META;
 
 VOID RegistryInit(VOID *Block, UINTN BlockSize, UINTN MaxExpectedTypes);
 INT32 RegistryPut(MODULE_META Meta);
 VOID RegistryGet(CONST CHAR8 *Type, CONST CHAR8 *Name, VOID** Ptr, UINT64 *Size);
 VOID RegistryGetAny(CONST CHAR8 *type, VOID** ptr, UINT64 *Size);
+EFI_STATUS RegistryPutDependency(CONST CHAR8 *TypeString, CONST CHAR8 *NameString, CONST CHAR8 *DepTypeString, CONST CHAR8 *DepNameString);
+EFI_STATUS InitializeModules();
 
 #endif

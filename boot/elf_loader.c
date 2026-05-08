@@ -5,6 +5,7 @@
 #include "module_import_handle.h"
 #include "elf.h"
 #include "memory_constants.h"
+#include "serial.h"
 
 #define PAGE_SIZE 4096
 
@@ -116,6 +117,8 @@ Load_Elf(IN EFI_SYSTEM_TABLE *SystemTable, IN CHAR8 *ElfBuffer,
 		return EFI_LOAD_ERROR;
 	}
 
+	Boot_Log("Loading elf\n", 12);
+
 	Link_Elf_Module(LoadOffset + 0xFFFF800000000000, ElfBuffer);
 	LoadOffset += GetElfSpanPages(ElfBuffer) * 4096;
 
@@ -157,16 +160,21 @@ Load_Elf(IN EFI_SYSTEM_TABLE *SystemTable, IN CHAR8 *ElfBuffer,
 		}
 	}
 
+	Boot_Log("Loaded module into memory\n", 26);
+
+	CHAR8 *TypeString = 0;
+	CHAR8 *NameString = 0;
+
 	for (INTN I = 0; I < Ehdr->e_shnum; ++I) {
 		CONST CHAR8 *SectionName = (CHAR8 *)ShStrTab + Shdr[I].sh_name;
 
 		if (Strncmp(SectionName, ".export", 7) == 0) {
-			CONST CHAR8 *TypeString = SectionName + 8;
+			TypeString = SectionName + 8;
 			CHAR8 *Dot = StrChr(TypeString, '.');
 
 			if (Dot) {
 				*Dot = '\0';
-				CHAR8 *NameString = Dot + 1;
+				NameString = Dot + 1;
 				VOID *VTableAddress = (VOID *)(Shdr[I].sh_addr);
 
 				MODULE_META ModuleMetadata;
@@ -174,28 +182,50 @@ Load_Elf(IN EFI_SYSTEM_TABLE *SystemTable, IN CHAR8 *ElfBuffer,
 				ModuleMetadata.Type = TypeString;
 				ModuleMetadata.Name = NameString;
 				ModuleMetadata.VTableSize = Shdr[I].sh_size;
+				ModuleMetadata.Entry = (VOID *)(Ehdr->e_entry);
 				RegistryPut(ModuleMetadata);
 			}
-		} else if (Strncmp(SectionName, ".import", 7) == 0) {
-			CONST CHAR8 *TypeString = SectionName + 8;
-			CHAR8 *Dot = StrChr(TypeString, '.');
+		}
+	}
 
-			CHAR8 *NameString = 0;
+	Boot_Log(NameString, 10);
+	Boot_Log(TypeString, 10);
+
+	Boot_Log("Found import for module\n", 24);
+
+	for (INTN I = 0; I < Ehdr->e_shnum; ++I) {
+		CONST CHAR8 *SectionName = (CHAR8 *)ShStrTab + Shdr[I].sh_name;
+
+		if (Strncmp(SectionName, ".import", 7) == 0) {
+			CONST CHAR8 *DepTypeString = SectionName + 8;
+			CHAR8 *Dot = StrChr(DepTypeString, '.');
+
+			CHAR8 *DepNameString = 0;
 			if (Dot) {
 				*Dot = '\0';
-				NameString = Dot + 1;
+				DepNameString = Dot + 1;
 			}
 
 			MODULE_IMPORT_HANDLE ImportHandle;
-			ImportHandle.TypeString = TypeString;
-			ImportHandle.NameString = NameString;
+			ImportHandle.TypeString = DepTypeString;
+			ImportHandle.NameString = DepNameString;
 			ImportHandle.VTablePtr = (VOID *)(Shdr[I].sh_addr);
 
 			AddModuleImportHandle(SystemTable, ImportHandle);
+
+			Boot_Log("HEHE\n", 5);
+			RegistryPutDependency(TypeString, NameString,
+					      DepTypeString, DepNameString);
+			Boot_Log("A\n", 2);
 		}
 	}
 
 	*Entry = Ehdr->e_entry;
 
 	return EFI_SUCCESS;
+}
+
+EFI_STATUS
+HandleDependencies()
+{
 }

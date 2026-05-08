@@ -125,11 +125,16 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
 	// Do this after page table are enabled, so that the code is accessible in memory
 	HandleModuleImports();
 
+	InitializeModules();
+
+	while (1)
+		;
+
 	BootInfo->memoryMapSize = MemoryMapRegionsCount;
 	BootInfo->memoryRegions = (MemoryRegion *)MemoryMap;
 
-	Jump_To_Kernel(Entry, (EFI_VIRTUAL_ADDRESS)BootInfo,
-		       0xFFFF800000000000 + (4096 * STACK_SIZE_PAGES));
+	//Jump_To_Kernel(Entry, (EFI_VIRTUAL_ADDRESS)BootInfo,
+	//       0xFFFF800000000000 + (4096 * STACK_SIZE_PAGES));
 
 	while (1) {
 		__asm__ volatile("wfi");

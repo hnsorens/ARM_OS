@@ -2,7 +2,10 @@
 
 /* --- Internal Helpers --- */
 
+#include "serial.h"
+
 REGISTRY Reg;
+INSTANCE_ENTRY *Head = 0;
 
 static void *Memset(void *S, INT32 C, UINTN N)
 {
@@ -113,8 +116,50 @@ INT32 RegistryPut(MODULE_META Meta)
 	Entry->VTableSize = Meta.VTableSize;
 	Strlcpy(Entry->NameString, Meta.Name, MAX_STR_LEN);
 	Entry->Occupied = 1;
+	Entry->Entry = Meta.Entry;
+	Entry->DependenciesHead = 0;
+	Entry->Initialized = FALSE;
+
+	if (Head) {
+		Entry->Next = Head;
+	} else {
+		Entry->Next = 0;
+	}
+
+	Head = Entry;
 
 	return 0;
+}
+
+static void RegistryGetInstanceEntry(const char *Type, const char *Name,
+				     INSTANCE_ENTRY **Ptr)
+{
+	UINT64 THash = Hash(Type);
+	UINT32 TIdx = THash % Reg.TypeCapacity;
+	UINT32 TStart = TIdx;
+
+	while (Reg.TypeTable[TIdx].Occupied) {
+		if (Reg.TypeTable[TIdx].TypeHash == THash) {
+			TYPE_ENTRY *Sub = &Reg.TypeTable[TIdx];
+			UINT64 NHash = Hash(Name);
+			UINT32 NIdx = NHash % Sub->InstanceCapacity;
+			UINT32 NStart = NIdx;
+
+			while (Sub->InstanceTable[NIdx].Occupied) {
+				if (Sub->InstanceTable[NIdx].NameHash ==
+				    NHash) {
+					*Ptr = &Sub->InstanceTable[NIdx];
+				}
+				NIdx = (NIdx + 1) % Sub->InstanceCapacity;
+				if (NIdx == NStart)
+					break;
+			}
+			return;
+		}
+		TIdx = (TIdx + 1) % Reg.TypeCapacity;
+		if (TIdx == TStart)
+			break;
+	}
 }
 
 void RegistryGet(const char *Type, const char *Name, void **Ptr, UINTN *Size)
@@ -171,4 +216,81 @@ void RegistryGetAny(const char *Type, void **Ptr, UINTN *Size)
 		if (TIdx == TStart)
 			break;
 	}
+}
+
+EFI_STATUS RegistryPutDependency(CONST CHAR8 *TypeString,
+				 CONST CHAR8 *NameString,
+				 CONST CHAR8 *DepTypeString,
+				 CONST CHAR8 *DepNameString)
+{
+	if (Reg.PoolRemaining < sizeof(MODULE_DEPENDENCY))
+		return EFI_OUT_OF_RESOURCES;
+
+	MODULE_DEPENDENCY *Dependency = (MODULE_DEPENDENCY *)Reg.PoolPtr;
+	Reg.PoolPtr += sizeof(MODULE_DEPENDENCY);
+	Reg.PoolRemaining -= sizeof(MODULE_DEPENDENCY);
+
+	Boot_Log("Get\n", 4);
+	INSTANCE_ENTRY *Instance = 0;
+	INSTANCE_ENTRY *DependencyInstance = 0;
+	Boot_Log(TypeString, 10);
+	Boot_Log(NameString, 10);
+	RegistryGetInstanceEntry(TypeString, NameString, &Instance);
+	Boot_Log("GET\n", 4);
+	RegistryGetInstanceEntry(DepTypeString, DepNameString,
+				 &DependencyInstance);
+	Boot_Log("Get1\n", 5);
+
+	Dependency->Entry = DependencyInstance;
+	Dependency->Next = Instance->DependenciesHead;
+	Instance->DependenciesHead = Dependency;
+
+	Boot_Log("Adding Dep\n", 11);
+
+	return EFI_SUCCESS;
+}
+
+#define MAX_MODULE_DEPTH 10
+
+EFI_STATUS InitializeModule(INSTANCE_ENTRY *Instance, UINTN Depth)
+{
+	if (Depth > MAX_MODULE_DEPTH)
+		return EFI_INVALID_PARAMETER;
+	if (Instance->Initialized)
+		return EFI_SUCCESS;
+	EFI_STATUS Status;
+	MODULE_DEPENDENCY *Current = Instance->DependenciesHead;
+	while (Current) {
+		Status = InitializeModule(Current->Entry, Depth + 1);
+		if (EFI_ERROR(Status)) {
+			Boot_Log("Failed to initialize module\n", 28);
+			return Status;
+		}
+		Current = Current->Next;
+	}
+
+	if (!Instance->Initialized) {
+		Instance->Entry(0);
+		Instance->Initialized = TRUE;
+	}
+	Boot_Log("Initialized module\n", 19);
+
+	return EFI_SUCCESS;
+}
+
+EFI_STATUS InitializeModules()
+{
+	INSTANCE_ENTRY *Current = Head;
+	EFI_STATUS Status;
+	while (Current) {
+		Boot_Log("Initializing module\n", 20);
+		Status = InitializeModule(Current, 0);
+		if (EFI_ERROR(Status)) {
+			Boot_Log("Failed to initialize module\n", 28);
+			return Status;
+		}
+		Current = Current->Next;
+	}
+
+	return EFI_SUCCESS;
 }

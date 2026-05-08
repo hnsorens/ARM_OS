@@ -706,5 +706,13 @@ int serial_debug_serial_printf(const char *format, ...)
 	return count;
 }
 
+int _start()
+{
+	serial_debug_serial_printf("Main for Serial");
+}
+
 REGISTER_MODULE(0, SerialDeviceInterface,
 		{ .printf = serial_debug_serial_printf });
+
+__attribute__((section(".import.serial.first_serial"), used,
+	       aligned(8))) volatile static const SerialDeviceInterface serial2;
