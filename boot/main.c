@@ -13,6 +13,17 @@
 
 #define STACK_SIZE_PAGES 0x100
 
+VOID Kernel_Panic()
+{
+	asm volatile("msr daifset, #2");
+	Fail_Log("!!! KERNEL PANIC !!!\n", 22);
+	Fail_Log("System Halted\n", 14);
+
+	while (1) {
+		asm("wfe");
+	}
+}
+
 VOID Jump_To_Kernel(EFI_VIRTUAL_ADDRESS Entry, EFI_VIRTUAL_ADDRESS BootInfoPtr,
 		    EFI_VIRTUAL_ADDRESS Stack)
 {
@@ -25,6 +36,29 @@ VOID Jump_To_Kernel(EFI_VIRTUAL_ADDRESS Entry, EFI_VIRTUAL_ADDRESS BootInfoPtr,
 		       "r"(Entry) // %2
 		     : "x0", "memory" // Remove "sp" from here
 	);
+}
+
+VOID Begin_Kernel(EFI_VIRTUAL_ADDRESS StackBase, BootInfoStruct *BootInfo)
+{
+	register BootInfoStruct *BootInfoPtr asm("x20") = BootInfo;
+	asm volatile("mov sp, %0\n\t" // Switch the stack pointer
+		     "mov x29, #0\n\t" // Reset frame pointer for the new stack
+		     :
+		     : "r"(StackBase)
+		     : "sp", "x29", "memory");
+
+	EFI_STATUS Status = InitializeModules();
+	if (EFI_ERROR(Status)) {
+		Fail_Log("Initializing modules\n", 21);
+		Kernel_Panic();
+	}
+	Ok_Log("Initializing modules\n", 21);
+
+	Ok_Log("Boot successful\n", 16);
+
+	while (1) {
+		__asm__ volatile("wfi");
+	}
 }
 
 EFI_STATUS
@@ -146,20 +180,10 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
 	}
 	Ok_Log("Handling module imports\n", 24);
 
-	Status = InitializeModules();
-	if (EFI_ERROR(Status)) {
-		Fail_Log("Initializing modules\n", 21);
-		return Status;
-	}
-	Ok_Log("Initializing modules\n", 21);
-
-	Ok_Log("Boot successful\n", 16);
-
 	BootInfo->memoryMapSize = MemoryMapRegionsCount;
 	BootInfo->memoryRegions = (MemoryRegion *)MemoryMap;
 
-	//Jump_To_Kernel(Entry, (EFI_VIRTUAL_ADDRESS)BootInfo,
-	//       0xFFFF800000000000 + (4096 * STACK_SIZE_PAGES));
+	Begin_Kernel(0xFFFF800000000000 + (4096 * STACK_SIZE_PAGES), BootInfo);
 
 	while (1) {
 		__asm__ volatile("wfi");
