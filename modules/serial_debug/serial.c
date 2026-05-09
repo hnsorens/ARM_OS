@@ -7,6 +7,7 @@
 #include <stdint.h>
 
 #include "serial.h"
+#include "../modules.h"
 
 // PL011 UART Registers (ARM Versatile Express base)
 #define UART0_BASE 0x09000000
@@ -709,7 +710,8 @@ int serial_debug_serial_printf(const char *format, ...)
 int _start()
 {
 	serial_debug_serial_printf("Main for Serial");
+	return 1;
 }
 
-REGISTER_MODULE(0, SerialDeviceInterface,
-		{ .printf = serial_debug_serial_printf });
+EXPORT_MODULE(Serial, first_serial_hehe4,
+	      { .printf = serial_debug_serial_printf })

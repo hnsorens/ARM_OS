@@ -165,7 +165,7 @@ Load_Elf(IN EFI_SYSTEM_TABLE *SystemTable, IN CHAR8 *ElfBuffer,
 		CONST CHAR8 *SectionName = (CHAR8 *)ShStrTab + Shdr[I].sh_name;
 
 		if (Strncmp(SectionName, ".export", 7) == 0) {
-			TypeString = SectionName + 8;
+			TypeString = (CHAR8 *)(SectionName + 8);
 			CHAR8 *Dot = StrChr(TypeString, '.');
 
 			if (Dot) {

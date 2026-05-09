@@ -2,11 +2,11 @@
 #include "../../boot/uefi/bootinfo.h"
 #include "../../include/api/serial_debug.h"
 
-__attribute__((section(".import.serial.first_serial_hehe"), used,
-	       aligned(8))) volatile static const SerialDeviceInterface serial;
+#include "../modules.h"
 
-__attribute__((section(".export.serial.first_serial"), used,
-	       aligned(8))) volatile static const SerialDeviceInterface serial2;
+IMPORT_MODULE_ANY(Serial, serial)
+
+EXPORT_MODULE(Serial, ModuleName, {})
 
 int global_variable = 0;
 
