@@ -55,16 +55,31 @@ VOID HandleModuleImports()
 	for (UINTN I = 0; I < ModuleImportHandleCapacity; ++I) {
 		VOID *VTableSource = 0;
 		UINTN VTableSize = 0;
-		if (!ModuleImportHandleArray[I].NameString) {
-			RegistryGetAny(ModuleImportHandleArray[I].TypeString,
-				       &VTableSource, &VTableSize);
-		} else {
-			RegistryGet(ModuleImportHandleArray[I].TypeString,
-				    ModuleImportHandleArray[I].NameString,
-				    &VTableSource, &VTableSize);
+		MODULE_IMPORT_HANDLE *ImportHandle =
+			&ModuleImportHandleArray[I];
+
+		if (!ImportHandle->NameString) {
+			RegistryResolveName(
+				ModuleImportHandleArray[I].TypeString,
+				&ModuleImportHandleArray[I].NameString);
 		}
+
+		RegistryPutDependency(ImportHandle->ParentTypeString,
+				      ImportHandle->ParentNameString,
+				      ImportHandle->TypeString,
+				      ImportHandle->NameString);
+
+		RegistryGet(ModuleImportHandleArray[I].TypeString,
+			    ModuleImportHandleArray[I].NameString,
+			    &VTableSource, &VTableSize);
 
 		Memcpy(ModuleImportHandleArray[I].VTablePtr, VTableSource,
 		       VTableSize); // Change the size so it is gud
+	}
+}
+
+VOID PopulateRegistryDependencies()
+{
+	for (UINTN I = 0; I < ModuleImportHandleCapacity; ++I) {
 	}
 }

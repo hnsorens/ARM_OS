@@ -209,23 +209,20 @@ Load_Elf(IN EFI_SYSTEM_TABLE *SystemTable, IN CHAR8 *ElfBuffer,
 			MODULE_IMPORT_HANDLE ImportHandle;
 			ImportHandle.TypeString = DepTypeString;
 			ImportHandle.NameString = DepNameString;
+			ImportHandle.ParentTypeString = TypeString;
+			ImportHandle.ParentNameString = NameString;
 			ImportHandle.VTablePtr = (VOID *)(Shdr[I].sh_addr);
 
 			AddModuleImportHandle(SystemTable, ImportHandle);
 
-			Boot_Log("HEHE\n", 5);
-			RegistryPutDependency(TypeString, NameString,
-					      DepTypeString, DepNameString);
-			Boot_Log("A\n", 2);
+			//Boot_Log("HEHE\n", 5);
+			//RegistryPutDependency(TypeString, NameString,
+			//		      DepTypeString, DepNameString);
+			//Boot_Log("A\n", 2);
 		}
 	}
 
 	*Entry = Ehdr->e_entry;
 
 	return EFI_SUCCESS;
-}
-
-EFI_STATUS
-HandleDependencies()
-{
 }

@@ -195,7 +195,7 @@ void RegistryGet(const char *Type, const char *Name, void **Ptr, UINTN *Size)
 	}
 }
 
-void RegistryGetAny(const char *Type, void **Ptr, UINTN *Size)
+void RegistryResolveName(const char *Type, const char **Name)
 {
 	UINT64 THash = Hash(Type);
 	UINT32 TIdx = THash % Reg.TypeCapacity;
@@ -204,17 +204,25 @@ void RegistryGetAny(const char *Type, void **Ptr, UINTN *Size)
 	while (Reg.TypeTable[TIdx].Occupied) {
 		if (Reg.TypeTable[TIdx].TypeHash == THash) {
 			TYPE_ENTRY *Sub = &Reg.TypeTable[TIdx];
+
+			// Iterate through the sub-map to find the first occupied instance
 			for (UINTN I = 0; I < Sub->InstanceCapacity; I++) {
 				if (Sub->InstanceTable[I].Occupied) {
-					*Ptr = Sub->InstanceTable[I].VTablePtr;
-					*Size = Sub->InstanceTable[I].VTableSize;
+					// Assign the pointer to the internal NameString
+					*Name = Sub->InstanceTable[I].NameString;
 					return;
 				}
 			}
 		}
+
 		TIdx = (TIdx + 1) % Reg.TypeCapacity;
 		if (TIdx == TStart)
 			break;
+	}
+
+	// If not found, ensure the pointer is set to NULL
+	if (Name) {
+		*Name = 0;
 	}
 }
 

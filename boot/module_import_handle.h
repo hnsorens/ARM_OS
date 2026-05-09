@@ -8,6 +8,8 @@ typedef struct MODULE_IMPORT_HANDLE
 {
     CONST CHAR8 *TypeString;
     CONST CHAR8 *NameString;
+    CONST CHAR8 *ParentTypeString;
+    CONST CHAR8 *ParentNameString;
     VOID *VTablePtr;
 } MODULE_IMPORT_HANDLE;
 
