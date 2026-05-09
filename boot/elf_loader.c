@@ -188,10 +188,13 @@ Load_Elf(IN EFI_SYSTEM_TABLE *SystemTable, IN CHAR8 *ElfBuffer,
 		}
 	}
 
-	Boot_Log(NameString, 10);
-	Boot_Log(TypeString, 10);
+    if (!NameString && !TypeString)
+    {
+        Boot_Log("Failed to find export for module\n", 33);
+        return EFI_LOAD_ERROR;
+    }
 
-	Boot_Log("Found import for module\n", 24);
+	Boot_Log("Found export for module\n", 24);
 
 	for (INTN I = 0; I < Ehdr->e_shnum; ++I) {
 		CONST CHAR8 *SectionName = (CHAR8 *)ShStrTab + Shdr[I].sh_name;
@@ -214,11 +217,6 @@ Load_Elf(IN EFI_SYSTEM_TABLE *SystemTable, IN CHAR8 *ElfBuffer,
 			ImportHandle.VTablePtr = (VOID *)(Shdr[I].sh_addr);
 
 			AddModuleImportHandle(SystemTable, ImportHandle);
-
-			//Boot_Log("HEHE\n", 5);
-			//RegistryPutDependency(TypeString, NameString,
-			//		      DepTypeString, DepNameString);
-			//Boot_Log("A\n", 2);
 		}
 	}
 
