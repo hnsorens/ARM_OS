@@ -20,19 +20,6 @@ static page_table_indices_t extract_indices(virt_addr_t virtual_address) {
   return indices;
 }
 
-static unsigned long page_order_size(unsigned long order)
-{
-  switch (order) {
-    case 0:
-      return 4096;
-    case 1:
-      return 4096 * 512;
-    case 2:
-      return 4096 * 512 * 512;
-  }
-  return 0;
-}
-
 k_status_t table_alloc(phys_addr_t *out_root)
 {
 
@@ -64,8 +51,8 @@ k_status_t map(phys_addr_t root, virt_addr_t v, phys_addr_t p, size_t pc, page_s
     phys_addr_t* p0 = *(phys_addr_t**)root;
 
     for (unsigned long i = 0; i < pc; i++) {
-        unsigned long curr_vaddr = v + i * page_order_size(ps);
-        unsigned long curr_phys = p + i * page_order_size(ps);
+        unsigned long curr_vaddr = v + i * ps;
+        unsigned long curr_phys = p + i * ps;
         page_table_indices_t idx = extract_indices(curr_vaddr);
 
         // Get or create P1 table

@@ -15,9 +15,9 @@ typedef enum mmu_flags
 
 typedef enum page_size
 {
-    PS_4KB,
-    PS_2MB,
-    PS_1GB
+    PS_4KB = 0x1000,
+    PS_2MB = 0x200000,
+    PS_1GB = 0x40000000,
 } page_size_t;
 
 typedef struct mmu_interface
