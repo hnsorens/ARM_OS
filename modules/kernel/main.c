@@ -1,5 +1,5 @@
 
-#include "../../boot/bootinfo.h"
+#include "../../boot/uefi/bootinfo.h"
 #include "../../include/api/serial_debug.h"
 
 __attribute__((section(".import.serial.first_serial_hehe"), used,

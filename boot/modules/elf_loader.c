@@ -1,11 +1,11 @@
-#include "elf_loader.h"
+#include "modules/elf_loader.h"
 
-#include "linker.h"
+#include "modules/linker.h"
 #include "module_registry.h"
 #include "module_import_handle.h"
 #include "elf.h"
-#include "memory_constants.h"
-#include "serial.h"
+#include "memory/memory_constants.h"
+#include "logging/serial.h"
 
 #define PAGE_SIZE 4096
 

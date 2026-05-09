@@ -1,8 +1,8 @@
 #include "module_import_handle.h"
 
-#include "memory_constants.h"
-#include "module_registry.h"
-#include "serial.h"
+#include "memory/memory_constants.h"
+#include "modules/module_registry.h"
+#include "logging/serial.h"
 
 #define MODULE_IMPORT_HANDLE_INITIAL_SIZE 32
 

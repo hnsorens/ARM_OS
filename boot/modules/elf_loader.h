@@ -4,7 +4,7 @@
 #include <efi.h>
 #include <efilib.h>
 
-#include "page_table.h"
+#include "memory/page_table.h"
 
 EFI_STATUS
 Load_Elf(IN EFI_SYSTEM_TABLE *SystemTable, IN CHAR8 *ElfBuffer,

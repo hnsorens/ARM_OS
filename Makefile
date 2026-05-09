@@ -7,15 +7,11 @@ CLANG   = clang
 # --- Paths ---
 SYSROOT    = /usr/aarch64-linux-gnu
 EFI_INC    = $(SYSROOT)/include/efi
-EFI_LIB    = $(SYSROOT)/lib
-QEMU_FW    = /usr/share/edk2/aarch64/QEMU_EFI.fd
-
-# Build Directory
 BUILD_DIR  = build
+QEMU_FW    = /usr/share/edk2/aarch64/QEMU_EFI.fd
 
 # --- Targets ---
 BOOTLOADER = $(BUILD_DIR)/bootloader.efi
-KERNEL_ELF = $(BUILD_DIR)/kernel.elf
 IMG        = disk.img
 KERNEL_INI = kernel.ini
 
@@ -31,55 +27,62 @@ KFLAGS      = -ffreestanding -fno-stack-protector -fno-stack-check \
               -mgeneral-regs-only -fno-builtin -nostdlib -mcmodel=large \
               -fno-pic -fno-plt -c
 
-# Use the kernel linker script for both kernel and modules
 K_LDFLAGS   = -static -T kernel.ld -nostdlib --emit-relocs
 
-# --- File Discovery ---
-BOOT_SRCS   = $(wildcard boot/*.c)
-BOOT_OBJS   = $(patsubst boot/%.c, $(BUILD_DIR)/boot/%.o, $(BOOT_SRCS))
+# --- Recursive File Discovery ---
+BOOT_SRCS   := $(shell find boot -name '*.c' 2>/dev/null)
+BOOT_OBJS   := $(patsubst boot/%.c, $(BUILD_DIR)/boot/%.o, $(BOOT_SRCS))
 
-KERNEL_SRCS = $(wildcard kernel/*.c)
-KERNEL_OBJS = $(patsubst kernel/%.c, $(BUILD_DIR)/kernel/%.o, $(KERNEL_SRCS))
-
-MODULE_DIRS = $(wildcard modules/*/)
-MODULE_ELFS = $(patsubst modules/%/, $(BUILD_DIR)/modules/%.elf, $(MODULE_DIRS))
+MODULE_DIRS := $(wildcard modules/*/)
+MODULE_NAMES := $(patsubst modules/%/,%,$(MODULE_DIRS))
+MODULE_ELFS := $(patsubst %, $(BUILD_DIR)/modules/%.elf, $(MODULE_NAMES))
 
 .PHONY: all clean run dirs
 
 all: dirs $(BOOTLOADER) $(MODULE_ELFS) $(IMG)
 
-# Create the build directory structure
 dirs:
-	@mkdir -p $(BUILD_DIR)/boot
+	@mkdir -p $(BUILD_DIR)
+	@if [ -d "boot" ]; then mkdir -p $(sort $(dir $(BOOT_OBJS))); fi
 	@mkdir -p $(BUILD_DIR)/modules
 
-# --- 1. BOOTLOADER BUILD ---
+# --- 1. Bootloader Build Rules ---
+
 $(BUILD_DIR)/boot/%.o: boot/%.c
+	@mkdir -p $(dir $@)
 	clang-format -i $<
-	$(CLANG) $(EFI_CFLAGS) $< -o $@
+	$(CLANG) $(EFI_CFLAGS) -Iboot $< -o $@
 
 $(BOOTLOADER): $(BOOT_OBJS)
-	@echo "Linking Bootloader"
+	@echo "Linking Bootloader: $@"
 	$(CLANG) $(EFI_LDFLAGS) $(BOOT_OBJS) -o $@
 
-# --- 2. MODULES BUILD (One ELF per module folder) ---
-$(MODULE_ELFS): $(BUILD_DIR)/modules/%.elf:
-	$(eval SUB_DIR_NAME := $(patsubst $(BUILD_DIR)/modules/%.elf, %, $@))
-	$(eval SRC_DIR := modules/$(SUB_DIR_NAME))
-	$(eval OBJ_DIR := $(BUILD_DIR)/modules/$(SUB_DIR_NAME))
-	@mkdir -p $(OBJ_DIR)
-	@echo "Linking Module Executable: $(SUB_DIR_NAME) -> $@"
-	@for src in $(wildcard $(SRC_DIR)/*.c); do \
-		clang-format -i $$src; \
-		obj=$(OBJ_DIR)/$$(basename $${src%.c}.o); \
-		$(CC) $(KFLAGS) $$src -o $$obj; \
-	done
-	$(LD) $(K_LDFLAGS) $(OBJ_DIR)/*.o -o $@
-	@rm -rf $(OBJ_DIR)
+# --- 2. Modules Build Rules (Corrected Template) ---
 
-# --- 3. DISK IMAGE ---
+define MODULE_RULE
+# Define local variables for this specific module
+$(1)_SRC_FILES := $(shell find modules/$(1) -name '*.c' 2>/dev/null)
+$(1)_OBJ_FILES := $$(patsubst modules/$(1)/%.c, $(BUILD_DIR)/modules/$(1)/%.o, $$($(1)_SRC_FILES))
+
+# Rule to link the ELF from the object files
+$(BUILD_DIR)/modules/$(1).elf: $$($(1)_OBJ_FILES)
+	@echo "Linking Module ELF: $(1)"
+	$(LD) $(K_LDFLAGS) $$^ -o $$@
+
+# Rule to compile the source files into object files
+$(BUILD_DIR)/modules/$(1)/%.o: modules/$(1)/%.c
+	@mkdir -p $$(dir $$@)
+	clang-format -i $$<
+	$(CC) $(KFLAGS) -Imodules/$(1) $$< -o $$@
+endef
+
+# Apply the template for every module folder
+$(foreach mod,$(MODULE_NAMES),$(eval $(call MODULE_RULE,$(mod))))
+
+# --- 3. Disk Image Creation ---
+
 $(IMG): $(BOOTLOADER) $(MODULE_ELFS)
-	@echo "Building Disk Image"
+	@echo "Building Disk Image: $(IMG)"
 	@rm -f $(IMG)
 	truncate -s 128M $(IMG)
 	sgdisk -o $(IMG)
@@ -88,10 +91,8 @@ $(IMG): $(BOOTLOADER) $(MODULE_ELFS)
 	mmd -i $(IMG)@@1M ::/EFI
 	mmd -i $(IMG)@@1M ::/EFI/BOOT
 	mmd -i $(IMG)@@1M ::/modules
-	# Copy Core Files
 	mcopy -i $(IMG)@@1M $(BOOTLOADER) ::/EFI/BOOT/BOOTAA64.EFI
-	mcopy -i $(IMG)@@1M $(KERNEL_INI) ::/kernel.ini
-	# Copy all separate Module ELFs
+	if [ -f $(KERNEL_INI) ]; then mcopy -i $(IMG)@@1M $(KERNEL_INI) ::/kernel.ini; fi
 	@for mod in $(MODULE_ELFS); do \
 		echo "Adding module: $$mod"; \
 		mcopy -i $(IMG)@@1M $$mod ::/modules/; \

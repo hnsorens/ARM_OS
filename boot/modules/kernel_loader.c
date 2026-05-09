@@ -1,8 +1,8 @@
 #include "kernel_loader.h"
 
-#include "elf_loader.h"
-#include "filesystem.h"
-#include "serial.h"
+#include "modules/elf_loader.h"
+#include "uefi/filesystem.h"
+#include "logging/serial.h"
 
 static VOID *Memcpy(VOID *Dest, CONST VOID *Src, UINTN N)
 {

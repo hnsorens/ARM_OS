@@ -1,15 +1,15 @@
-#include "memory_constants.h"
+#include "memory/memory_constants.h"
 #include <efi.h>
 #include <efilib.h>
 
-#include "boot_services.h"
-#include "filesystem.h"
-#include "page_table.h"
-#include "serial.h"
-#include "bootinfo.h"
-#include "kernel_loader.h"
-#include "module_registry.h"
-#include "module_import_handle.h"
+#include "uefi/boot_services.h"
+#include "uefi/filesystem.h"
+#include "memory/page_table.h"
+#include "logging/serial.h"
+#include "uefi/bootinfo.h"
+#include "modules/kernel_loader.h"
+#include "modules/module_registry.h"
+#include "modules/module_import_handle.h"
 
 #define STACK_SIZE_PAGES 0x100
 

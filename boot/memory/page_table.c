@@ -2,7 +2,7 @@
 #include "efidef.h"
 #include "efierr.h"
 #include "memory_constants.h"
-#include "serial.h"
+#include "logging/serial.h"
 
 VOID *Memset(IN VOID *Ptr, IN UINT32 Value, IN UINT64 N)
 {

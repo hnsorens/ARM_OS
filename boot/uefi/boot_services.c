@@ -1,6 +1,6 @@
 #include "boot_services.h"
-#include "serial.h"
-#include "memory_constants.h"
+#include "logging/serial.h"
+#include "memory/memory_constants.h"
 
 #define MEMORY_MAP_ENTRY_INDEX(Index) \
 	((EFI_MEMORY_DESCRIPTOR *)((char *)EfiMemoryMap + RegionSize * Index))

@@ -2,7 +2,7 @@
 
 /* --- Internal Helpers --- */
 
-#include "serial.h"
+#include "logging/serial.h"
 
 REGISTRY Reg;
 INSTANCE_ENTRY *Head = 0;
