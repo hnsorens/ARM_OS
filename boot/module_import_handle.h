@@ -16,10 +16,10 @@ typedef struct MODULE_IMPORT_HANDLE
 VOID
 AddModuleImportHandle(EFI_SYSTEM_TABLE *SystemTable, MODULE_IMPORT_HANDLE ModuleImportHandle);
 
-VOID
+EFI_STATUS
 HandleModuleImports();
 
-VOID
+EFI_STATUS
 ModuleImportHandleInit(EFI_SYSTEM_TABLE *SystemTable);
 
 #endif

@@ -12,11 +12,10 @@ Boot_Log(
 VOID
 Boot_Log_Start();
 
+UINTN
+Ok_Log(IN CONST CHAR8 *Str, IN UINTN N);
 
-int serial_debug_serial_printf(const char *format, ...);
-
-VOID Boot_Log_Int(IN UINT64 Val);
-
-VOID Boot_Log_Hex(IN UINT64 Val);
+UINTN
+Fail_Log(IN CONST CHAR8 *Str, IN UINTN N);
 
 #endif

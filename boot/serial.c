@@ -50,6 +50,22 @@ Boot_Log(IN CONST CHAR8 *Str, IN UINTN N)
 	return N + 7;
 }
 
+UINTN
+Ok_Log(IN CONST CHAR8 *Str, IN UINTN N)
+{
+	Uart_PutS("[ \x1B[92mOK\x1B[0m ] ", 17);
+	Uart_PutS(Str, N);
+	return N + 17;
+}
+
+UINTN
+Fail_Log(IN CONST CHAR8 *Str, IN UINTN N)
+{
+	Uart_PutS("[\x1B[31mFAIL\x1B[0m] ", 17);
+	Uart_PutS(Str, N);
+	return N + 17;
+}
+
 VOID Boot_Log_Hex(IN UINT64 Val)
 {
 	CHAR8 HexChars[] = "0123456789ABCDEF";

@@ -38,47 +38,60 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
 	EFI_FILE_PROTOCOL *Root = NULL;
 	Status = OpenRoot(SystemTable, ImageHandle, &Root);
 	if (EFI_ERROR(Status)) {
-		Boot_Log("Failed to open root\n", 20);
+		Fail_Log("Opening Root\n", 13);
 		return Status;
 	}
-	Boot_Log("Opened root\n", 12);
+	Ok_Log("Opening Root\n", 13);
 
 	// Read kernel elf file
 	//CHAR8 *Buffer;
 	//ReadFile(L"\\kernel.bin", Root, SystemTable, ImageHandle, &Buffer);
 
 	VOID *ModuleRegistryBlock = 0;
-	SystemTable->BootServices->AllocatePool(KEEP_AFTER_BOOT, 1024 * 1024,
-						&ModuleRegistryBlock);
-	RegistryInit((VOID *)ModuleRegistryBlock, 1024 * 1024, 10);
+	Status = SystemTable->BootServices->AllocatePool(
+		KEEP_AFTER_BOOT, 1024 * 1024, &ModuleRegistryBlock);
+	if (EFI_ERROR(Status)) {
+		Fail_Log("Allocating module registry block\n", 33);
+		return Status;
+	}
+	Ok_Log("Allocating module registry block\n", 33);
 
-	ModuleImportHandleInit(SystemTable);
+	Status = RegistryInit((VOID *)ModuleRegistryBlock, 1024 * 1024, 10);
+	if (EFI_ERROR(Status)) {
+		Fail_Log("Initializing module registry\n", 29);
+		return Status;
+	}
+	Ok_Log("Initializing module registry\n", 29);
+
+	Status = ModuleImportHandleInit(SystemTable);
+	if (EFI_ERROR(Status)) {
+		Fail_Log("Initializing module import handles\n", 35);
+		return Status;
+	}
+	Ok_Log("Initializing module import handles\n", 35);
 
 	PAGE_TABLE_T LowerPageTable = 0;
 	PAGE_TABLE_T UpperPageTable = 0;
 
 	EFI_VIRTUAL_ADDRESS Entry;
-	Load_Kernel(SystemTable, ImageHandle, Root, L"\\kernel.ini", &Entry,
-		    &UpperPageTable);
+	Status = Load_Kernel(SystemTable, ImageHandle, Root, L"\\kernel.ini",
+			     &Entry, &UpperPageTable);
 
 	if (EFI_ERROR(Status)) {
-		Boot_Log("Failed to load kernel\n", 22);
+		Fail_Log("Loading kernel\n", 15);
 		return Status;
 	}
-	Boot_Log("Loaded kernel\n", 14);
-
-	// Free loaded elf file after its use is finished
-	//SystemTable->BootServices->FreePool(Buffer);
+	Ok_Log("Loading kernel\n", 15);
 
 	// Allocate Boot Info Struct
 	BootInfoStruct *BootInfo = 0;
 	Status = SystemTable->BootServices->AllocatePool(
 		KEEP_AFTER_BOOT, sizeof(BootInfoStruct), (VOID **)&BootInfo);
 	if (EFI_ERROR(Status)) {
-		Boot_Log("Failed to allocate boot info\n", 29);
+		Fail_Log("Allocating boot info\n", 21);
 		return Status;
 	}
-	Boot_Log("Allocated boot info struct\n", 27);
+	Ok_Log("Allocating boot info\n", 21);
 
 	// Allocate Stack
 	EFI_PHYSICAL_ADDRESS StackPhysicalAddress = 0;
@@ -86,49 +99,62 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
 		AllocateAnyPages, KEEP_AFTER_BOOT, STACK_SIZE_PAGES,
 		&StackPhysicalAddress);
 	if (EFI_ERROR(Status)) {
-		Boot_Log("Failed to allocate stack\n", 25);
+		Fail_Log("Allocating stack\n", 17);
 		return Status;
 	}
-	Boot_Log("Allocated Stack\n", 16);
+	Ok_Log("Allocating stack\n", 17);
 
 	Status = Map_Memory(SystemTable, &UpperPageTable, 0xFFFF800000000000,
 			    StackPhysicalAddress, 0, STACK_SIZE_PAGES);
 	if (EFI_ERROR(Status)) {
-		Boot_Log("Failed to map stack to upper page table\n", 40);
+		Fail_Log("Mapping stack memory\n", 21);
 		return Status;
 	}
-	Boot_Log("Mapped stack to upper page table\n", 33);
+	Ok_Log("Mapping stack memory\n", 21);
 
 	// Create an identity page table for the bottom half of memory
 	Status = Create_Identity_Page_Table(SystemTable, 10, &LowerPageTable);
-
 	if (EFI_ERROR(Status)) {
 		Boot_Log("Failed to create lower identity page table\n", 43);
+		Fail_Log("Creating lower identity page table\n", 35);
 		return Status;
 	}
-	Boot_Log("Created lower identity page table\n", 34);
+	Ok_Log("Creating lower identity page table\n", 35);
 
 	MEMORY_MAP MemoryMap;
 	UINTN MemoryMapRegionsCount;
 	Status = ExitBootServices(ImageHandle, SystemTable, &MemoryMap,
 				  &MemoryMapRegionsCount);
 	if (EFI_ERROR(Status)) {
-		Boot_Log("Failed to exit boot services\n", 28);
+		Fail_Log("Exiting boot services\n", 22);
 		return Status;
 	}
-
-	Boot_Log("Exited boot services\n", 21);
+	Ok_Log("Exiting boot services\n", 22);
 
 	// Enable page tables
-	Enable_Page_Table(LowerPageTable, UpperPageTable);
+	Status = Enable_Page_Table(LowerPageTable, UpperPageTable);
+	if (EFI_ERROR(Status)) {
+		Fail_Log("Enabling page table\n", 20);
+		return Status;
+	}
+	Ok_Log("Enabling page table\n", 20);
 
 	// Do this after page table are enabled, so that the code is accessible in memory
-	HandleModuleImports();
+	Status = HandleModuleImports();
+	if (EFI_ERROR(Status)) {
+		Fail_Log("Handling module imports\n", 24);
+		return Status;
+	}
+	Ok_Log("Handling module imports\n", 24);
 
-	InitializeModules();
+	Status = InitializeModules();
+	if (EFI_ERROR(Status)) {
+		Fail_Log("Initializing modules\n", 21);
+		return Status;
+	}
+	Ok_Log("Initializing modules\n", 21);
 
-	while (1)
-		;
+	Ok_Log("Boot successful\n", 16);
 
 	BootInfo->memoryMapSize = MemoryMapRegionsCount;
 	BootInfo->memoryRegions = (MemoryRegion *)MemoryMap;

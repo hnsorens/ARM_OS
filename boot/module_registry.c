@@ -43,8 +43,7 @@ static UINT64 Hash(const char *Str)
 }
 
 /* --- Core Logic --- */
-
-void RegistryInit(void *Block, UINTN BlockSize, UINTN MaxExpectedTypes)
+EFI_STATUS RegistryInit(void *Block, UINTN BlockSize, UINTN MaxExpectedTypes)
 {
 	Memset(Block, 0, BlockSize);
 
@@ -57,6 +56,11 @@ void RegistryInit(void *Block, UINTN BlockSize, UINTN MaxExpectedTypes)
 	UINTN TableSize = sizeof(TYPE_ENTRY) * MaxExpectedTypes;
 	Reg.PoolPtr = (uint8_t *)Block + TableSize;
 	Reg.PoolRemaining = BlockSize - TableSize;
+
+	if (BlockSize < TableSize) {
+		return EFI_OUT_OF_RESOURCES;
+	}
+	return EFI_SUCCESS;
 }
 
 INT32 RegistryPut(MODULE_META Meta)

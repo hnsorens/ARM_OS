@@ -18,13 +18,14 @@ static VOID *Memcpy(VOID *Dest, CONST VOID *Src, UINTN N)
 	return Dest;
 }
 
-VOID ModuleImportHandleInit(EFI_SYSTEM_TABLE *SystemTable)
+EFI_STATUS ModuleImportHandleInit(EFI_SYSTEM_TABLE *SystemTable)
 {
 	EFI_STATUS Status = SystemTable->BootServices->AllocatePool(
 		FREE_AFTER_BOOT,
 		sizeof(MODULE_IMPORT_HANDLE) *
 			MODULE_IMPORT_HANDLE_INITIAL_SIZE,
 		(VOID *)&ModuleImportHandleArray);
+	return Status;
 }
 
 VOID AddModuleImportHandle(EFI_SYSTEM_TABLE *SystemTable,
@@ -50,7 +51,7 @@ VOID AddModuleImportHandle(EFI_SYSTEM_TABLE *SystemTable,
 	ModuleImportHandleCapacity++;
 }
 
-VOID HandleModuleImports()
+EFI_STATUS HandleModuleImports()
 {
 	for (UINTN I = 0; I < ModuleImportHandleCapacity; ++I) {
 		VOID *VTableSource = 0;

@@ -188,11 +188,10 @@ Load_Elf(IN EFI_SYSTEM_TABLE *SystemTable, IN CHAR8 *ElfBuffer,
 		}
 	}
 
-    if (!NameString && !TypeString)
-    {
-        Boot_Log("Failed to find export for module\n", 33);
-        return EFI_LOAD_ERROR;
-    }
+	if (!NameString && !TypeString) {
+		Boot_Log("Failed to find export for module\n", 33);
+		return EFI_LOAD_ERROR;
+	}
 
 	Boot_Log("Found export for module\n", 24);
 
