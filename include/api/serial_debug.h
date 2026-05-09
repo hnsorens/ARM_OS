@@ -1,11 +1,9 @@
 #ifndef SERIAL_DEBUG_API_H
 #define SERIAL_DEBUG_API_H
 
-#define SerialDeviceInterface_id 0
-
-typedef struct SerialDeviceInterface
+typedef struct serial_module_interface
 {
     int (*printf)(const char* format, ...);
-} SerialDeviceInterface;
+} serial_module_interface_t;
 
 #endif

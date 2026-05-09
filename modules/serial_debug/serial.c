@@ -713,5 +713,5 @@ int _start()
 	return 1;
 }
 
-EXPORT_MODULE(Serial, first_serial_hehe4,
+EXPORT_MODULE(serial, first_serial_hehe4,
 	      { .printf = serial_debug_serial_printf })

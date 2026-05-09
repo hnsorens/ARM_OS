@@ -1,7 +1,6 @@
 #ifndef SERIAL_H
 #define SERIAL_H
 
-#include "../../include/metadata.h"
 #include "../../include/api/serial_debug.h"
 
 int serial_debug_serial_printf(const char *format, ...);
