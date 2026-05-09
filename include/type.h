@@ -8,6 +8,8 @@
 typedef uint64_t phys_addr_t;
 typedef uint64_t virt_addr_t;
 
+#define k_error(status) (status)
+
 /**
  * @brief Universal Kernel Status Codes
  * Every non-boolean function in the kernel should return this type.

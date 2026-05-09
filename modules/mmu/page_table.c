@@ -8,6 +8,8 @@
 
 EXTERN_IMPORT_INTERFACE(pmm, pmm);
 
+#define to_array(var) ((unsigned long *)(var))
+
 static page_table_indices_t extract_indices(virt_addr_t virtual_address) {
   page_table_indices_t indices;
   indices.offset = virtual_address & 0xFFF;     /* Page offset (bits 0-11) */
@@ -57,9 +59,9 @@ k_status_t map(phys_addr_t root, virt_addr_t v, phys_addr_t p, size_t pc, page_s
         return K_STATUS_BAD_PHYS_ADDR;
     }
 
-    void** root_ptr = (void**)root;
-    
-    unsigned long* p0 = *root_ptr;
+    k_status_t status;
+
+    phys_addr_t* p0 = *(phys_addr_t**)root;
 
     for (unsigned long i = 0; i < pc; i++) {
         unsigned long curr_vaddr = v + i * page_order_size(ps);
@@ -67,57 +69,60 @@ k_status_t map(phys_addr_t root, virt_addr_t v, phys_addr_t p, size_t pc, page_s
         page_table_indices_t idx = extract_indices(curr_vaddr);
 
         // Get or create P1 table
-        unsigned long* p1;
+        phys_addr_t* p1;
         if (!(p0[idx.p0_index] & ARM_TABLE_DESCRIPTOR)) {
-            p1 = (unsigned long*)pmm_alloc_phys(0);
-            if (!p1) return;
-            kmemset(p1, 0, 4096);
-            p0[idx.p0_index] = (unsigned long)p1 | ARM_TABLE_DESCRIPTOR;
+
+            status = pmm.alloc_page((phys_addr_t *)&p1);
+            if (k_error(status))
+                return status;
+            memset(p1, 0, 4096);
+            p0[idx.p0_index] = (phys_addr_t)p1 | ARM_TABLE_DESCRIPTOR;
         } else {
-            p1 = (unsigned long*)(p0[idx.p0_index] & PAGE_MASK);
+            p1 = (phys_addr_t*)(p0[idx.p0_index] & PAGE_MASK);
         }
 
         // 1GB pages (order 2)
-        if (page_order == 2) {
+        if (ps == PS_1GB) {
             p1[idx.p1_index] = curr_phys | ARM_KERNEL_FLAGS;
             continue;
         }
 
         // Get or create P2 table
-        unsigned long* p2;
+        phys_addr_t *p2;
         if (!(p1[idx.p1_index] & ARM_TABLE_DESCRIPTOR)) {
-            p2 = (unsigned long*)pmm_alloc_phys(0);
-            if (!p2) return;
-            kmemset(p2, 0, 4096);
-            p1[idx.p1_index] = (unsigned long)p2 | ARM_TABLE_DESCRIPTOR;
+            status = pmm.alloc_page((phys_addr_t *)&p2);
+            if (k_error(status)) return status;
+            memset(p2, 0, 4096);
+            p1[idx.p1_index] = (phys_addr_t)p2 | ARM_TABLE_DESCRIPTOR;
         } else {
-            p2 = (unsigned long*)(p1[idx.p1_index] & PAGE_MASK);
+            p2 = (phys_addr_t *)(p1[idx.p1_index] & PAGE_MASK);
         }
 
         // 2MB pages (order 1)
-        if (page_order == 1) {
+        if (ps == PS_2MB) {
             p2[idx.p2_index] = curr_phys | ARM_KERNEL_FLAGS;
             continue;
         }
 
         // Get or create P3 table for 4KB pages (order 0)
-        unsigned long* p3;
+        phys_addr_t *p3;
         if (!(p2[idx.p2_index] & ARM_TABLE_DESCRIPTOR)) {
-            p3 = (unsigned long*)pmm_alloc_phys(0);
-            if (!p3) return;
-            kmemset(p3, 0, 4096);
-            p2[idx.p2_index] = (unsigned long)p3 | ARM_TABLE_DESCRIPTOR;
+            status = pmm.alloc_page((phys_addr_t*)&p3);
+            if (k_error(status)) return status;
+            memset(p3, 0, 4096);
+            p2[idx.p2_index] = (phys_addr_t)p3 | ARM_TABLE_DESCRIPTOR;
         } else {
-            p3 = (unsigned long*)(p2[idx.p2_index] & PAGE_MASK);
+            p3 = (phys_addr_t *)(p2[idx.p2_index] & PAGE_MASK);
         }
 
         // 4KB pages (order 0)
-        if (page_order == 0) {
+        if (ps == PS_4KB) {
             p3[idx.p3_index] = curr_phys | ARM_4KB_PAGE_FLAGS;
             continue;
         }
     }
 
+    return K_STATUS_OK;
 }
 
 k_status_t unmap(phys_addr_t root, virt_addr_t v, size_t pc, page_size_t ps)

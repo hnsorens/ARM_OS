@@ -4,11 +4,6 @@
 #include "../../include/api/mmu.h"
 #include "../../include/api/pmm.h"
 
-int _start()
-{
-    return 0;
-}
-
 IMPORT_INTERFACE_ANY(pmm, pmm);
 
 EXPORT_INTERFACE(mmu, MemoryManagementUnit, {
