@@ -1,6 +1,6 @@
-#include "../modules/serial_debug/serial.h"
 
-#include "../boot/bootinfo.h"
+#include "../../boot/bootinfo.h"
+#include "../../include/api/serial_debug.h"
 
 __attribute__((section(".import.serial.first_serial_hehe"), used,
 	       aligned(8))) volatile static const SerialDeviceInterface serial;

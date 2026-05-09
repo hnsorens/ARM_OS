@@ -46,12 +46,11 @@ MODULE_ELFS = $(patsubst modules/%/, $(BUILD_DIR)/modules/%.elf, $(MODULE_DIRS))
 
 .PHONY: all clean run dirs
 
-all: dirs $(BOOTLOADER) $(KERNEL_ELF) $(MODULE_ELFS) $(IMG)
+all: dirs $(BOOTLOADER) $(MODULE_ELFS) $(IMG)
 
 # Create the build directory structure
 dirs:
 	@mkdir -p $(BUILD_DIR)/boot
-	@mkdir -p $(BUILD_DIR)/kernel
 	@mkdir -p $(BUILD_DIR)/modules
 
 # --- 1. BOOTLOADER BUILD ---
@@ -63,16 +62,7 @@ $(BOOTLOADER): $(BOOT_OBJS)
 	@echo "Linking Bootloader"
 	$(CLANG) $(EFI_LDFLAGS) $(BOOT_OBJS) -o $@
 
-# --- 2. KERNEL BUILD ---
-$(BUILD_DIR)/kernel/%.o: kernel/%.c
-	@clang-format -i $<
-	$(CC) $(KFLAGS) $< -o $@
-
-$(KERNEL_ELF): $(KERNEL_OBJS)
-	@echo "Linking standalone Kernel: $@"
-	$(LD) $(K_LDFLAGS) $(KERNEL_OBJS) -o $@
-
-# --- 3. MODULES BUILD (One ELF per module folder) ---
+# --- 2. MODULES BUILD (One ELF per module folder) ---
 $(MODULE_ELFS): $(BUILD_DIR)/modules/%.elf:
 	$(eval SUB_DIR_NAME := $(patsubst $(BUILD_DIR)/modules/%.elf, %, $@))
 	$(eval SRC_DIR := modules/$(SUB_DIR_NAME))
@@ -87,8 +77,8 @@ $(MODULE_ELFS): $(BUILD_DIR)/modules/%.elf:
 	$(LD) $(K_LDFLAGS) $(OBJ_DIR)/*.o -o $@
 	@rm -rf $(OBJ_DIR)
 
-# --- 4. DISK IMAGE ---
-$(IMG): $(BOOTLOADER) $(KERNEL_ELF) $(MODULE_ELFS)
+# --- 3. DISK IMAGE ---
+$(IMG): $(BOOTLOADER) $(MODULE_ELFS)
 	@echo "Building Disk Image"
 	@rm -f $(IMG)
 	truncate -s 128M $(IMG)
@@ -100,7 +90,6 @@ $(IMG): $(BOOTLOADER) $(KERNEL_ELF) $(MODULE_ELFS)
 	mmd -i $(IMG)@@1M ::/modules
 	# Copy Core Files
 	mcopy -i $(IMG)@@1M $(BOOTLOADER) ::/EFI/BOOT/BOOTAA64.EFI
-	mcopy -i $(IMG)@@1M $(KERNEL_ELF) ::/kernel.elf
 	mcopy -i $(IMG)@@1M $(KERNEL_INI) ::/kernel.ini
 	# Copy all separate Module ELFs
 	@for mod in $(MODULE_ELFS); do \

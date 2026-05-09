@@ -146,22 +146,6 @@ Load_Module(EFI_SYSTEM_TABLE *SystemTable, EFI_HANDLE ImageHandle,
 	return EFI_SUCCESS;
 }
 
-EFI_STATUS
-Load_Kernel_Elf(EFI_SYSTEM_TABLE *SystemTable, EFI_HANDLE ImageHandle,
-		EFI_FILE_PROTOCOL *Root, PAGE_TABLE_T *PageTable,
-		EFI_VIRTUAL_ADDRESS *Entry)
-{
-	Boot_Log("Loading Kernel Elf\n", 17);
-
-	CHAR8 *KernelBuffer = 0;
-	ReadFile(L"\\kernel.elf", Root, SystemTable, ImageHandle,
-		 &KernelBuffer);
-
-	Load_Elf(SystemTable, KernelBuffer, PageTable, Entry);
-
-	return EFI_SUCCESS;
-}
-
 static VOID Parse_Config(EFI_SYSTEM_TABLE *SystemTable, EFI_HANDLE ImageHandle,
 			 EFI_FILE_PROTOCOL *Root, PAGE_TABLE_T *UpperPageTable,
 			 CHAR8 *FileBuffer)
@@ -212,10 +196,6 @@ Load_Kernel(EFI_SYSTEM_TABLE *SystemTable, EFI_HANDLE ImageHandle,
 	    EFI_VIRTUAL_ADDRESS *Entry, PAGE_TABLE_T *UpperPageTable)
 {
 	EFI_STATUS Status;
-
-	Load_Kernel_Elf(SystemTable, ImageHandle, Root, UpperPageTable, Entry);
-
-	Boot_Log("Loaded kernel core\n", 19);
 
 	CHAR8 *ConfigurationBuffer;
 	ReadFile(ConfigurationFileName, Root, SystemTable, ImageHandle,

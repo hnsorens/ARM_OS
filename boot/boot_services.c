@@ -182,35 +182,33 @@ EFI_STATUS ExitBootServices(IN EFI_HANDLE ImageHandle,
 		&MemoryMap.DescriptorVersion);
 
 	if (Status != EFI_BUFFER_TOO_SMALL) {
-		Boot_Log("Failed to get memory map size\n", 30);
+		Fail_Log("Getting memory map\n", 19);
 		return Status;
 	}
-	Boot_Log("Got memory map size\n", 20);
+	Ok_Log("Getting memory map\n", 19);
 
 	// allocate space for memory map buffer
 	MemoryMap.MemoryMapSize += 2 * MemoryMap.DescriptorSize;
 	Status = SystemTable->BootServices->AllocatePool(
 		KEEP_AFTER_BOOT, MemoryMap.MemoryMapSize,
 		(void **)&MemoryMap.MemoryMap);
-
 	if (EFI_ERROR(Status)) {
-		Boot_Log("Failed to allocate memory map buffer\n", 37);
+		Fail_Log("Allocating memory map buffer\n", 29);
 		return Status;
 	}
-	Boot_Log("Allocated memory map buffer\n", 28);
+	Ok_Log("Allocating memory map buffer\n", 29);
 
 	// populate memory map buffer with memory map
 	Status = SystemTable->BootServices->GetMemoryMap(
 		&MemoryMap.MemoryMapSize, MemoryMap.MemoryMap,
 		&MemoryMap.MapKey, &MemoryMap.DescriptorSize,
 		&MemoryMap.DescriptorVersion);
-
 	if (EFI_ERROR(Status)) {
 		Boot_Log("Failed to get memory map\n", 25);
+		Fail_Log("Getting memory map\n", 19);
 		return Status;
 	}
-
-	Boot_Log("Found memory map\n", 17);
+	Ok_Log("Getting memory map\n", 19);
 
 	// exit boot services
 	Status = SystemTable->BootServices->ExitBootServices(ImageHandle,
@@ -223,24 +221,31 @@ EFI_STATUS ExitBootServices(IN EFI_HANDLE ImageHandle,
 			&MemoryMap.DescriptorVersion);
 
 		if (EFI_ERROR(Status)) {
-			Boot_Log("Failed to get updated memory map\n", 33);
+			Fail_Log("Got updated memory map\n", 23);
 			SystemTable->BootServices->FreePool(
 				MemoryMap.MemoryMap);
 			return Status;
 		}
+		Ok_Log("Got updated memory map\n", 23);
 
 		Status = SystemTable->BootServices->ExitBootServices(
 			ImageHandle, MemoryMap.MapKey);
 	}
 
 	if (EFI_ERROR(Status)) {
-		Boot_Log("ExitBootServices failed\n", 24);
+		Fail_Log("Exited boot services\n", 21);
 		SystemTable->BootServices->FreePool(MemoryMap.MemoryMap);
 		return Status;
 	}
+	Ok_Log("Exited boot services\n", 21);
 
-	GetKernelMemoryMap(&MemoryMap, KernelMemoryMap, RegionCount,
-			   SystemTable);
+	Status = GetKernelMemoryMap(&MemoryMap, KernelMemoryMap, RegionCount,
+				    SystemTable);
+	if (EFI_ERROR(Status)) {
+		Fail_Log("Get kernel memory map\n", 2);
+		return Status;
+	}
+	Ok_Log("Get kernel memory map\n", 2);
 
 	return EFI_SUCCESS;
 }
