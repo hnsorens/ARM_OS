@@ -63,7 +63,7 @@ EFI_STATUS RegistryInit(void *Block, UINTN BlockSize, UINTN MaxExpectedTypes)
 	return EFI_SUCCESS;
 }
 
-INT32 RegistryPut(MODULE_META Meta)
+EFI_STATUS RegistryPut(MODULE_META Meta)
 {
 	UINT64 THash = Hash(Meta.Type);
 
@@ -242,22 +242,15 @@ EFI_STATUS RegistryPutDependency(CONST CHAR8 *TypeString,
 	Reg.PoolPtr += sizeof(MODULE_DEPENDENCY);
 	Reg.PoolRemaining -= sizeof(MODULE_DEPENDENCY);
 
-	Boot_Log("Get\n", 4);
 	INSTANCE_ENTRY *Instance = 0;
 	INSTANCE_ENTRY *DependencyInstance = 0;
-	Boot_Log(TypeString, 10);
-	Boot_Log(NameString, 10);
 	RegistryGetInstanceEntry(TypeString, NameString, &Instance);
-	Boot_Log("GET\n", 4);
 	RegistryGetInstanceEntry(DepTypeString, DepNameString,
 				 &DependencyInstance);
-	Boot_Log("Get1\n", 5);
 
 	Dependency->Entry = DependencyInstance;
 	Dependency->Next = Instance->DependenciesHead;
 	Instance->DependenciesHead = Dependency;
-
-	Boot_Log("Adding Dep\n", 11);
 
 	return EFI_SUCCESS;
 }
@@ -275,9 +268,10 @@ EFI_STATUS InitializeModule(INSTANCE_ENTRY *Instance, UINTN Depth)
 	while (Current) {
 		Status = InitializeModule(Current->Entry, Depth + 1);
 		if (EFI_ERROR(Status)) {
-			Boot_Log("Failed to initialize module\n", 28);
+			Fail_Log("Initialized module\n", 19);
 			return Status;
 		}
+		Ok_Log("Initialized module\n", 19);
 		Current = Current->Next;
 	}
 
@@ -285,7 +279,6 @@ EFI_STATUS InitializeModule(INSTANCE_ENTRY *Instance, UINTN Depth)
 		Instance->Entry(0);
 		Instance->Initialized = TRUE;
 	}
-	Boot_Log("Initialized module\n", 19);
 
 	return EFI_SUCCESS;
 }
@@ -295,12 +288,12 @@ EFI_STATUS InitializeModules()
 	INSTANCE_ENTRY *Current = Head;
 	EFI_STATUS Status;
 	while (Current) {
-		Boot_Log("Initializing module\n", 20);
 		Status = InitializeModule(Current, 0);
 		if (EFI_ERROR(Status)) {
-			Boot_Log("Failed to initialize module\n", 28);
+			Fail_Log("Initialized module\n", 19);
 			return Status;
 		}
+		Ok_Log("Initialized module\n", 19);
 		Current = Current->Next;
 	}
 

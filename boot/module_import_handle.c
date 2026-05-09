@@ -2,6 +2,7 @@
 
 #include "memory_constants.h"
 #include "module_registry.h"
+#include "serial.h"
 
 #define MODULE_IMPORT_HANDLE_INITIAL_SIZE 32
 
@@ -25,6 +26,11 @@ EFI_STATUS ModuleImportHandleInit(EFI_SYSTEM_TABLE *SystemTable)
 		sizeof(MODULE_IMPORT_HANDLE) *
 			MODULE_IMPORT_HANDLE_INITIAL_SIZE,
 		(VOID *)&ModuleImportHandleArray);
+	if (EFI_ERROR(Status)) {
+		Fail_Log("Allocated import handle buffer\n", 32);
+		return Status;
+	}
+	Ok_Log("Allocated import handle buffer\n", 32);
 	return Status;
 }
 
@@ -53,6 +59,7 @@ VOID AddModuleImportHandle(EFI_SYSTEM_TABLE *SystemTable,
 
 EFI_STATUS HandleModuleImports()
 {
+	EFI_STATUS Status;
 	for (UINTN I = 0; I < ModuleImportHandleCapacity; ++I) {
 		VOID *VTableSource = 0;
 		UINTN VTableSize = 0;
@@ -65,10 +72,15 @@ EFI_STATUS HandleModuleImports()
 				&ModuleImportHandleArray[I].NameString);
 		}
 
-		RegistryPutDependency(ImportHandle->ParentTypeString,
-				      ImportHandle->ParentNameString,
-				      ImportHandle->TypeString,
-				      ImportHandle->NameString);
+		Status = RegistryPutDependency(ImportHandle->ParentTypeString,
+					       ImportHandle->ParentNameString,
+					       ImportHandle->TypeString,
+					       ImportHandle->NameString);
+		if (EFI_ERROR(Status)) {
+			Fail_Log("Put dependency in registry\n", 27);
+			return Status;
+		}
+		Ok_Log("Put dependency in registry\n", 27);
 
 		RegistryGet(ModuleImportHandleArray[I].TypeString,
 			    ModuleImportHandleArray[I].NameString,
@@ -77,10 +89,5 @@ EFI_STATUS HandleModuleImports()
 		Memcpy(ModuleImportHandleArray[I].VTablePtr, VTableSource,
 		       VTableSize); // Change the size so it is gud
 	}
-}
-
-VOID PopulateRegistryDependencies()
-{
-	for (UINTN I = 0; I < ModuleImportHandleCapacity; ++I) {
-	}
+	return EFI_SUCCESS;
 }

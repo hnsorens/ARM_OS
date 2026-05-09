@@ -58,7 +58,7 @@ typedef struct MODULE_META
 } MODULE_META;
 
 EFI_STATUS RegistryInit(VOID *Block, UINTN BlockSize, UINTN MaxExpectedTypes);
-INT32 RegistryPut(MODULE_META Meta);
+EFI_STATUS RegistryPut(MODULE_META Meta);
 VOID RegistryGet(CONST CHAR8 *Type, CONST CHAR8 *Name, VOID** Ptr, UINT64 *Size);
 VOID RegistryResolveName(CONST CHAR8 *Type, CONST CHAR8 **Name);
 EFI_STATUS RegistryPutDependency(CONST CHAR8 *TypeString, CONST CHAR8 *NameString, CONST CHAR8 *DepTypeString, CONST CHAR8 *DepNameString);

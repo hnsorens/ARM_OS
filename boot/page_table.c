@@ -51,8 +51,6 @@ Enable_Page_Table(IN PAGE_TABLE_T LowerPageTable,
 		      MAIR_ATTR(MAIR_DEVICE_nGnRE, MAIR_IDX_DEVICE);
 	__asm__ volatile("msr mair_el1, %0" : : "r"(Mair));
 
-	Boot_Log("Set mair\n", 9);
-
 	// Configure Translation Control
 	UINT64 Tcr = (TCR_TBI_DISABLE << TCR_TBI_SHIFT) |
 		     (TCR_IPS_40BIT << TCR_IPS_SHIFT) |
@@ -67,13 +65,10 @@ Enable_Page_Table(IN PAGE_TABLE_T LowerPageTable,
 		     (TCR_T0SZ_48BIT << TCR_T1SZ_SHIFT) |
 		     (TCR_T0SZ_48BIT << TCR_T0SZ_SHIFT);
 	__asm__ volatile("msr tcr_el1, %0" : : "r"(Tcr));
-	Boot_Log("Set TCR\n", 8);
 
 	// Set Page Table Bases
 	__asm__ volatile("msr ttbr0_el1, %0" : : "r"((UINT64)LowerPageTable));
 	__asm__ volatile("msr ttbr1_el1, %0" : : "r"((UINT64)UpperPageTable));
-
-	Boot_Log("Set page table pointers\n", 24);
 
 	// Invalidate TLB
 	__asm__ volatile("dsb sy");
@@ -81,16 +76,12 @@ Enable_Page_Table(IN PAGE_TABLE_T LowerPageTable,
 	__asm__ volatile("dsb sy");
 	__asm__ volatile("isb");
 
-	Boot_Log("Invalidated TLB\n", 16);
-
 	// Enable MMU
 	UINT64 Sctlr;
 	__asm__ volatile("mrs %0, sctlr_el1" : "=r"(Sctlr));
 	Sctlr |= SCTLR_M_ENABLE | SCTLR_C_ENABLE | SCTLR_I_ENABLE;
 	__asm__ volatile("msr sctlr_el1, %0" : : "r"(Sctlr));
 	__asm__ volatile("isb");
-
-	Boot_Log("Enabled MMU\n", 12);
 
 	return EFI_SUCCESS;
 }
@@ -211,9 +202,11 @@ Create_Identity_Page_Table(IN EFI_SYSTEM_TABLE *SystemTable,
 	Status = SystemTable->BootServices->AllocatePages(
 		AllocateAnyPages, KEEP_AFTER_BOOT, 1, PageTable);
 	if (EFI_ERROR(Status)) {
+		Fail_Log("Allocated page table\n", 21);
 		SystemTable->BootServices->FreePages(*PageTable, 1);
 		return Status;
 	}
+	Ok_Log("Allocated page table\n", 21);
 	Memset((VOID *)(*PageTable), 0, 4096);
 
 	// Calculate how many 512GB blocks we need

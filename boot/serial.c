@@ -122,5 +122,5 @@ VOID Boot_Log_Start()
 	// Enable UART, enable transmit & receive
 	MMIO_Write(UART0_BASE + UARTCR, (1 << 0) | (1 << 8) | (1 << 9));
 
-	Boot_Log("UART serial out initialized\n", 28);
+	Ok_Log("UART serial out initialized\n", 28);
 }

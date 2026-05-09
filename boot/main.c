@@ -115,7 +115,6 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
 	// Create an identity page table for the bottom half of memory
 	Status = Create_Identity_Page_Table(SystemTable, 10, &LowerPageTable);
 	if (EFI_ERROR(Status)) {
-		Boot_Log("Failed to create lower identity page table\n", 43);
 		Fail_Log("Creating lower identity page table\n", 35);
 		return Status;
 	}

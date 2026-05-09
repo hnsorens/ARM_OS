@@ -117,8 +117,6 @@ Load_Elf(IN EFI_SYSTEM_TABLE *SystemTable, IN CHAR8 *ElfBuffer,
 		return EFI_LOAD_ERROR;
 	}
 
-	Boot_Log("Loading elf\n", 12);
-
 	Link_Elf_Module(LoadOffset + 0xFFFF800000000000, ElfBuffer);
 	LoadOffset += GetElfSpanPages(ElfBuffer) * 4096;
 
@@ -160,8 +158,6 @@ Load_Elf(IN EFI_SYSTEM_TABLE *SystemTable, IN CHAR8 *ElfBuffer,
 		}
 	}
 
-	Boot_Log("Loaded module into memory\n", 26);
-
 	CHAR8 *TypeString = 0;
 	CHAR8 *NameString = 0;
 
@@ -183,17 +179,22 @@ Load_Elf(IN EFI_SYSTEM_TABLE *SystemTable, IN CHAR8 *ElfBuffer,
 				ModuleMetadata.Name = NameString;
 				ModuleMetadata.VTableSize = Shdr[I].sh_size;
 				ModuleMetadata.Entry = (VOID *)(Ehdr->e_entry);
-				RegistryPut(ModuleMetadata);
+				Status = RegistryPut(ModuleMetadata);
+				if (EFI_ERROR(Status)) {
+					Fail_Log("Put module into registry\n",
+						 25);
+					return Status;
+				}
+				Ok_Log("Put module into registry\n", 25);
 			}
 		}
 	}
 
 	if (!NameString && !TypeString) {
-		Boot_Log("Failed to find export for module\n", 33);
+		Fail_Log("Found export for module\n", 24);
 		return EFI_LOAD_ERROR;
 	}
-
-	Boot_Log("Found export for module\n", 24);
+	Ok_Log("Found export for module\n", 24);
 
 	for (INTN I = 0; I < Ehdr->e_shnum; ++I) {
 		CONST CHAR8 *SectionName = (CHAR8 *)ShStrTab + Shdr[I].sh_name;

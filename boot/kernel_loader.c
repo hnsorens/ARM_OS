@@ -122,7 +122,6 @@ Load_Module(EFI_SYSTEM_TABLE *SystemTable, EFI_HANDLE ImageHandle,
 	    EFI_FILE_PROTOCOL *Root, CHAR8 *Name, PAGE_TABLE_T *PageTable,
 	    EFI_VIRTUAL_ADDRESS *Entry)
 {
-	Boot_Log("Loading a module\n", 17);
 	CHAR16 NameBuffer[256];
 
 	Memcpy(NameBuffer, L"\\modules\\", 18);
@@ -139,7 +138,13 @@ Load_Module(EFI_SYSTEM_TABLE *SystemTable, EFI_HANDLE ImageHandle,
 	NameBuffer[NameLength + 13] = '\0';
 
 	CHAR8 *ModuleBuffer = 0;
-	ReadFile(NameBuffer, Root, SystemTable, ImageHandle, &ModuleBuffer);
+	EFI_STATUS Status = ReadFile(NameBuffer, Root, SystemTable, ImageHandle,
+				     &ModuleBuffer);
+	if (EFI_ERROR(Status)) {
+		Fail_Log("Reading module elf\n", 19);
+		return Status;
+	}
+	Ok_Log("Reading module elf\n", 19);
 
 	Load_Elf(SystemTable, ModuleBuffer, PageTable, Entry);
 
@@ -198,10 +203,13 @@ Load_Kernel(EFI_SYSTEM_TABLE *SystemTable, EFI_HANDLE ImageHandle,
 	EFI_STATUS Status;
 
 	CHAR8 *ConfigurationBuffer;
-	ReadFile(ConfigurationFileName, Root, SystemTable, ImageHandle,
-		 &ConfigurationBuffer);
-
-	Boot_Log("Read kernel configuration file\n", 31);
+	Status = ReadFile(ConfigurationFileName, Root, SystemTable, ImageHandle,
+			  &ConfigurationBuffer);
+	if (EFI_ERROR(Status)) {
+		Fail_Log("Read kernel configuration\n", 26);
+		return Status;
+	}
+	Ok_Log("Read kernel configuration\n", 26);
 
 	Parse_Config(SystemTable, ImageHandle, Root, UpperPageTable,
 		     ConfigurationBuffer);

@@ -204,7 +204,6 @@ EFI_STATUS ExitBootServices(IN EFI_HANDLE ImageHandle,
 		&MemoryMap.MapKey, &MemoryMap.DescriptorSize,
 		&MemoryMap.DescriptorVersion);
 	if (EFI_ERROR(Status)) {
-		Boot_Log("Failed to get memory map\n", 25);
 		Fail_Log("Getting memory map\n", 19);
 		return Status;
 	}
@@ -242,10 +241,10 @@ EFI_STATUS ExitBootServices(IN EFI_HANDLE ImageHandle,
 	Status = GetKernelMemoryMap(&MemoryMap, KernelMemoryMap, RegionCount,
 				    SystemTable);
 	if (EFI_ERROR(Status)) {
-		Fail_Log("Get kernel memory map\n", 2);
+		Fail_Log("Get kernel memory map\n", 22);
 		return Status;
 	}
-	Ok_Log("Get kernel memory map\n", 2);
+	Ok_Log("Get kernel memory map\n", 22);
 
 	return EFI_SUCCESS;
 }
