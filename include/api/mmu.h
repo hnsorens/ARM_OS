@@ -26,7 +26,8 @@ typedef struct mmu_interface
     k_status_t (*table_free)(phys_addr_t root);
     k_status_t (*table_copy)(phys_addr_t src_root, phys_addr_t *dest_root);
 
-    k_status_t (*activate)(phys_addr_t root, uint16_t acid);
+    k_status_t (*set_user_context)(phys_addr_t root, uint16_t acid);
+    k_status_t (*set_kernel_context)(phys_addr_t root, uint16_t acid);
 
     k_status_t (*map)(phys_addr_t root, virt_addr_t v, phys_addr_t p, size_t pc, page_size_t ps, mmu_flags_t f);
     k_status_t (*unmap)(phys_addr_t root, virt_addr_t v, size_t pc, page_size_t ps);
@@ -36,7 +37,7 @@ typedef struct mmu_interface
 
     k_status_t (*flush_tlb)(void);
     k_status_t (*tlb_invalidate)(virt_addr_t v, size_t pc, page_size_t ps);
-    k_status_t (*set_mair)(uint8_t index, uint8_t attr);
+    k_status_t (*set_mair)(uint64_t mair);
 } mmu_interface_t;
 
 #endif
