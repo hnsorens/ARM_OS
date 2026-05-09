@@ -37,6 +37,6 @@ typedef struct pmm_interface
     size_t (*get_free_memory)(void);
     k_status_t (*reserve_range)(phys_addr_t start, size_t sz);
 
-} pmm_module_interface_t;
+} pmm_interface_t;
 
 #endif

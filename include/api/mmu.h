@@ -13,6 +13,13 @@ typedef enum mmu_flags
     MMU_WRITE_THROUGH = (1 << 5),
 } mmu_flags_t;
 
+typedef enum page_size
+{
+    PS_4KB,
+    PS_2MB,
+    PS_1GB
+} page_size_t;
+
 typedef struct mmu_interface
 {
     k_status_t (*table_alloc)(phys_addr_t *out_root);
@@ -21,14 +28,14 @@ typedef struct mmu_interface
 
     k_status_t (*activate)(phys_addr_t root, uint16_t acid);
 
-    k_status_t (*map)(phys_addr_t root, virt_addr_t v, phys_addr_t p, size_t sz, mmu_flags_t f);
-    k_status_t (*unmap)(phys_addr_t root, virt_addr_t v, size_t sz);
-    k_status_t (*protect)(phys_addr_t root, virt_addr_t v, size_t sz, mmu_flags_t f);
+    k_status_t (*map)(phys_addr_t root, virt_addr_t v, phys_addr_t p, size_t pc, page_size_t ps, mmu_flags_t f);
+    k_status_t (*unmap)(phys_addr_t root, virt_addr_t v, size_t pc, page_size_t ps);
+    k_status_t (*protect)(phys_addr_t root, virt_addr_t v, size_t pc, page_size_t ps, mmu_flags_t f);
 
     k_status_t (*translate)(phys_addr_t root, virt_addr_t v, phys_addr_t *out_p, mmu_flags_t *out_f);
 
     k_status_t (*flush_tlb)(void);
-    k_status_t (*tlb_invalidate)(virt_addr_t v, size_t sz);
+    k_status_t (*tlb_invalidate)(virt_addr_t v, size_t pc, page_size_t ps);
     k_status_t (*set_mair)(uint8_t index, uint8_t attr);
 } mmu_interface_t;
 

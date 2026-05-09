@@ -3,20 +3,12 @@
 
 #include <stddef.h>
 #include <stdint.h>
-#include "mmu/mmu_types.h"
+#include "../../include/api/mmu.h"
 
 #define P0_INDEX(x) (((x) >> 39) & 0x1FF)
 #define P1_INDEX(x) (((x) >> 30) & 0x1FF)
 #define P2_INDEX(x) (((x) >> 21) & 0x1FF)
 #define P3_INDEX(x) (((x) >> 12) & 0x1FF)
-
-typedef unsigned long* page_table_t;
-
-typedef struct mmu_context
-{
-    paddr_t page_table;
-} mmu_context;
-
 
 typedef struct page_table_indices_t
 {
@@ -97,43 +89,20 @@ typedef struct page_table_indices_t
 #define SCTLR_C_ENABLE     (1 << 2)
 #define SCTLR_I_ENABLE     (1 << 12)
 
-/**
- * @brief Enables Paging for the OS
- *
- * @param page_table Initial page table
- */
-void page_enable(page_table_t page_table);
+k_status_t table_alloc(phys_addr_t *out_root);
+k_status_t table_free(phys_addr_t root);
+k_status_t table_copy(phys_addr_t src_root, phys_addr_t *dest_root);
 
-/**
- * @brief Calculate memory needed for a bitmap
- * 
- * Computes total bytes required for bitmap structure and bit storage.
- * 
- * @param num_bits Number of bits the bitmap needs to store
- * @return Bytes needed for bitmap structure and storage
- */
-void pages_map(page_table_t* page_table, vaddr_t virtual_address, 
-               paddr_t phys_addr, unsigned long page_order, unsigned long page_count);
+k_status_t activate(phys_addr_t root, uint16_t acid);
 
-/**
- * @brief Creates an identity page table for a specified amount of memory
- * 
- * @param ppm A physical memory manager for allocating page table
- * @param total_memory Total amount of system memory
- * @return New page table
- */
-page_table_t pages_create_identity_page_table(size_t total_memory);
+k_status_t map(phys_addr_t root, virt_addr_t v, phys_addr_t p, size_t pc, page_size_t ps, mmu_flags_t f);
+k_status_t unmap(phys_addr_t root, virt_addr_t v, size_t pc, page_size_t ps);
+k_status_t protect(phys_addr_t root, virt_addr_t v, size_t pc, page_size_t ps, mmu_flags_t f);
 
-/**
- * @brief Converts virtual address to physical address
- * 
- * Looks virtual addresses up in a provided page table to find
- * it's corresponding physical address
- * 
- * @param page_table Page table to look up physical address
- * @param virtual_address Virtual address to look at on the page table
- * @return Physical address that corresponds with virtual address, will be 0 if there is no physical address mapped
- */
-paddr_t virt_to_phys(page_table_t page_table, vaddr_t virtual_address);
+k_status_t translate(phys_addr_t root, virt_addr_t v, phys_addr_t *out_p, mmu_flags_t *out_f);
+
+k_status_t flush_tlb(void);
+k_status_t tlb_invalidate(virt_addr_t v, size_t pc, page_size_t ps);
+k_status_t set_mair(uint8_t index, uint8_t addr);
 
 #endif

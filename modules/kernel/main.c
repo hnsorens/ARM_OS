@@ -4,9 +4,9 @@
 
 #include "../modules.h"
 
-IMPORT_MODULE_ANY(Serial, serial)
+IMPORT_INTERFACE_ANY(serial, serial)
 
-EXPORT_MODULE(Serial, ModuleName, {})
+EXPORT_INTERFACE(serial, ModuleName, {})
 
 int global_variable = 0;
 
