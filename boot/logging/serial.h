@@ -17,5 +17,5 @@ Ok_Log(IN CONST CHAR8 *Str, IN UINTN N);
 
 UINTN
 Fail_Log(IN CONST CHAR8 *Str, IN UINTN N);
-
+VOID Boot_Log_Hex(IN UINT64 Val);
 #endif

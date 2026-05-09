@@ -10,7 +10,7 @@ EXPORT_MODULE(Serial, ModuleName, {})
 
 int global_variable = 0;
 
-int _start(BootInfoStruct *BootInfo)
+int _start(BootInfoStruct *bootInfo)
 {
 	//serial_debug_serial_printf("TEST STARTING\n");
 	serial.printf("FUNCTION CALL FROM VTABLE\n");

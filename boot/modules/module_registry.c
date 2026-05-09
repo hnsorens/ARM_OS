@@ -257,7 +257,7 @@ EFI_STATUS RegistryPutDependency(CONST CHAR8 *TypeString,
 
 #define MAX_MODULE_DEPTH 10
 
-EFI_STATUS InitializeModule(INSTANCE_ENTRY *Instance, UINTN Depth)
+EFI_STATUS InitializeModule(VOID *Data, INSTANCE_ENTRY *Instance, UINTN Depth)
 {
 	if (Depth > MAX_MODULE_DEPTH)
 		return EFI_INVALID_PARAMETER;
@@ -266,7 +266,7 @@ EFI_STATUS InitializeModule(INSTANCE_ENTRY *Instance, UINTN Depth)
 	EFI_STATUS Status;
 	MODULE_DEPENDENCY *Current = Instance->DependenciesHead;
 	while (Current) {
-		Status = InitializeModule(Current->Entry, Depth + 1);
+		Status = InitializeModule(Data, Current->Entry, Depth + 1);
 		if (EFI_ERROR(Status)) {
 			Fail_Log("Initialized module\n", 19);
 			return Status;
@@ -276,19 +276,19 @@ EFI_STATUS InitializeModule(INSTANCE_ENTRY *Instance, UINTN Depth)
 	}
 
 	if (!Instance->Initialized) {
-		Instance->Entry(0);
+		Instance->Entry(Data);
 		Instance->Initialized = TRUE;
 	}
 
 	return EFI_SUCCESS;
 }
 
-EFI_STATUS InitializeModules()
+EFI_STATUS InitializeModules(VOID *Data)
 {
 	INSTANCE_ENTRY *Current = Head;
 	EFI_STATUS Status;
 	while (Current) {
-		Status = InitializeModule(Current, 0);
+		Status = InitializeModule(Data, Current, 0);
 		if (EFI_ERROR(Status)) {
 			Fail_Log("Initialized module\n", 19);
 			return Status;
