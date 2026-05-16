@@ -3,6 +3,7 @@
 #define BUDDY_ALLOCATOR_H
 
 #include "bitmap.h"
+#include "../../include/type.h"
 #include "../boot_info.h"
 
 #define MAX_ORDER 64
@@ -47,9 +48,7 @@ typedef struct buddy_allocator_t
  * @param buddy_memory Pre-allocated memory for buddy metadata
  * @param total_memory Total physical memory size
  */
-void buddy_init(memory_region_t* memory_map, size_t region_count, 
-        buddy_allocator_t *allocator, void *buddy_memory,
-        size_t total_memory);
+void buddy_init(memory_region_t* memory_map, size_t region_count);
 
 /**
  * @brief Calculate memory needed for buddy allocator metadata
@@ -68,7 +67,7 @@ size_t buddy_get_memory_size(size_t total_memory);
  * @param order Block order (0 = 4KB, 1 = 8KB, etc.)
  * @return Physical address of allocated block, or 0 if failed
  */
-void *buddy_alloc_phys(buddy_allocator_t *allocator, size_t order);
+k_status_t buddy_alloc_page(uint8_t order, phys_addr_t *dest);
 
 /**
  * @brief Free previously allocated physical memory block
@@ -79,7 +78,7 @@ void *buddy_alloc_phys(buddy_allocator_t *allocator, size_t order);
  * @param addr Physical address of block to free
  * @param order Order of the block being freed
  */
-void buddy_free_phys(buddy_allocator_t *allocator, void *addr, size_t order);
+k_status_t buddy_free_page(uint8_t order, phys_addr_t addr);
 
 /**
  * @brief Allocate kernel virtual memory
@@ -91,7 +90,7 @@ void buddy_free_phys(buddy_allocator_t *allocator, void *addr, size_t order);
  * @param size Number of bytes to allocate
  * @return Virtual address of allocated memory, or NULL if failed
  */
-void* buddy_alloc_kernel(buddy_allocator_t* allocator, vaddr_t virt_addr, size_t size);
+void* buddy_alloc_kernel(vaddr_t virt_addr, size_t size);
 
 /**
  * @brief Free kernel virtual memory
@@ -102,7 +101,7 @@ void* buddy_alloc_kernel(buddy_allocator_t* allocator, vaddr_t virt_addr, size_t
  * @param virt_addr Virtual address to free
  * @param size Number of bytes to free
  */
-void buddy_free_kernel(buddy_allocator_t* allocator, vaddr_t virt_addr, size_t size);
+void buddy_free_kernel(vaddr_t virt_addr, size_t size);
 
 /**
  * @brief Get total available physical memory
@@ -110,7 +109,7 @@ void buddy_free_kernel(buddy_allocator_t* allocator, vaddr_t virt_addr, size_t s
  * @param allocator Initialized buddy allocator
  * @return Total bytes of free physical memory
  */
-unsigned long buddy_memory_available(buddy_allocator_t* allocator);
+unsigned long buddy_memory_available();
 
 #endif
 

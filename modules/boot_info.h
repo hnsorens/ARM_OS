@@ -17,6 +17,12 @@ typedef struct memory_region
   memory_type_t memory_type;
 } memory_region_t;
 
+typedef struct boot_info 
+{
+    memory_region_t *memory_regions;
+    unsigned long memory_map_size;
+} boot_info_t;
+
 
 
 #endif

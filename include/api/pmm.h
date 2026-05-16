@@ -5,14 +5,11 @@
 
 typedef struct pmm_interface 
 {
-    /* --- Initialization --- */
-    k_status_t (*init)(phys_addr_t mem_map_addr, size_t map_size);
-
     /* --- Core Allocation --- */
-    k_status_t (*alloc_page)(phys_addr_t *out_frame);
-    k_status_t (*alloc_pages)(size_t count, phys_addr_t *out_frames);
-    k_status_t (*free_page)(phys_addr_t frame);
-    k_status_t (*free_pages)(phys_addr_t frames, size_t count);
+    k_status_t (*alloc_page)(uint8_t page_order, phys_addr_t *out_frame);
+    k_status_t (*alloc_pages)(uint8_t page_order, size_t count, phys_addr_t *out_frames);
+    k_status_t (*free_page)(uint8_t page_order, phys_addr_t frame);
+    k_status_t (*free_pages)(uint8_t page_order, phys_addr_t frames, size_t count);
 
     /* --- The Mandatory Additions --- */
 

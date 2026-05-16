@@ -2,6 +2,10 @@
 #include "bitmap.h"
 #include <stdint.h>
 
+buddy_allocator_t allocator;
+
+size_t total_memory = 0;
+
 static size_t find_max_block_size(void *addr, void *end) {
     size_t max_size = end - addr;
     size_t block_size = 4096;
@@ -51,10 +55,21 @@ size_t buddy_get_memory_size(size_t total_memory)
   return buddy_size;
 }
 
-void buddy_init(memory_region_t* memory_map, size_t region_count, 
-        buddy_allocator_t *allocator, void *buddy_memory,
-        size_t total_memory)
+static size_t get_total_memory(memory_region_t *memory_map, size_t region_count) {
+
+    size_t current_size = 0;
+    for (int i = 0; i < region_count; i++)
+    {
+        current_size += memory_map[i].size;
+    }
+    return current_size;
+}
+
+void buddy_init(memory_region_t* memory_map, size_t region_count)
 {
+    total_memory = get_total_memory(memory_map, region_count);
+
+
   for (int i = 0; i < region_count; i++)
   {
     if (memory_map->memory_type == MEMORY_FREE)
@@ -67,16 +82,16 @@ void buddy_init(memory_region_t* memory_map, size_t region_count,
     }
   }
   size_t block_size = 4096;
-  void *buddy_memory_pos = buddy_memory;
+  void *buddy_memory_pos = 0;
   uint32_t order = 0;
 
-  allocator->section_count = 0;
+  allocator.section_count = 0;
 
   while (block_size <= total_memory)
   {
-    allocator->section_count++;
+    allocator.section_count++;
     size_t block_count = (total_memory / block_size) + 1;
-    allocator->sections[order].bitmap = bitmap_create(buddy_memory_pos, block_count);
+    allocator.sections[order].bitmap = bitmap_create(buddy_memory_pos, block_count);
     order++;
     if (block_size > total_memory / 2) break;
     block_size *= 2;
@@ -85,8 +100,8 @@ void buddy_init(memory_region_t* memory_map, size_t region_count,
 
   for (int i = 0; i < MAX_ORDER; i++)
   {
-    allocator->sections[i].top = 0;
-    allocator->sections[i].block_count = 0;
+    allocator.sections[i].top = 0;
+    allocator.sections[i].block_count = 0;
   }
 
   for (int i = 0; i < region_count; i++) {
@@ -102,14 +117,14 @@ void buddy_init(memory_region_t* memory_map, size_t region_count,
         // handle free
         uint64_t section_index = (63 - __builtin_clzll(block_size / 4096));
         uint64_t page_index = (uint64_t)block_position / block_size;
-        bitmap_set(allocator->sections[section_index].bitmap, page_index);
-        if (allocator->sections[section_index].top) {
-          *((void**)allocator->sections[section_index].top + 8) = block_position;
+        bitmap_set(allocator.sections[section_index].bitmap, page_index);
+        if (allocator.sections[section_index].top) {
+          *((void**)allocator.sections[section_index].top + 8) = block_position;
         }
 
-        *((void**)block_position) = allocator->sections[section_index].top;
-        allocator->sections[section_index].top = block_position;
-        allocator->sections[section_index].block_count++;
+        *((void**)block_position) = allocator.sections[section_index].top;
+        allocator.sections[section_index].top = block_position;
+        allocator.sections[section_index].block_count++;
 
         
         block_position += block_size;
@@ -152,10 +167,10 @@ static void remove_block_from_freelist(buddy_section_t* section, void *addr, siz
   bitmap_clear(section->bitmap, bitmap_index);
 }
 
-void *buddy_alloc_phys_exact(buddy_allocator_t* allocator, unsigned long actual_size)
+void *buddy_alloc_phys_exact(unsigned long actual_size)
 {
   
-  unsigned long memory1 = buddy_memory_available(allocator);
+  unsigned long memory1 = buddy_memory_available();
     // Find the minimum order that can fit the size
     size_t order = 0;
     size_t block_size = 4096;
@@ -168,7 +183,8 @@ void *buddy_alloc_phys_exact(buddy_allocator_t* allocator, unsigned long actual_
 
 
     // Allocate from that order (ONE allocation)
-    void *block_addr = buddy_alloc_phys(allocator, order);
+    phys_addr_t block_addr = 0;
+    buddy_alloc_page(order, &block_addr);
 
     if (!block_addr)
     {
@@ -178,7 +194,7 @@ void *buddy_alloc_phys_exact(buddy_allocator_t* allocator, unsigned long actual_
     
     // If we got exactly what we need, return it
     if (block_size == actual_size) {
-        return block_addr;
+        return (void*)block_addr;
     }
     
     void *free_position = (void *)(block_addr + actual_size);
@@ -190,26 +206,26 @@ void *buddy_alloc_phys_exact(buddy_allocator_t* allocator, unsigned long actual_
         if (free_size < 4096) break;
         
         size_t free_order = (63 - __builtin_clzll(free_size / 4096));
-        buddy_free_phys(allocator, free_position, free_order);
+        buddy_free_page((phys_addr_t)free_position, free_order);
 
         space_allocated += free_size;
         
         free_position += free_size;
     }
  
-    return block_addr;
+    return (void*)block_addr;
 }
 
-void *buddy_alloc_phys(buddy_allocator_t *allocator, size_t order)
+k_status_t buddy_alloc_page(uint8_t order, phys_addr_t *dest)
 {
-  if (order >= MAX_ORDER)
+  if (order >= MAX_ORDER || !dest)
   {
-    return 0;
+    return K_STATUS_INVALID_ARG;
   }
   int current_order = order;
   while (current_order < MAX_ORDER)
   {
-    buddy_section_t *section = &allocator->sections[current_order];
+    buddy_section_t *section = &allocator.sections[current_order];
     if (section->block_count != 0)
     {
       void *block_addr = section->top;
@@ -229,65 +245,31 @@ void *buddy_alloc_phys(buddy_allocator_t *allocator, size_t order)
         {
           split_size /= 2;
           void *buddy_addr = keep_addr + split_size;
-          buddy_section_t *buddy_section = &allocator->sections[split_order];
+          buddy_section_t *buddy_section = &allocator.sections[split_order];
           add_block_to_freelist(buddy_section, buddy_addr, split_order);
         }
       }
 
-
-      return block_addr;
+      *dest = (phys_addr_t)block_addr;
+      return K_STATUS_OK;
     }
     current_order++;
   }
-  return 0;
+  return K_STATUS_OUT_OF_MEMORY;
 }
 
-
-void* buddy_alloc_kernel(buddy_allocator_t* allocator, void *virt_addr, size_t size)
+k_status_t buddy_free_page(uint8_t order, phys_addr_t addr)
 {
-    size_t actual_size = (size + 4095) & ~4095;  // Round to 4KB
-    
-    // Allocate exact physical size (buddy will find largest block and split down)
-    void *phys_addr = buddy_alloc_phys_exact(allocator, actual_size);
-
-    if (!phys_addr) return NULL;
-    // TODO FIX THIS -> mmu_map_kernel(virt_addr, phys_addr, actual_size, 0);
-  
-    return (void*)virt_addr;
-}
-
-void buddy_free_kernel(buddy_allocator_t* allocator, void *virt_addr, size_t size)
-{
-  void *free_position = virt_addr;
-  void *block_end = virt_addr + size;
-  
-  while (free_position < block_end) {
-      // Find the largest block size that fits in the remaining space
-      size_t free_size = find_max_block_size(free_position, block_end);
-      if (free_size < 4096) break;
-      
-      // Free this block
-      size_t free_order = (63 - __builtin_clzll(free_size / 4096));
-
-      // TODO Fix this
-      // buddy_free_phys(allocator, mmu_v2p_kernel(free_position), free_order);
-      
-      free_position += free_size;
-  }
-}
-
-void buddy_free_phys(buddy_allocator_t *allocator, void *addr, size_t order)
-{
-    if (order >= MAX_ORDER || addr == 0) return;
+    if (order >= MAX_ORDER || addr == 0) return K_STATUS_INVALID_ARG;
 
     size_t current_order = order;
-    void *current_addr = addr;
+    void *current_addr = (void*)addr;
 
     while (current_order < MAX_ORDER - 1) {
         size_t block_size = (1UL << current_order) * 4096;
         void *buddy_addr = (void*)((uint64_t)current_addr ^ block_size);
         
-        buddy_section_t *section = &allocator->sections[current_order];
+        buddy_section_t *section = &allocator.sections[current_order];
         size_t buddy_bitmap_index = (uint64_t)buddy_addr / block_size;
 
         if (!bitmap_test(section->bitmap, buddy_bitmap_index)) {
@@ -302,17 +284,19 @@ void buddy_free_phys(buddy_allocator_t *allocator, void *addr, size_t order)
     }
 
     // Add the final coalesced block (which might be larger than original)
-    buddy_section_t *final_section = &allocator->sections[current_order];
+    buddy_section_t *final_section = &allocator.sections[current_order];
     add_block_to_freelist(final_section, current_addr, current_order);
+
+    return K_STATUS_OK;
 }
 
-unsigned long buddy_memory_available(buddy_allocator_t* allocator)
+unsigned long buddy_memory_available()
 {
   unsigned long section_size = 4096;
   unsigned long memory_freed = 0;
-  for (int i = 0; i < allocator->section_count; i++)
+  for (int i = 0; i < allocator.section_count; i++)
   {
-    memory_freed += section_size * allocator->sections[i].block_count;
+    memory_freed += section_size * allocator.sections[i].block_count;
     section_size *= 2;
   }
   return memory_freed;
