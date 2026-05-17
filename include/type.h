@@ -5,8 +5,8 @@
 #include <stddef.h>
 #include <stdbool.h>
 
-typedef uint64_t phys_addr_t;
-typedef uint64_t virt_addr_t;
+typedef uintptr_t paddr_t;
+typedef uintptr_t vaddr_t;
 
 #define k_error(status) (status)
 

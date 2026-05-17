@@ -2,7 +2,6 @@
 #ifndef BUDDY_ALLOCATOR_H
 #define BUDDY_ALLOCATOR_H
 
-#include "bitmap.h"
 #include "../../include/type.h"
 #include "../boot_info.h"
 #include <stdint.h>
@@ -23,8 +22,8 @@ typedef struct page_meta
 
 typedef struct page
 {
-    void *prev;
-    void *next;
+    struct page *prev;
+    struct page *next;
 } page_t;
 
 /**
@@ -35,9 +34,9 @@ typedef struct page
  */
 typedef struct buddy_section_t
 {
-  bitmap_t* bitmap;
   page_t *top;
   size_t block_count;
+  uint8_t order;
 } buddy_section_t;
 
 /**

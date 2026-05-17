@@ -10,14 +10,16 @@
 #define P2_INDEX(x) (((x) >> 21) & 0x1FF)
 #define P3_INDEX(x) (((x) >> 12) & 0x1FF)
 
-typedef struct page_table_indices_t
+typedef uint64_t pte_t;
+
+typedef struct pt_indices
 {
-    uint16_t p0_index;
-    uint16_t p1_index;
-    uint16_t p2_index;
-    uint16_t p3_index;
+    uint16_t l0_index;
+    uint16_t l1_index;
+    uint16_t l2_index;
+    uint16_t l3_index;
     uint16_t offset;
-} page_table_indices_t;
+} pt_indices_t;
 
 #define ARM_TABLE_DESCRIPTOR         0x3
 #define ARM_BLOCK_DESCRIPTOR         0x1
@@ -71,15 +73,15 @@ typedef struct page_table_indices_t
 #define TCR_T0SZ_SHIFT     0
 
 #define TCR_TBI_DISABLE    0b00
-#define TCR_IPS_40BIT      25UL
+#define TCR_IPS_40BIT      25
 #define TCR_TG_4KB         0b00
 #define TCR_SH_INNER       0b11
 #define TCR_RGN_WB         0b01
 #define TCR_T0SZ_48BIT     (64 - 48)
 
 // MAIR_EL1 Macros  
-#define MAIR_NORMAL_WB     0xFFUL
-#define MAIR_DEVICE_nGnRE  0x44UL
+#define MAIR_NORMAL_WB     0xFF
+#define MAIR_DEVICE_nGnRE  0x44
 #define MAIR_IDX_NORMAL    0
 #define MAIR_IDX_DEVICE    1
 #define MAIR_ATTR(attr, idx)   ((attr) << ((idx) * 8))
@@ -89,21 +91,21 @@ typedef struct page_table_indices_t
 #define SCTLR_C_ENABLE     (1 << 2)
 #define SCTLR_I_ENABLE     (1 << 12)
 
-k_status_t table_alloc(phys_addr_t *out_root);
-k_status_t table_free(phys_addr_t root);
-k_status_t table_copy(phys_addr_t src_root, phys_addr_t *dest_root);
+k_status_t pt_alloc(paddr_t *out_root);
+k_status_t pt_free(paddr_t root);
+k_status_t pt_copy(paddr_t src_root, paddr_t *dest_root);
 
-k_status_t set_user_context(phys_addr_t root, uint16_t asid);
-k_status_t set_kernel_context(phys_addr_t root, uint16_t asid);
+k_status_t pt_set_user_ctx(paddr_t root, asid_t asid);
+k_status_t pt_set_kernel_ctx(paddr_t root, asid_t asid);
 
-k_status_t map(phys_addr_t root, virt_addr_t v, phys_addr_t p, size_t pc, page_size_t ps, mmu_flags_t f);
-k_status_t unmap(phys_addr_t root, virt_addr_t v, size_t pc, page_size_t ps);
-k_status_t protect(phys_addr_t root, virt_addr_t v, size_t pc, page_size_t ps, mmu_flags_t f);
+k_status_t pt_map(paddr_t root, vaddr_t virt, paddr_t phys, uint64_t pg_count, page_size_t pg_size, mmu_flags_t f);
+k_status_t pt_unmap(paddr_t root, vaddr_t virt, uint64_t pg_count, page_size_t pg_size);
+k_status_t pt_protect(paddr_t root, vaddr_t virt, uint64_t pg_count, page_size_t pg_size, mmu_flags_t f);
 
-k_status_t translate(phys_addr_t root, virt_addr_t v, phys_addr_t *out_p, mmu_flags_t *out_f);
+k_status_t pt_translate(paddr_t root, vaddr_t virt, paddr_t *phys_out, mmu_flags_t *flags_out);
 
-k_status_t flush_tlb(void);
-k_status_t tlb_invalidate(virt_addr_t v, size_t pc, page_size_t ps);
-k_status_t set_mair(uint64_t mair_value);
+k_status_t pt_flush(void);
+k_status_t pt_invalidate(vaddr_t virt, uint64_t pg_count, page_size_t pg_size);
+k_status_t pt_set_mair(uint64_t mair_value);
 
 #endif

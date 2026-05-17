@@ -1,5 +1,4 @@
 #include "buddy.h"
-#include "bitmap.h"
 #include <stdint.h>
 
 buddy_allocator_t allocator;
@@ -20,20 +19,6 @@ static size_t find_max_block_size(void *addr, void *end) {
         block_size *= 2;
     }
     return best_size;
-}
-
-static void add_block_to_freelist(buddy_section_t *section, void *addr, size_t order)
-{
-  if (section->top) *((void **)section->top + 8) = addr;
-
-  *((void **)addr) = section->top;
-  *((void **)(addr + 8)) = 0;
-  section->top = addr;
-  section->block_count++;
-
-  size_t block_size = (1UL << order) * 4096;
-  size_t bitmap_index = (uint64_t)addr / block_size;
-  bitmap_set(section->bitmap, bitmap_index);
 }
 
 size_t buddy_get_memory_size(size_t total_memory)
@@ -87,7 +72,7 @@ void buddy_init(memory_region_t* memory_map, size_t region_count)
    {
        pages[i].flags = 0;
        pages[i].is_head = 0;
-       pages[i].is_freeable = 1;
+       pages[i].is_freeable = 0;
        pages[i].order = 0;
        pages[i].ref_count = 0;
    }
@@ -95,7 +80,7 @@ void buddy_init(memory_region_t* memory_map, size_t region_count)
    // Set any non freeable pages to non freeable
    for (int i = 0; i < region_count; ++i)
    {
-       if (memory_map[i].memory_type != MEMORY_FREE)
+       if (memory_map[i].memory_type == MEMORY_FREE)
        {
            size_t start_page = (size_t)memory_map[i].start / 4096;
            for (int i = 0; i < memory_map[i].size; ++i)
@@ -113,6 +98,7 @@ void buddy_init(memory_region_t* memory_map, size_t region_count)
   {
     allocator.sections[i].top = 0;
     allocator.sections[i].block_count = 0;
+    allocator.sections[i].order = i;
   }
 
   for (int i = 0; i < region_count; i++) {
@@ -145,25 +131,34 @@ void buddy_init(memory_region_t* memory_map, size_t region_count)
   }
 }
 
-static void remove_block_from_freelist(buddy_section_t* section, void *addr, size_t order)
+static void add_block_to_freelist(buddy_section_t *section, page_t *page, size_t order)
+{
+  if (section->top) section->top->next = page;
+
+  page->prev = section->top;
+  page->next = 0;
+  section->top = page;
+  section->block_count++;
+}
+
+static void remove_block_from_freelist(buddy_section_t* section, page_t *addr, size_t order)
 {
   if (order >= MAX_ORDER || addr == 0)
   {
     return;
   }
 
-  void* next = *((void **)addr);
-  void* prev = *((void **)addr + 8);
+  page_t *page = addr;
 
-   if (prev != 0) {
-      *((void**)prev) = next;  // prev->next = next
+   if (page->prev != 0) {
+      *((void**)page->prev) = page->next;  // prev->next = next
   } else {
-      section->top = next;         // This was the head
+      section->top = page->next;         // This was the head
   }
 
   // Update the next block's prev pointer
-  if (next != 0) {
-      *((void **)next + 8) = prev;  // next->prev = prev
+  if (page->next != 0) {
+      *((void **)page->next + 8) = page->prev;  // next->prev = prev
   }
 
   section->block_count--;
@@ -172,11 +167,48 @@ static void remove_block_from_freelist(buddy_section_t* section, void *addr, siz
   {
     section->top = 0;
   }
+}
 
-  // Clear the bitmap
-  size_t block_size = (1UL << order) * 4096;
-  size_t bitmap_index = (uint64_t)addr / block_size;
-  bitmap_clear(section->bitmap, bitmap_index);
+static page_t *pop_page(buddy_section_t *section)
+{
+    if (section->block_count == 0) return 0;
+
+    page_t *ret = section->top;
+    section->top = section->top->prev;
+    section->block_count--;
+
+    size_t page_index = (uint64_t)ret / 4096;
+    pages[page_index].order = 0;
+
+    return ret;
+}
+
+static page_t *push_page(buddy_section_t *section, page_t *page)
+{
+    if (page->prev != 0)
+    {
+        page->prev->next = page->next;
+    }
+    else
+    {
+        section->top = page->next;
+    }
+
+    if (page->next)
+    {
+        page->next->prev = page->prev;
+    }
+
+    section->block_count --;
+
+    if (!section->block_count)
+    {
+        section->top = 0;
+    }
+
+    // Update the page array
+    size_t page_index = (uint64_t)page / 4096;
+    pages[page_index].order = section->order;
 }
 
 k_status_t buddy_alloc_page(uint8_t order, phys_addr_t *dest)
@@ -193,27 +225,21 @@ k_status_t buddy_alloc_page(uint8_t order, phys_addr_t *dest)
     // obtain block from higher order
     if (section->block_count != 0)
     {
-      void *block_addr = section->top;
-      section->top = *((void**)block_addr);
-      if (section->top) *((unsigned long*)section->top + 8) = 0;
-      section->block_count--;
+        page_t *block_addr = pop_page(section);
+        size_t block_size = (4096UL << current_order);
 
-      size_t block_size = (1UL << current_order) * 4096;
-      size_t bitmap_index = (uint64_t)block_addr / block_size;
-      
-      bitmap_clear(section->bitmap, bitmap_index);
-      if (current_order > order)
-      {
-        void *keep_addr = block_addr;
-        size_t split_size = block_size;
-        for (size_t split_order = current_order - 1; split_order + 1 > order; split_order--)
+        if (current_order > order)
         {
-          split_size /= 2;
-          void *buddy_addr = keep_addr + split_size;
-          buddy_section_t *buddy_section = &allocator.sections[split_order];
-          add_block_to_freelist(buddy_section, buddy_addr, split_order);
+            void *keep_addr = block_addr;
+            size_t split_size = block_size;
+            for (size_t split_order = current_order - 1; split_order + 1 > order; --split_order)
+            {
+                split_size /= 2;
+                void *buddy_addr = keep_addr + split_size;
+                buddy_section_t *buddy_section = &allocator.sections[split_order];
+                push_page(buddy_section, buddy_addr);
+            }
         }
-      }
 
       *dest = (phys_addr_t)block_addr;
       return K_STATUS_OK;

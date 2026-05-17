@@ -20,23 +20,25 @@ typedef enum page_size
     PS_1GB = 0x40000000,
 } page_size_t;
 
+typedef uint16_t asid_t;
+
 typedef struct mmu_interface
 {
-    k_status_t (*table_alloc)(phys_addr_t *out_root);
-    k_status_t (*table_free)(phys_addr_t root);
-    k_status_t (*table_copy)(phys_addr_t src_root, phys_addr_t *dest_root);
+    k_status_t (*table_alloc)(paddr_t *out_root);
+    k_status_t (*table_free)(paddr_t root);
+    k_status_t (*table_copy)(paddr_t src_root, paddr_t *dest_root);
 
-    k_status_t (*set_user_context)(phys_addr_t root, uint16_t acid);
-    k_status_t (*set_kernel_context)(phys_addr_t root, uint16_t acid);
+    k_status_t (*set_user_context)(paddr_t root, asid_t acid);
+    k_status_t (*set_kernel_context)(paddr_t root, asid_t acid);
 
-    k_status_t (*map)(phys_addr_t root, virt_addr_t v, phys_addr_t p, size_t pc, page_size_t ps, mmu_flags_t f);
-    k_status_t (*unmap)(phys_addr_t root, virt_addr_t v, size_t pc, page_size_t ps);
-    k_status_t (*protect)(phys_addr_t root, virt_addr_t v, size_t pc, page_size_t ps, mmu_flags_t f);
+    k_status_t (*map)(paddr_t root, vaddr_t virt, paddr_t phys, uint64_t pg_count, page_size_t pg_size, mmu_flags_t flags);
+    k_status_t (*unmap)(paddr_t root, vaddr_t virt, uint64_t pg_count, page_size_t pg_size);
+    k_status_t (*protect)(paddr_t root, vaddr_t virt, uint64_t pg_count, page_size_t pg_size, mmu_flags_t flags);
 
-    k_status_t (*translate)(phys_addr_t root, virt_addr_t v, phys_addr_t *out_p, mmu_flags_t *out_f);
+    k_status_t (*translate)(paddr_t root, vaddr_t virt, paddr_t *phys_out, mmu_flags_t *flags_out);
 
-    k_status_t (*flush_tlb)(void);
-    k_status_t (*tlb_invalidate)(virt_addr_t v, size_t pc, page_size_t ps);
+    k_status_t (*flush)(void);
+    k_status_t (*invalidate)(vaddr_t virt, uint64_t pg_count, page_size_t pg_size);
     k_status_t (*set_mair)(uint64_t mair);
 } mmu_interface_t;
 

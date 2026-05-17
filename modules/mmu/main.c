@@ -1,4 +1,4 @@
-#include "page_table.h"
+#include "pt.h"
 #include "../modules.h"
 
 #include "../../include/api/mmu.h"
@@ -7,16 +7,16 @@
 IMPORT_INTERFACE_ANY(pmm, pmm);
 
 EXPORT_INTERFACE(mmu, MemoryManagementUnit, {
-        .table_alloc = table_alloc,
-        .table_free = table_free,
-        .table_copy = table_copy,
-        .set_user_context = set_user_context,
-        .set_kernel_context = set_kernel_context,
-        .map = map,
-        .unmap = unmap,
-        .protect = protect,
-        .translate = translate,
-        .flush_tlb = flush_tlb,
-        .tlb_invalidate = tlb_invalidate,
-        .set_mair = set_mair,
+        .table_alloc = pt_alloc,
+        .table_free = pt_free,
+        .table_copy = pt_copy,
+        .set_user_context = pt_set_user_ctx,
+        .set_kernel_context = pt_set_kernel_ctx,
+        .map = pt_map,
+        .unmap = pt_unmap,
+        .protect = pt_protect,
+        .translate = pt_translate,
+        .flush = pt_flush,
+        .invalidate = pt_invalidate,
+        .set_mair = pt_set_mair,
         });
