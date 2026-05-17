@@ -10,5 +10,8 @@ int main(boot_info_t *boot_info) {
 }
 
 EXPORT_INTERFACE(pmm, idk, {
-           .
+           .alloc_page = buddy_alloc_page,
+           .free_page = buddy_free_page,
+           .alloc_pages = buddy_alloc_pages,
+           .free_pages = buddy_free_pages
         })

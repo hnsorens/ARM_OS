@@ -7,9 +7,7 @@ typedef struct pmm_interface
 {
     /* --- Core Allocation --- */
     k_status_t (*alloc_page)(uint8_t page_order, phys_addr_t *out_frame);
-    k_status_t (*alloc_pages)(uint8_t page_order, size_t count, phys_addr_t *out_frames);
     k_status_t (*free_page)(uint8_t page_order, phys_addr_t frame);
-    k_status_t (*free_pages)(uint8_t page_order, phys_addr_t frames, size_t count);
 
     /* --- The Mandatory Additions --- */
 

@@ -4,7 +4,8 @@
 
 buddy_allocator_t allocator;
 
-size_t total_memory = 0;
+size_t total_pages = 0;
+page_meta_t *pages;
 
 static size_t find_max_block_size(void *addr, void *end) {
     size_t max_size = end - addr;
@@ -67,36 +68,46 @@ static size_t get_total_memory(memory_region_t *memory_map, size_t region_count)
 
 void buddy_init(memory_region_t* memory_map, size_t region_count)
 {
-    total_memory = get_total_memory(memory_map, region_count);
+   size_t total_memory = get_total_memory(memory_map, region_count);
+   total_pages = total_memory / 4096;
 
+   // Allocate page array
+   for (int i = 0; i < region_count; ++i)
+   {
+       if (memory_map[i].memory_type == MEMORY_FREE && memory_map[i].size >= total_pages * sizeof(page_t))
+       {
+           memory_map[i].size -= total_pages * sizeof(page_t);
+           pages = (page_meta_t *)memory_map[i].start;
+           memory_map[i].start += total_pages * sizeof(page_t);
+       }
+   }
 
-  for (int i = 0; i < region_count; i++)
-  {
-    if (memory_map->memory_type == MEMORY_FREE)
-    {
+   // Zero out page array
+   for (int i = 0; i < total_pages; ++i)
+   {
+       pages[i].flags = 0;
+       pages[i].is_head = 0;
+       pages[i].is_freeable = 1;
+       pages[i].order = 0;
+       pages[i].ref_count = 0;
+   }
 
-      for (int i2 = 0; i2 < memory_map[i].size; i2++)
-      {
-        ((char*)memory_map[i].start)[i2] = 0;
-      }
-    }
-  }
+   // Set any non freeable pages to non freeable
+   for (int i = 0; i < region_count; ++i)
+   {
+       if (memory_map[i].memory_type != MEMORY_FREE)
+       {
+           size_t start_page = (size_t)memory_map[i].start / 4096;
+           for (int i = 0; i < memory_map[i].size; ++i)
+           {
+               pages[start_page + i].is_freeable = 0;
+           }
+       }
+   }
+
   size_t block_size = 4096;
   void *buddy_memory_pos = 0;
   uint32_t order = 0;
-
-  allocator.section_count = 0;
-
-  while (block_size <= total_memory)
-  {
-    allocator.section_count++;
-    size_t block_count = (total_memory / block_size) + 1;
-    allocator.sections[order].bitmap = bitmap_create(buddy_memory_pos, block_count);
-    order++;
-    if (block_size > total_memory / 2) break;
-    block_size *= 2;
-    buddy_memory_pos += bitmap_memory_size(block_count);
-  }
 
   for (int i = 0; i < MAX_ORDER; i++)
   {
@@ -115,17 +126,18 @@ void buddy_init(memory_region_t* memory_map, size_t region_count)
         block_size = find_max_block_size(block_position, block_end);
         if (block_size < 4096) break;
         // handle free
-        uint64_t section_index = (63 - __builtin_clzll(block_size / 4096));
-        uint64_t page_index = (uint64_t)block_position / block_size;
-        bitmap_set(allocator.sections[section_index].bitmap, page_index);
-        if (allocator.sections[section_index].top) {
-          *((void**)allocator.sections[section_index].top + 8) = block_position;
-        }
+        uint64_t order = (63 - __builtin_clzll(block_size / 4096));
+        uint64_t page_index = (uint64_t)block_position / 4096;
+        pages[page_index].order = order;
 
-        *((void**)block_position) = allocator.sections[section_index].top;
-        allocator.sections[section_index].top = block_position;
-        allocator.sections[section_index].block_count++;
+        // Set next
+        page_t *page = (page_t *)block_position;
+        page->next = allocator.sections[order].top;
 
+        // Update section
+        *((void**)block_position) = allocator.sections[order].top;
+        allocator.sections[order].top = block_position;
+        allocator.sections[order].block_count++;
         
         block_position += block_size;
       }
@@ -167,55 +179,6 @@ static void remove_block_from_freelist(buddy_section_t* section, void *addr, siz
   bitmap_clear(section->bitmap, bitmap_index);
 }
 
-void *buddy_alloc_phys_exact(unsigned long actual_size)
-{
-  
-  unsigned long memory1 = buddy_memory_available();
-    // Find the minimum order that can fit the size
-    size_t order = 0;
-    size_t block_size = 4096;
-    
-    while (block_size < actual_size) {
-        if (order >= MAX_ORDER - 1) break;
-        order++;
-        block_size *= 2;
-    }
-
-
-    // Allocate from that order (ONE allocation)
-    phys_addr_t block_addr = 0;
-    buddy_alloc_page(order, &block_addr);
-
-    if (!block_addr)
-    {
-      // TODO implement fragmentation allocation (this will be needed)
-      return 0;
-    }
-    
-    // If we got exactly what we need, return it
-    if (block_size == actual_size) {
-        return (void*)block_addr;
-    }
-    
-    void *free_position = (void *)(block_addr + actual_size);
-    void *block_end = (void *)(block_addr + block_size);
-    
-    unsigned long space_allocated = 0;
-    while (free_position < block_end) {
-        size_t free_size = find_max_block_size(free_position, block_end);
-        if (free_size < 4096) break;
-        
-        size_t free_order = (63 - __builtin_clzll(free_size / 4096));
-        buddy_free_page((phys_addr_t)free_position, free_order);
-
-        space_allocated += free_size;
-        
-        free_position += free_size;
-    }
- 
-    return (void*)block_addr;
-}
-
 k_status_t buddy_alloc_page(uint8_t order, phys_addr_t *dest)
 {
   if (order >= MAX_ORDER || !dest)
@@ -226,6 +189,8 @@ k_status_t buddy_alloc_page(uint8_t order, phys_addr_t *dest)
   while (current_order < MAX_ORDER)
   {
     buddy_section_t *section = &allocator.sections[current_order];
+
+    // obtain block from higher order
     if (section->block_count != 0)
     {
       void *block_addr = section->top;

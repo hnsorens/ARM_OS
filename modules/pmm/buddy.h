@@ -5,10 +5,27 @@
 #include "bitmap.h"
 #include "../../include/type.h"
 #include "../boot_info.h"
+#include <stdint.h>
 
 #define MAX_ORDER 64
 
 typedef void *   vaddr_t;
+
+
+typedef struct page_meta
+{
+    uint32_t ref_count;
+    uint32_t order : 8;
+    uint32_t is_head : 1;
+    uint32_t is_freeable : 1;
+    uint32_t flags : 22;
+} page_meta_t;
+
+typedef struct page
+{
+    void *prev;
+    void *next;
+} page_t;
 
 /**
  * @brief Represents a single order in the buddy allocator
@@ -19,7 +36,7 @@ typedef void *   vaddr_t;
 typedef struct buddy_section_t
 {
   bitmap_t* bitmap;
-  void *top;
+  page_t *top;
   size_t block_count;
 } buddy_section_t;
 
