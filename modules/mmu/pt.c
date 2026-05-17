@@ -1,4 +1,4 @@
-#include "page_table.h"
+#include "pt.h"
 #include <stddef.h>
 
 #include "../modules.h"
@@ -179,7 +179,7 @@ k_status_t pt_map(paddr_t root, vaddr_t virt, paddr_t phys, uint64_t pg_count, p
         l3[idx.l3_index] = curr_phys | f | ARM_PAGE_DESCRIPTOR;
     }
 
-    return tlb_invalidate(virt, pg_count, pg_size);
+    return pt_invalidate(virt, pg_count, pg_size);
 }
 
 static bool is_pt_empty(paddr_t pt_phys) {
@@ -243,7 +243,7 @@ k_status_t pt_unmap(paddr_t root, vaddr_t virt, uint64_t pg_count, page_size_t p
         }
     }
 
-    return tlb_invalidate(virt, pg_count, pg_size);
+    return pt_invalidate(virt, pg_count, pg_size);
 }
 
 k_status_t pt_protect(paddr_t root, vaddr_t virt, uint64_t pg_count, page_size_t pg_size, mmu_flags_t f) {
@@ -285,7 +285,7 @@ k_status_t pt_protect(paddr_t root, vaddr_t virt, uint64_t pg_count, page_size_t
         }
     }
 
-    return tlb_invalidate(virt, pg_count, pg_size);
+    return pt_invalidate(virt, pg_count, pg_size);
 }
 
 k_status_t pt_translate(paddr_t root, vaddr_t virt, paddr_t *phys_out, mmu_flags_t *flags_out) {
