@@ -2,6 +2,7 @@
 #define BOOT_INFO_H
 
 #include "utils.h"
+#include "../include/type.h"
 
 typedef enum memory_type
 {
@@ -12,7 +13,7 @@ typedef enum memory_type
 
 typedef struct memory_region
 {
-  void *start;
+  paddr_t start;
   size_t size;
   memory_type_t memory_type;
 } memory_region_t;
