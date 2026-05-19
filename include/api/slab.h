@@ -3,22 +3,48 @@
 
 #include "../type.h"
 
+struct k_slab_cache;
+
+/* --- Unified Object-Oriented Slab Allocator Module Interface --- */
 typedef struct slab_interface {
-    // Creates a new 'pool' for a specific object size
-    // Example: slab_create("task_cache", sizeof(task_t), 16);
-    k_status_t (*create_cache)(const char *name, size_t obj_size, size_t alignment);
+    /**
+     * @brief Creates a new isolated memory pool for a specific object size.
+     * @param obj_size Raw footprint sizing requirements of the target object type.
+     * @param alignment Strict binary power-of-two mask constraint boundary limit.
+     * @param out_cache Destination storage pointer capturing the generated direct cache handle.
+     * @return k_status_t Execution confirmation status code.
+     */
+    k_status_t (*create_cache)(size_t obj_size, size_t alignment, struct k_slab_cache **out_cache);
 
-    // Destroys a cache and returns all pages to the VMM/PMM
-    k_status_t (*destroy_cache)(const char *name);
+    /**
+     * @brief Destroys an active cache instance and returns all backed pages to the VMM.
+     * @param cache Target direct pointer identifying the active cache instance to destroy.
+     * @return k_status_t Execution confirmation status code.
+     */
+    k_status_t (*destroy_cache)(struct k_slab_cache *cache);
 
-    // Grabs one object-sized slot from the cache
-    void* (*alloc)(const char *name);
+    /**
+     * @brief Grabs one object-sized slot directly out of the requested cache context.
+     * @param cache Target direct pointer identifying the active cache instance.
+     * @param out_obj Destination storage pointer capturing the generated memory allocation address.
+     * @return k_status_t Execution confirmation status code.
+     */
+    k_status_t (*alloc)(struct k_slab_cache *cache, void **out_obj);
 
-    // Returns the slot to the cache for reuse
-    void (*free)(const char *name, void *obj);
+    /**
+     * @brief Returns an active allocated slot container back into its native cache context.
+     * @param cache Target direct pointer identifying the active cache instance.
+     * @param obj Starting virtual address pointer locating the object block to free.
+     * @return k_status_t Execution confirmation status code.
+     */
+    k_status_t (*free)(struct k_slab_cache *cache, void *obj);
 
-    // Optional: Reclaims empty slabs if the system is low on memory
-    k_status_t (*shrink)(const char *name);
-} slab_module_interface_t;
+    /**
+     * @brief Reclaims unused, pristine empty slabs if the system is running low on memory frames.
+     * @param cache Target direct pointer identifying the active cache instance.
+     * @return k_status_t Execution confirmation status code.
+     */
+    k_status_t (*shrink)(struct k_slab_cache *cache);
+} slab_interface_t;
 
-#endif
+#endif /* SLAB_ALLOCATOR_API_H */
