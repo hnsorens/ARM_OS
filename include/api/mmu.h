@@ -24,12 +24,12 @@ typedef uint16_t asid_t;
 
 typedef struct mmu_interface
 {
-    k_status_t (*table_alloc)(paddr_t *out_root);
-    k_status_t (*table_free)(paddr_t root);
-    k_status_t (*table_copy)(paddr_t src_root, paddr_t *dest_root);
+    k_status_t (*alloc)(paddr_t *out_root);
+    k_status_t (*free)(paddr_t root);
+    k_status_t (*copy)(paddr_t src_root, paddr_t *dest_root);
 
-    k_status_t (*set_user_context)(paddr_t root, asid_t acid);
-    k_status_t (*set_kernel_context)(paddr_t root, asid_t acid);
+    k_status_t (*set_user_ctx)(paddr_t root, asid_t acid);
+    k_status_t (*set_kernel_ctx)(paddr_t root, asid_t acid);
 
     k_status_t (*map)(paddr_t root, vaddr_t virt, paddr_t phys, uint64_t pg_count, page_size_t pg_size, mmu_flags_t flags);
     k_status_t (*unmap)(paddr_t root, vaddr_t virt, uint64_t pg_count, page_size_t pg_size);

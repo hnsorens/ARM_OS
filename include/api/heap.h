@@ -1,23 +1,18 @@
-#ifndef HEAP_H
-#define HEAP_H
+#ifndef HEAP_API_H
+#define HEAP_API_H
 
 #include "../type.h"
 
+struct heap_context;
+
 typedef struct heap_interface {
-    // Standard byte-level allocation
-    void* (*malloc)(size_t size);
-
-    // Standard free
-    void (*free)(void *ptr);
-
-    // Reallocates to a new size, copying data if necessary
-    void* (*realloc)(void *ptr, size_t new_size);
-
-    // Allocation with specific alignment (often used for buffers)
-    void* (*memalign)(size_t alignment, size_t size);
-
-    // Stats for debugging memory leaks
-    void (*get_stats)(size_t *used, size_t *total);
+    k_status_t (*create)(paddr_t root, size_t sz, struct heap_context **out_heap);
+    k_status_t (*destroy)(struct heap_context *heap);
+    k_status_t (*malloc)(struct heap_context *heap, size_t size, void **out_ptr);
+    k_status_t (*free)(struct heap_context *heap, void *ptr);
+    k_status_t (*realloc)(struct heap_context *heap, void *ptr, size_t new_size, void **out_ptr);
+    k_status_t (*memalign)(struct heap_context *heap, size_t alignment, size_t size, void **out_ptr);
+    k_status_t (*get_stats)(struct heap_context *heap, size_t *used, size_t *total);
 } heap_interface_t;
 
 #endif
