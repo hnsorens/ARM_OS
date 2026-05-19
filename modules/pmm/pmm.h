@@ -1,9 +1,6 @@
 #ifndef PMM_H
 #define PMM_H
 
-#include <stddef.h>
-#include <stdint.h>
-#include "../../include/type.h"
 #include "../boot_info.h"
 
 #define PMM_MAX_ORDER     16     /* 4KB * (2^15) = 128MB max contiguous block allocation */

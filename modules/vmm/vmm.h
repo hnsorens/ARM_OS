@@ -1,9 +1,6 @@
 #ifndef VMM_H
 #define VMM_H
 
-#include <stddef.h>
-#include <stdint.h>
-#include <stdbool.h>
 #include "../../include/api/mmu.h"
 #include "../../include/api/vmm.h"
 

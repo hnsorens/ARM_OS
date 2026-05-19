@@ -14,6 +14,7 @@ typedef struct k_slab k_slab_t;
 
 /* --- Isolated Object Pool Context Opaque Handle Structural Map --- */
 typedef struct k_slab_cache {
+    paddr_t       root;            /* Root of page table for allocation */
     size_t        obj_size;        /* Sizing requirements of the target object type */
     size_t        alignment;       /* Byte boundary constraint alignments */
     size_t        slots_per_slab;  /* Calculated maximum objects capacity a single page holds */
@@ -32,7 +33,7 @@ typedef struct k_slab_cache {
  * @param out_cache Destination storage pointer capturing the generated direct cache handle.
  * @return k_status_t Execution confirmation status code.
  */
-k_status_t k_slab_create_cache(size_t obj_size, size_t alignment, k_slab_cache_t **out_cache);
+k_status_t k_slab_create_cache(paddr_t root, size_t obj_size, size_t alignment, k_slab_cache_t **out_cache);
 
 /**
  * @brief Destroys an object cache bucket using its direct handle and drops all mapped pages back to the VMM.

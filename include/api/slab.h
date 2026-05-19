@@ -9,12 +9,13 @@ struct k_slab_cache;
 typedef struct slab_interface {
     /**
      * @brief Creates a new isolated memory pool for a specific object size.
+     * @param root Root of page table used to allocate memory in the vmm
      * @param obj_size Raw footprint sizing requirements of the target object type.
      * @param alignment Strict binary power-of-two mask constraint boundary limit.
      * @param out_cache Destination storage pointer capturing the generated direct cache handle.
      * @return k_status_t Execution confirmation status code.
      */
-    k_status_t (*create_cache)(size_t obj_size, size_t alignment, struct k_slab_cache **out_cache);
+    k_status_t (*create_cache)(paddr_t root, size_t obj_size, size_t alignment, struct k_slab_cache **out_cache);
 
     /**
      * @brief Destroys an active cache instance and returns all backed pages to the VMM.

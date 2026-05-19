@@ -714,4 +714,4 @@ int _start()
 }
 
 EXPORT_INTERFACE(serial, first_serial_hehe4,
-	      { .printf = serial_debug_serial_printf })
+		 { .printf = serial_debug_serial_printf })
