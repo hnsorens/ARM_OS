@@ -2,6 +2,7 @@
 #include "../../include/api/vmm.h"
 #include "../modules.h"
 #include "../utils.h"
+#include "../../include/errno.h"
 
 EXTERN_IMPORT_INTERFACE(vmm, vmm);
 
@@ -13,8 +14,8 @@ static k_slab_cache_t s_caches[SLAB_MAX_CACHES];
 /* Pre-allocated tracking structure pool managing metadata descriptors independently from raw pages */
 struct k_slab {
 	void *page_base; /* Pointer to the start of the virtual page */
-	uint32_t free_count; /* Remaining vacant object slots inside this slab */
-	uint32_t next_free_slot; /* Index of the first available slot */
+	u32 free_count; /* Remaining vacant object slots inside this slab */
+	u32 next_free_slot; /* Index of the first available slot */
 	struct k_slab *next; /* Pointer to the next sibling slab tracker */
 };
 
@@ -23,7 +24,7 @@ static k_slab_t s_slab_pool[MAX_SLAB_DESCRIPTORS];
 /* Helper: Allocates an uninitialized metadata node out of the tracking pool */
 static k_slab_t *alloc_slab_descriptor(void)
 {
-	size_t i;
+	u64 i;
 	for (i = 0; i < MAX_SLAB_DESCRIPTORS; i++) {
 		if (s_slab_pool[i].page_base == NULL) {
 			return &s_slab_pool[i];
@@ -64,16 +65,16 @@ static void move_slab(k_slab_t **from_list, k_slab_t **to_list, k_slab_t *s)
 }
 
 /* Pre-allocates and registers a brand-new fixed-size object cache store, returning a direct pointer handle */
-k_status_t k_slab_create_cache(paddr_t root, size_t obj_size, size_t alignment,
-			       k_slab_cache_t **out_cache)
+int k_slab_create_cache(u64 root, u64 obj_size, u64 alignment,
+			k_slab_cache_t **out_cache)
 {
-	k_status_t status = K_STATUS_OK;
+	int status = 0;
 	k_slab_cache_t *cache = NULL;
-	size_t aligned_obj_size;
-	size_t i;
+	u64 aligned_obj_size;
+	u64 i;
 
 	if (obj_size == 0 || alignment == 0 || !out_cache) {
-		status = K_STATUS_INVALID_ARG;
+		status = EINVAL;
 		goto cleanup;
 	}
 
@@ -85,17 +86,17 @@ k_status_t k_slab_create_cache(paddr_t root, size_t obj_size, size_t alignment,
 	}
 
 	if (!cache) {
-		status = K_STATUS_OUT_OF_MEMORY;
+		status = ENOMEM;
 		goto cleanup;
 	}
 
 	aligned_obj_size = (obj_size + (alignment - 1)) & ~(alignment - 1);
-	if (aligned_obj_size < sizeof(uint32_t)) {
-		aligned_obj_size = sizeof(uint32_t);
+	if (aligned_obj_size < sizeof(u32)) {
+		aligned_obj_size = sizeof(u32);
 	}
 
 	if (aligned_obj_size > (SLAB_PAGE_SIZE - alignment)) {
-		status = K_STATUS_INVALID_ARG;
+		status = EINVAL;
 		goto cleanup;
 	}
 
@@ -115,16 +116,16 @@ cleanup:
 }
 
 /* Destroys an object cache bucket using its direct handle and drops all mapped pages back to the VMM */
-k_status_t k_slab_destroy_cache(k_slab_cache_t *cache)
+int k_slab_destroy_cache(k_slab_cache_t *cache)
 {
-	k_status_t status = K_STATUS_OK;
+	int status = 0;
 	k_slab_t *curr;
 	k_slab_t *next;
 	k_slab_t *lists[3];
-	size_t i;
+	u64 i;
 
 	if (!cache || !cache->is_allocated) {
-		status = K_STATUS_INVALID_ARG;
+		status = EINVAL;
 		goto cleanup;
 	}
 
@@ -136,7 +137,7 @@ k_status_t k_slab_destroy_cache(k_slab_cache_t *cache)
 		curr = lists[i];
 		while (curr) {
 			next = curr->next;
-			vmm.free(cache->root, (vaddr_t)curr->page_base,
+			vmm.free(cache->root, (u64)curr->page_base,
 				 SLAB_PAGE_SIZE);
 			free_slab_descriptor(curr);
 			curr = next;
@@ -150,17 +151,17 @@ cleanup:
 }
 
 /* Fetches a single pre-carved object slot from the requested slab cache using its direct handle */
-k_status_t k_slab_alloc(k_slab_cache_t *cache, void **out_obj)
+int k_slab_alloc(k_slab_cache_t *cache, void **out_obj)
 {
-	k_status_t status = K_STATUS_OK;
+	int status = 0;
 	k_slab_t *s = NULL;
-	vaddr_t vaddr = 0;
+	u64 vaddr = 0;
 	uintptr_t base;
 	uintptr_t alloc_addr;
-	size_t i;
+	u64 i;
 
 	if (!cache || !cache->is_allocated || !out_obj) {
-		status = K_STATUS_INVALID_ARG;
+		status = EINVAL;
 		goto cleanup;
 	}
 
@@ -172,14 +173,14 @@ k_status_t k_slab_alloc(k_slab_cache_t *cache, void **out_obj)
 	} else {
 		status = vmm.allocate(cache->root, &vaddr, SLAB_PAGE_SIZE,
 				      MMU_READ | MMU_WRITE, VMM_REGION_HEAP);
-		if (k_error(status)) {
+		if (status) {
 			goto cleanup;
 		}
 
 		s = alloc_slab_descriptor();
 		if (!s) {
 			vmm.free(cache->root, vaddr, SLAB_PAGE_SIZE);
-			status = K_STATUS_OUT_OF_MEMORY;
+			status = ENOMEM;
 			goto cleanup;
 		}
 
@@ -190,13 +191,11 @@ k_status_t k_slab_alloc(k_slab_cache_t *cache, void **out_obj)
 
 		base = (uintptr_t)s->page_base;
 		for (i = 0; i < cache->slots_per_slab - 1; i++) {
-			uint32_t *next_link =
-				(uint32_t *)(base + (i * cache->obj_size));
+			u32 *next_link = (u32 *)(base + (i * cache->obj_size));
 			*next_link = i + 1;
 		}
-		uint32_t *last_link =
-			(uint32_t *)(base + ((cache->slots_per_slab - 1) *
-					     cache->obj_size));
+		u32 *last_link = (u32 *)(base + ((cache->slots_per_slab - 1) *
+						 cache->obj_size));
 		*last_link = 0xFFFFFFFF;
 
 		s->next = cache->slabs_partial;
@@ -205,7 +204,7 @@ k_status_t k_slab_alloc(k_slab_cache_t *cache, void **out_obj)
 
 	alloc_addr =
 		(uintptr_t)s->page_base + (s->next_free_slot * cache->obj_size);
-	s->next_free_slot = *(uint32_t *)alloc_addr;
+	s->next_free_slot = *(u32 *)alloc_addr;
 	s->free_count--;
 
 	if (s->free_count == 0) {
@@ -219,9 +218,9 @@ cleanup:
 }
 
 /* Returns an active allocated object slot container back into its native cache using its direct handle */
-k_status_t k_slab_free(k_slab_cache_t *cache, void *obj)
+int k_slab_free(k_slab_cache_t *cache, void *obj)
 {
-	k_status_t status = K_STATUS_OK;
+	int status = 0;
 	uintptr_t obj_addr;
 	uintptr_t page_mask;
 	void *page_base;
@@ -229,11 +228,11 @@ k_status_t k_slab_free(k_slab_cache_t *cache, void *obj)
 	k_slab_t **source_list = NULL;
 	k_slab_t *lists[2];
 	k_slab_t **refs[2];
-	uint32_t slot_idx;
-	size_t i;
+	u32 slot_idx;
+	u64 i;
 
 	if (!cache || !obj || !cache->is_allocated) {
-		status = K_STATUS_INVALID_ARG;
+		status = EINVAL;
 		goto cleanup;
 	}
 
@@ -261,13 +260,13 @@ k_status_t k_slab_free(k_slab_cache_t *cache, void *obj)
 	}
 
 	if (!s) {
-		status = K_STATUS_NOT_FOUND;
+		status = EINVAL;
 		goto cleanup;
 	}
 
 	slot_idx = (obj_addr - (uintptr_t)s->page_base) / cache->obj_size;
 
-	*(uint32_t *)obj_addr = s->next_free_slot;
+	*(u32 *)obj_addr = s->next_free_slot;
 	s->next_free_slot = slot_idx;
 	s->free_count++;
 
@@ -282,14 +281,14 @@ cleanup:
 }
 
 /* Evicts completely vacant slabs from the cache to reclaim system pages using its direct handle */
-k_status_t k_slab_shrink(k_slab_cache_t *cache)
+int k_slab_shrink(k_slab_cache_t *cache)
 {
-	k_status_t status = K_STATUS_OK;
+	int status = 0;
 	k_slab_t *curr;
 	k_slab_t *next;
 
 	if (!cache || !cache->is_allocated) {
-		status = K_STATUS_INVALID_ARG;
+		status = EINVAL;
 		goto cleanup;
 	}
 
@@ -298,7 +297,7 @@ k_status_t k_slab_shrink(k_slab_cache_t *cache)
 
 	while (curr) {
 		next = curr->next;
-		vmm.free(cache->root, (vaddr_t)curr->page_base, SLAB_PAGE_SIZE);
+		vmm.free(cache->root, (u64)curr->page_base, SLAB_PAGE_SIZE);
 		free_slab_descriptor(curr);
 		curr = next;
 	}

@@ -8,6 +8,7 @@
 
 #include "serial.h"
 #include "../modules.h"
+#include "../../include/type.h"
 
 // PL011 UART Registers (ARM Versatile Express base)
 #define UART0_BASE 0x09000000
@@ -25,14 +26,14 @@
 #define UARTFR_TXFF (1 << 5) // Transmit FIFO full
 #define UARTFR_RXFE (1 << 4) // Receive FIFO empty
 
-static inline void mmio_write(uint32_t reg, uint32_t data)
+static inline void mmio_write(u32 reg, u32 data)
 {
-	*(volatile uint32_t *)reg = data;
+	*(volatile u32 *)reg = data;
 }
 
-static inline uint32_t mmio_read(uint32_t reg)
+static inline u32 mmio_read(u32 reg)
 {
-	return *(volatile uint32_t *)reg;
+	return *(volatile u32 *)reg;
 }
 
 void uart_putc(char c)
@@ -75,7 +76,7 @@ static void puts_wrapper(const char *str)
 }
 
 // Convert unsigned integer to string with base
-static char *utoa(uint64_t num, char *str, int base, bool uppercase)
+static char *utoa(u64 num, char *str, int base, bool uppercase)
 {
 	char *ptr = str;
 	char *ptr1 = str;
@@ -89,7 +90,7 @@ static char *utoa(uint64_t num, char *str, int base, bool uppercase)
 
 	// Convert number
 	while (num) {
-		uint64_t remainder = num % base;
+		u64 remainder = num % base;
 		*ptr++ = (remainder < 10) ? remainder + '0' :
 					    (uppercase ? remainder - 10 + 'A' :
 							 remainder - 10 + 'a');
@@ -128,7 +129,7 @@ static char *itoa(int64_t num, char *str, int base, bool uppercase)
 	}
 
 	// Convert using unsigned function
-	utoa((uint64_t)num, ptr, base, uppercase);
+	utoa((u64)num, ptr, base, uppercase);
 
 	// Add minus sign if needed
 	if (negative) {
@@ -147,7 +148,7 @@ static char *itoa(int64_t num, char *str, int base, bool uppercase)
 }
 
 // Format flags
-typedef struct {
+struct format_flags {
 	bool left_justify; // '-'
 	bool force_sign; // '+'
 	bool space_sign; // ' '
@@ -158,14 +159,14 @@ typedef struct {
 	int precision;
 	char length_modifier; // 'h', 'l', 'L', etc.
 	char specifier; // 'd', 'x', 's', etc.
-} format_flags;
+};
 
 // Parse format specifier
 static const char *parse_format_specifier(const char *format,
-					  format_flags *flags)
+					  struct format_flags *flags)
 {
 	// Reset flags
-	*flags = (format_flags){ 0 };
+	*flags = (struct format_flags){ 0 };
 	flags->precision = -1; // -1 means not specified
 
 	// Parse flags
@@ -271,7 +272,7 @@ static void output_padding(int count, char pad_char)
 }
 
 // Print string with formatting
-static int print_formatted_string(const char *str, format_flags *flags)
+static int print_formatted_string(const char *str, struct format_flags *flags)
 {
 	int count = 0;
 
@@ -317,7 +318,7 @@ static int print_formatted_string(const char *str, format_flags *flags)
 }
 
 // Print character with formatting
-static int print_formatted_char(char c, format_flags *flags)
+static int print_formatted_char(char c, struct format_flags *flags)
 {
 	int count = 0;
 
@@ -346,7 +347,7 @@ static int print_formatted_char(char c, format_flags *flags)
 }
 
 // Print integer with formatting
-static int print_formatted_integer(int64_t num, format_flags *flags)
+static int print_formatted_integer(int64_t num, struct format_flags *flags)
 {
 	int count = 0;
 	char buffer[MAX_NUMBER_LEN];
@@ -395,7 +396,7 @@ static int print_formatted_integer(int64_t num, format_flags *flags)
 
 	// Convert to string
 	if (flags->specifier == 'u') {
-		utoa((uint64_t)num, buffer, base, uppercase);
+		utoa((u64)num, buffer, base, uppercase);
 	} else {
 		itoa(num, buffer, base, uppercase);
 	}
@@ -525,7 +526,7 @@ static int print_formatted_integer(int64_t num, format_flags *flags)
 }
 
 // Print pointer
-static int print_pointer(void *ptr, format_flags *flags)
+static int print_pointer(void *ptr, struct format_flags *flags)
 {
 	int count = 0;
 	char buffer[MAX_NUMBER_LEN];
@@ -590,7 +591,7 @@ int vprintf(const char *format, va_list args)
 			}
 
 			// Parse format specifier
-			format_flags flags;
+			struct format_flags flags;
 			format = parse_format_specifier(format, &flags);
 
 			// Process based on specifier
@@ -625,8 +626,8 @@ int vprintf(const char *format, va_list args)
 				case 'q': // long long (ll)
 					num = va_arg(args, long long);
 					break;
-				case 'z': // size_t
-					num = va_arg(args, size_t);
+				case 'z': // u64
+					num = va_arg(args, u64);
 					break;
 				default: // int
 					num = va_arg(args, int);
@@ -642,7 +643,7 @@ int vprintf(const char *format, va_list args)
 			case 'X':
 			case 'o':
 			case 'b': {
-				uint64_t num;
+				u64 num;
 
 				// Handle different unsigned integer sizes
 				switch (flags.length_modifier) {
@@ -660,8 +661,8 @@ int vprintf(const char *format, va_list args)
 				case 'q': // unsigned long long (ll)
 					num = va_arg(args, unsigned long long);
 					break;
-				case 'z': // size_t
-					num = va_arg(args, size_t);
+				case 'z': // u64
+					num = va_arg(args, u64);
 					break;
 				default: // unsigned int
 					num = va_arg(args, unsigned int);

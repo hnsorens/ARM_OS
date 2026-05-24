@@ -4,6 +4,9 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#define likely(x)      __builtin_expect(!!(x), 1)
+#define unlikely(x)    __builtin_expect(!!(x), 0)
+
 void *kmemset(void *dest, int ch, size_t n)
 {
     unsigned char *ptr = (unsigned char *)dest;

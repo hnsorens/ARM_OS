@@ -12,8 +12,8 @@ typedef enum memory_type
 
 typedef struct memory_region
 {
-  paddr_t start;
-  size_t size;
+  u64 start;
+  u64 size;
   memory_type_t memory_type;
 } memory_region_t;
 

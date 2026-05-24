@@ -11,17 +11,15 @@
 #define P2_INDEX(x) (((x) >> 21) & 0x1FF)
 #define P3_INDEX(x) (((x) >> 12) & 0x1FF)
 
-typedef uint64_t pte_t;
-
 /* Deconstructed components of a 4-level virtual address translation path */
-typedef struct pt_indices
+struct pt_indices
 {
-    uint16_t l0_index;
-    uint16_t l1_index;
-    uint16_t l2_index;
-    uint16_t l3_index;
-    uint16_t offset;
-} pt_indices_t;
+    u16 l0_index;
+    u16 l1_index;
+    u16 l2_index;
+    u16 l3_index;
+    u16 offset;
+};
 
 /* --- AArch64 Descriptor Type Encodings --- */
 #define ARM_TABLE_DESCRIPTOR         0x3
@@ -103,40 +101,40 @@ typedef struct pt_indices
 /**
  * @brief Allocates an empty 4KB physical page frame to act as a root L0 table.
  * @param out_root Destination storage location for the root frame physical address.
- * @return k_status_t Execution confirmation code.
+ * @return int Execution confirmation code.
  */
-k_status_t pt_alloc(paddr_t *out_root);
+int pt_alloc(u64 *out_root);
 
 /**
  * @brief Destroys and cleans up nested page tables recursively.
  * @param root Physical address of the root L0 page directory tree.
- * @return k_status_t Execution confirmation code.
+ * @return int Execution confirmation code.
  */
-k_status_t pt_free(paddr_t root);
+int pt_free(u64 root);
 
 /**
  * @brief Generates an independent deep copy clone of an active mapping tree context.
  * @param src_root Physical address of the template source tree.
  * @param dest_root Destination address to output the cloned tree base frame address.
- * @return k_status_t Execution confirmation code.
+ * @return int Execution confirmation code.
  */
-k_status_t pt_copy(paddr_t src_root, paddr_t *dest_root);
+int pt_copy(u64 src_root, u64 *dest_root);
 
 /**
  * @brief Binds a user mapping directory tree and its ASID into hardware TTBR0_EL1.
  * @param root Physical base address hosting the targeted user space directory.
  * @param asid Hardware Address Space Identifier context tag tracking code.
- * @return k_status_t Execution confirmation code.
+ * @return int Execution confirmation code.
  */
-k_status_t pt_set_user_ctx(paddr_t root, asid_t asid);
+int pt_set_user_ctx(u64 root, u16 asid);
 
 /**
  * @brief Binds a secure kernel directory tree and its ASID into hardware TTBR1_EL1.
  * @param root Physical base address anchoring the kernel space page structure.
  * @param asid Hardware Address Space Identifier context tag tracking code.
- * @return k_status_t Execution confirmation code.
+ * @return int Execution confirmation code.
  */
-k_status_t pt_set_kernel_ctx(paddr_t root, asid_t asid);
+int pt_set_kernel_ctx(u64 root, u16 asid);
 
 /**
  * @brief Generates coherent structural mappings linking virtual ranges to physical target sectors.
@@ -146,9 +144,9 @@ k_status_t pt_set_kernel_ctx(paddr_t root, asid_t asid);
  * @param pg_count Total contiguous page allocation chunks to process.
  * @param pg_size Sizing layout attribute configurations (PS_4KB, PS_2MB, PS_1GB).
  * @param f Architectural allocation flags (Read/Write access, execution locks, cache controls).
- * @return k_status_t Execution confirmation code.
+ * @return int Execution confirmation code.
  */
-k_status_t pt_map(paddr_t root, vaddr_t virt, paddr_t phys, uint64_t pg_count, page_size_t pg_size, mmu_flags_t f);
+int pt_map(u64 root, u64 virt, u64 phys, u64 pg_count, enum page_size pg_size, enum mmu_flags f);
 
 /**
  * @brief Tears down page map links across virtual spaces and dynamically prunes unneeded tables.
@@ -156,9 +154,9 @@ k_status_t pt_map(paddr_t root, vaddr_t virt, paddr_t phys, uint64_t pg_count, p
  * @param virt Targeted virtual memory tracking path path start coordinate to unmap.
  * @param pg_count Contiguous volume tracker indicating the exact range width to process.
  * @param pg_size Page size tracking definition attributes (PS_4KB, PS_2MB, PS_1GB).
- * @return k_status_t Execution confirmation code.
+ * @return int Execution confirmation code.
  */
-k_status_t pt_unmap(paddr_t root, vaddr_t virt, uint64_t pg_count, page_size_t pg_size);
+int pt_unmap(u64 root, u64 virt, u64 pg_count, enum page_size pg_size);
 
 /**
  * @brief Adjusts attribute protection settings across target virtual translation blocks.
@@ -167,9 +165,9 @@ k_status_t pt_unmap(paddr_t root, vaddr_t virt, uint64_t pg_count, page_size_t p
  * @param pg_count Contiguous volume tracker stating the range footprint limit.
  * @param pg_size Sizing attributes determining table alignment (PS_4KB, PS_2MB, PS_1GB).
  * @param f Execution restrictions and flag modifiers to safely apply to the targets.
- * @return k_status_t Execution confirmation code.
+ * @return int Execution confirmation code.
  */
-k_status_t pt_protect(paddr_t root, vaddr_t virt, uint64_t pg_count, page_size_t pg_size, mmu_flags_t f);
+int pt_protect(u64 root, u64 virt, u64 pg_count, enum page_size pg_size, enum mmu_flags f);
 
 /**
  * @brief Manually resolves custom virtual path lines down to physical hardware addresses.
@@ -177,30 +175,30 @@ k_status_t pt_protect(paddr_t root, vaddr_t virt, uint64_t pg_count, page_size_t
  * @param virt Target memory tracking path virtual address location to query.
  * @param phys_out Output variable used to record recovered destination physical address coordinates.
  * @param flags_out Output variable used to store extracted page translation attributes.
- * @return k_status_t Execution confirmation code.
+ * @return int Execution confirmation code.
  */
-k_status_t pt_translate(paddr_t root, vaddr_t virt, paddr_t *phys_out, mmu_flags_t *flags_out);
+int pt_translate(u64 root, u64 virt, u64 *phys_out, enum mmu_flags *flags_out);
 
 /**
  * @brief Flushes the entire TLB cache hardware tracking table across all active SMP cores.
- * @return k_status_t Execution confirmation code.
+ * @return int Execution confirmation code.
  */
-k_status_t pt_flush(void);
+int pt_flush(void);
 
 /**
  * @brief Evicts range explicit address context structures out of the TLB pipeline.
  * @param virt Target memory block destination virtual translation base pointer location to invalidate.
  * @param pg_count Contiguous step boundaries tracker stating overall range footprint limits.
  * @param pg_size Sizing configurations matching original translation block properties.
- * @return k_status_t Execution confirmation code.
+ * @return int Execution confirmation code.
  */
-k_status_t pt_invalidate(vaddr_t virt, uint64_t pg_count, page_size_t pg_size);
+int pt_invalidate(u64 virt, u64 pg_count, enum page_size pg_size);
 
 /**
  * @brief Configures MAIR profile attributes inside the host register file vector.
  * @param mair_value The absolute 64-bit multi-attribute profile tracking bitmask.
- * @return k_status_t Execution confirmation code.
+ * @return int Execution confirmation code.
  */
-k_status_t pt_set_mair(uint64_t mair_value);
+int pt_set_mair(u64 mair_value);
 
 #endif
