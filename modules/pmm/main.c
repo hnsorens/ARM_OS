@@ -18,6 +18,18 @@ int main(boot_info_t *boot_info)
 		 HHDM_OFFSET);
 }
 
+EXPORT_INTERFACE(pmm, PhysicalMemoryAllocator,
+		 {
+			 .alloc_page = pmm_alloc_page,
+			 .alloc_aligned = pmm_alloc_aligned,
+			 .alloc_in_range = pmm_alloc_in_range,
+			 .retain = pmm_retain,
+			 .release = pmm_release,
+			 .get_total_memory = pmm_get_total_memory,
+			 .get_free_memory = pmm_get_free_memory,
+			 .reserve_range = pmm_reserve_range,
+		 });
+
 TEST(AllocTest)
 {
 #define AllocTest_NUM_PAGES 128
@@ -89,15 +101,3 @@ TEST(RetainTest)
 
 	TEST_RESULT();
 }
-
-EXPORT_INTERFACE(pmm, PhysicalMemoryAllocator,
-		 {
-			 .alloc_page = pmm_alloc_page,
-			 .alloc_aligned = pmm_alloc_aligned,
-			 .alloc_in_range = pmm_alloc_in_range,
-			 .retain = pmm_retain,
-			 .release = pmm_release,
-			 .get_total_memory = pmm_get_total_memory,
-			 .get_free_memory = pmm_get_free_memory,
-			 .reserve_range = pmm_reserve_range,
-		 });
