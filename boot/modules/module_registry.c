@@ -310,7 +310,24 @@ EFI_STATUS InitializeModules(VOID *Data)
 			Fail_Log("Initialized module\n", 19);
 			return Status;
 		}
-		Ok_Log("Initialized module\n", 19);
+		Current = Current->Next;
+	}
+
+	// Run rest of tests
+	Current = Head;
+	while (Current) {
+		if (!Current->Entry) {
+			for (INTN I = 0; I < Current->TestCount; ++I) {
+				if (Current->Tests[I].Test()) {
+					Test_Fail_Log(
+						Current->NameString,
+						Current->Tests[I].TestName);
+				} else {
+					Test_Ok_Log(Current->NameString,
+						    Current->Tests[I].TestName);
+				}
+			}
+		}
 		Current = Current->Next;
 	}
 

@@ -94,7 +94,7 @@ Test_Fail_Log(IN CONST CHAR8 *ModuleName, IN CONST CHAR8 *TestName)
 	Uart_PutS("[ \x1B[31mTEST FAIL\x1B[0m ] - ", 26);
 	UINTN ModuleNameLen = StrLen(ModuleName);
 	Uart_PutS(ModuleName, ModuleNameLen);
-	Uart_PutS(" ", 1);
+	Uart_PutS(" \t\t", 3);
 	UINTN TestNameLen = StrLen(TestName);
 	Uart_PutS(TestName, TestNameLen);
 	Uart_PutS("\n", 1);
