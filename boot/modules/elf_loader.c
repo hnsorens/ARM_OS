@@ -179,6 +179,20 @@ Load_Elf(IN EFI_SYSTEM_TABLE *SystemTable, IN CHAR8 *ElfBuffer,
 				ModuleMetadata.Name = NameString;
 				ModuleMetadata.VTableSize = Shdr[I].sh_size;
 				ModuleMetadata.Entry = (VOID *)(Ehdr->e_entry);
+				ModuleMetadata.TestCount = 0;
+				for (INTN I2 = 0; I2 < Ehdr->e_shnum; ++I2) {
+					SectionName = (CHAR8 *)ShStrTab +
+						      Shdr[I2].sh_name;
+					if (Strncmp(SectionName, ".kernel_test",
+						    12) == 0) {
+						ModuleMetadata.TestCount =
+							Shdr[I2].sh_size /
+							sizeof(TEST_ENTRY);
+						ModuleMetadata.TestStart =
+							(TEST_ENTRY *)Shdr[I2]
+								.sh_addr;
+					}
+				}
 				Status = RegistryPut(ModuleMetadata);
 				if (EFI_ERROR(Status)) {
 					Fail_Log("Put module into registry\n",

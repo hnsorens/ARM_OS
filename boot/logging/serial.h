@@ -17,5 +17,12 @@ Ok_Log(IN CONST CHAR8 *Str, IN UINTN N);
 
 UINTN
 Fail_Log(IN CONST CHAR8 *Str, IN UINTN N);
+
+UINTN
+Test_Ok_Log(IN CONST CHAR8 *ModuleName, IN CONST CHAR8 *TestName);
+
+UINTN
+Test_Fail_Log(IN CONST CHAR8 *ModuleName, IN CONST CHAR8 *TestName);
+
 VOID Boot_Log_Hex(IN UINT64 Val);
 #endif

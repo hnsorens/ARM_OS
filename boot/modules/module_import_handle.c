@@ -1,5 +1,6 @@
 #include "module_import_handle.h"
 
+#include "efidef.h"
 #include "memory/memory_constants.h"
 #include "modules/module_registry.h"
 #include "logging/serial.h"

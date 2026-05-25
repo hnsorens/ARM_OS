@@ -124,6 +124,8 @@ EFI_STATUS RegistryPut(MODULE_META Meta)
 	Entry->Entry = Meta.Entry;
 	Entry->DependenciesHead = 0;
 	Entry->Initialized = FALSE;
+	Entry->TestCount = Meta.TestCount;
+	Entry->Tests = Meta.TestStart;
 
 	if (Head) {
 		Entry->Next = Head;
@@ -283,6 +285,15 @@ EFI_STATUS InitializeModule(VOID *Data, INSTANCE_ENTRY *Instance, UINTN Depth)
 
 	if (!Instance->Initialized) {
 		Instance->Entry(Data);
+		for (INTN I = 0; I < Instance->TestCount; ++I) {
+			if (Instance->Tests[I].Test()) {
+				Test_Fail_Log(Instance->NameString,
+					      Instance->Tests[I].TestName);
+			} else {
+				Test_Ok_Log(Instance->NameString,
+					    Instance->Tests[I].TestName);
+			}
+		}
 		Instance->Initialized = TRUE;
 	}
 

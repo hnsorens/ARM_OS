@@ -1,5 +1,7 @@
 #include "../modules.h"
 
+#include "../test.h"
+
 #include "../../include/api/pmm.h"
 #include "../../include/api/serial_debug.h"
 #include "../boot_info.h"
@@ -14,6 +16,20 @@ int main(boot_info_t *boot_info)
 {
 	pmm_init(boot_info->memory_regions, boot_info->memory_map_size,
 		 HHDM_OFFSET);
+}
+
+TEST(Test1)
+{
+	TEST_INIT();
+
+	TEST_RESULT();
+}
+
+TEST(Test2)
+{
+	TEST_INIT();
+
+	TEST_RESULT();
 }
 
 EXPORT_INTERFACE(pmm, idk,

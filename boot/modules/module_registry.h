@@ -14,6 +14,11 @@ typedef struct MODULE_DEPENDENCY
     struct MODULE_DEPENDENCY *Next;
 } MODULE_DEPENDENCY;
 
+typedef struct TEST_ENTRY {
+    const char *TestName;
+    UINT32 (*Test)(VOID);
+} TEST_ENTRY;
+
 /* Data for a single module instance */
 typedef struct INSTANCE_ENTRY
 {
@@ -26,6 +31,8 @@ typedef struct INSTANCE_ENTRY
     BOOLEAN Initialized;
     struct INSTANCE_ENTRY *Next;
     UINT32 Occupied;
+    TEST_ENTRY *Tests;
+    UINTN TestCount;
 } INSTANCE_ENTRY;
 
 /* Data for a module category (Type) */
@@ -48,6 +55,8 @@ typedef struct REGISTRY
     UINTN PoolRemaining;
 } REGISTRY;
 
+
+
 typedef struct MODULE_META 
 {
     CONST CHAR8 *Type;
@@ -55,6 +64,9 @@ typedef struct MODULE_META
     VOID *VTablePtr;
     UINT64 VTableSize;
     VOID (*Entry)(VOID *);
+    TEST_ENTRY *TestStart;
+    UINTN TestCount;
+
 } MODULE_META;
 
 EFI_STATUS RegistryInit(VOID *Block, UINTN BlockSize, UINTN MaxExpectedTypes);

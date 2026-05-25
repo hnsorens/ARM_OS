@@ -16,6 +16,15 @@
 #define UARTFR_TXFF (1 << 5) // Transmit FIFO full
 #define UARTFR_RXFE (1 << 4) // Receive FIFO empty
 
+size_t StrLen(CONST CHAR8 *Str)
+{
+	UINTN Len = 0;
+	while (Str[Len] != '\0') {
+		Len++;
+	}
+	return Len;
+}
+
 static inline VOID MMIO_Write(IN EFI_PHYSICAL_ADDRESS Reg, IN UINT32 Data)
 {
 	*(volatile UINT32 *)Reg = Data;
@@ -64,6 +73,32 @@ Fail_Log(IN CONST CHAR8 *Str, IN UINTN N)
 	Uart_PutS("[\x1B[31mFAIL\x1B[0m] ", 17);
 	Uart_PutS(Str, N);
 	return N + 17;
+}
+
+UINTN
+Test_Ok_Log(IN CONST CHAR8 *ModuleName, IN CONST CHAR8 *TestName)
+{
+	Uart_PutS("[ \x1B[92mTEST PASS\x1B[0m ] - ", 27);
+	UINTN ModuleNameLen = StrLen(ModuleName);
+	Uart_PutS(ModuleName, ModuleNameLen);
+	Uart_PutS(" ", 1);
+	UINTN TestNameLen = StrLen(TestName);
+	Uart_PutS(TestName, TestNameLen);
+	Uart_PutS("\n", 1);
+	return 1 + TestNameLen + 1 + ModuleNameLen + 27;
+}
+
+UINTN
+Test_Fail_Log(IN CONST CHAR8 *ModuleName, IN CONST CHAR8 *TestName)
+{
+	Uart_PutS("[ \x1B[31mTEST FAIL\x1B[0m ] - ", 26);
+	UINTN ModuleNameLen = StrLen(ModuleName);
+	Uart_PutS(ModuleName, ModuleNameLen);
+	Uart_PutS(" ", 1);
+	UINTN TestNameLen = StrLen(TestName);
+	Uart_PutS(TestName, TestNameLen);
+	Uart_PutS("\n", 1);
+	return 1 + TestNameLen + 1 + ModuleNameLen + 25;
 }
 
 VOID Boot_Log_Hex(IN UINT64 Val)
