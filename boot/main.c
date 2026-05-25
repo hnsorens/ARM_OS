@@ -1,4 +1,5 @@
 #include "memory/memory_constants.h"
+#include "modules/elf_loader.h"
 #include <efi.h>
 #include <efilib.h>
 
@@ -42,23 +43,27 @@ VOID Jump_To_Kernel(EFI_VIRTUAL_ADDRESS Entry, EFI_VIRTUAL_ADDRESS BootInfoPtr,
 
 VOID Begin_Kernel(EFI_VIRTUAL_ADDRESS StackBase)
 {
+	Ok_Log("Setting stack pointer\n", 22);
 	asm volatile("mov sp, %0\n\t" // Switch the stack pointer
 		     "mov x29, #0\n\t" // Reset frame pointer for the new stack
 		     :
 		     : "r"(StackBase)
 		     : "sp", "x29", "memory");
 
-	EFI_STATUS Status = InitializeModules(BootInfo);
-	if (EFI_ERROR(Status)) {
-		Fail_Log("Initializing modules\n", 21);
-		Kernel_Panic();
-	}
-	Ok_Log("Initializing modules\n", 21);
+	{
+		Ok_Log("Beginning initialization\n", 25);
+		EFI_STATUS Status = InitializeModules(BootInfo);
+		if (EFI_ERROR(Status)) {
+			Fail_Log("Initializing modules\n", 21);
+			Kernel_Panic();
+		}
+		Ok_Log("Initializing modules\n", 21);
 
-	Ok_Log("Boot successful\n", 16);
+		Ok_Log("Boot successful\n", 16);
 
-	while (1) {
-		__asm__ volatile("wfi");
+		while (1) {
+			__asm__ volatile("wfi");
+		}
 	}
 }
 
@@ -108,6 +113,16 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
 	PAGE_TABLE_T LowerPageTable = 0;
 	PAGE_TABLE_T UpperPageTable = 0;
 
+	// Create an identity map fo HHDM
+	Status = Create_Identity_Page_Table(0x800000000000ULL, SystemTable,
+					    16ULL * 1024ULL * 1024ULL * 1024ULL,
+					    &UpperPageTable);
+	if (EFI_ERROR(Status)) {
+		Fail_Log("Creating upper identity page table\n", 35);
+		return Status;
+	}
+	Ok_Log("Creating upper identity page table\n", 35);
+
 	EFI_VIRTUAL_ADDRESS Entry;
 	Status = Load_Kernel(SystemTable, ImageHandle, Root, L"\\kernel.ini",
 			     &Entry, &UpperPageTable);
@@ -138,8 +153,9 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
 	}
 	Ok_Log("Allocating stack\n", 17);
 
-	Status = Map_Memory(SystemTable, &UpperPageTable, 0xFFFF800000000000,
-			    StackPhysicalAddress, 0, STACK_SIZE_PAGES);
+	Status = Map_Memory(SystemTable, &UpperPageTable,
+			    VIRTUAL_MODULE_LOAD_START, StackPhysicalAddress, 0,
+			    STACK_SIZE_PAGES);
 	if (EFI_ERROR(Status)) {
 		Fail_Log("Mapping stack memory\n", 21);
 		return Status;
@@ -147,7 +163,9 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
 	Ok_Log("Mapping stack memory\n", 21);
 
 	// Create an identity page table for the bottom half of memory
-	Status = Create_Identity_Page_Table(SystemTable, 10, &LowerPageTable);
+	Status = Create_Identity_Page_Table(0, SystemTable,
+					    16UL * 1024UL * 1024UL * 1024UL,
+					    &LowerPageTable);
 	if (EFI_ERROR(Status)) {
 		Fail_Log("Creating lower identity page table\n", 35);
 		return Status;
@@ -183,7 +201,7 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
 	BootInfo->memoryMapSize = MemoryMapRegionsCount;
 	BootInfo->memoryRegions = (MemoryRegion *)MemoryMap;
 
-	Begin_Kernel(0xFFFF800000000000 + (4096 * STACK_SIZE_PAGES));
+	Begin_Kernel(VIRTUAL_MODULE_LOAD_START + (4096 * STACK_SIZE_PAGES));
 
 	while (1) {
 		__asm__ volatile("wfi");

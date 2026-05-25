@@ -1,11 +1,14 @@
 #include "../modules.h"
 
 #include "../../include/api/pmm.h"
+#include "../../include/api/serial_debug.h"
 #include "../boot_info.h"
 
 #include "pmm.h"
 
-#define HHDM_OFFSET 0xFFFF800000000000
+#define HHDM_OFFSET 0xFFFF800000000000UL
+
+IMPORT_INTERFACE_ANY(serial, serial)
 
 int main(boot_info_t *boot_info)
 {

@@ -117,7 +117,7 @@ Load_Elf(IN EFI_SYSTEM_TABLE *SystemTable, IN CHAR8 *ElfBuffer,
 		return EFI_LOAD_ERROR;
 	}
 
-	Link_Elf_Module(LoadOffset + 0xFFFF800000000000, ElfBuffer);
+	Link_Elf_Module(LoadOffset + VIRTUAL_MODULE_LOAD_START, ElfBuffer);
 	LoadOffset += GetElfSpanPages(ElfBuffer) * 4096;
 
 	Elf64_Phdr *Phdr = (Elf64_Phdr *)((UINT8 *)Ehdr + Ehdr->e_phoff);

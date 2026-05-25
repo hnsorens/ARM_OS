@@ -80,7 +80,7 @@ typedef struct PAGE_TABLE_INDICES
 
 // MAIR_EL1 Macros  
 #define MAIR_NORMAL_WB     0xFFUL
-#define MAIR_DEVICE_nGnRE  0x44UL
+#define MAIR_DEVICE_nGnRE  0x04UL
 #define MAIR_IDX_NORMAL    0
 #define MAIR_IDX_DEVICE    1
 #define MAIR_ATTR(attr, idx)   ((attr) << ((idx) * 8))
@@ -110,6 +110,7 @@ Map_Memory(
 
 EFI_STATUS 
 Create_Identity_Page_Table(
+        IN EFI_VIRTUAL_ADDRESS Start,
         IN EFI_SYSTEM_TABLE *SystemTable, 
         IN UINTN TotalMemory,
         OUT PAGE_TABLE_T *PageTable

@@ -194,7 +194,8 @@ Map_Memory(IN EFI_SYSTEM_TABLE *SystemTable, IN PAGE_TABLE_T *PageTable,
 }
 
 EFI_STATUS
-Create_Identity_Page_Table(IN EFI_SYSTEM_TABLE *SystemTable,
+Create_Identity_Page_Table(IN EFI_VIRTUAL_ADDRESS Start,
+			   IN EFI_SYSTEM_TABLE *SystemTable,
 			   IN UINTN TotalMemory, OUT PAGE_TABLE_T *PageTable)
 {
 	EFI_STATUS Status;
@@ -208,6 +209,9 @@ Create_Identity_Page_Table(IN EFI_SYSTEM_TABLE *SystemTable,
 	}
 	Ok_Log("Allocated page table\n", 21);
 	Memset((VOID *)(*PageTable), 0, 4096);
+
+	UINTN BlockStart =
+		Start / (512ULL * 1024ULL * 1024ULL * 1024ULL); // 512 GB
 
 	// Calculate how many 512GB blocks we need
 	UINTN BlocksNeeded = (TotalMemory + 0x7FFFFFFFFFULL) / 0x8000000000ULL;
@@ -227,12 +231,12 @@ Create_Identity_Page_Table(IN EFI_SYSTEM_TABLE *SystemTable,
 		Memset((VOID *)L1, 0, 4096);
 
 		// Set L0 entry to point to L1 table
-		((EFI_PHYSICAL_ADDRESS *)*PageTable)[Block] =
+		((EFI_PHYSICAL_ADDRESS *)*PageTable)[Block + BlockStart] =
 			(UINT64)L1 | ARM_TABLE_DESCRIPTOR;
 
 		// Fill L1 table with 1GB block mappings for identity mapping
 		for (UINT16 L1Entry = 0; L1Entry < 512; ++L1Entry) {
-			UINT64 PhysicalAddress = (Block * 0x8000000000ULL) +
+			UINT64 PhysicalAddress = ((Block) * 0x8000000000ULL) +
 						 (L1Entry * 0x40000000ULL);
 			((EFI_PHYSICAL_ADDRESS *)L1)[L1Entry] =
 				PhysicalAddress | ARM_KERNEL_FLAGS;
