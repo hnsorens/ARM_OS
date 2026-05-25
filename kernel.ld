@@ -1,5 +1,5 @@
-
-ENTRY(_start)
+provider_entry = DEFINED(_start) ? _start : (DEFINED(main) ? main : 0);
+ENTRY(provider_entry)
 
 SECTIONS
 {

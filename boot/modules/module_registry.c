@@ -2,6 +2,7 @@
 
 /* --- Internal Helpers --- */
 
+#include "efierr.h"
 #include "logging/serial.h"
 
 REGISTRY Reg;
@@ -263,6 +264,11 @@ EFI_STATUS InitializeModule(VOID *Data, INSTANCE_ENTRY *Instance, UINTN Depth)
 		return EFI_INVALID_PARAMETER;
 	if (Instance->Initialized)
 		return EFI_SUCCESS;
+	if (Instance->Entry == 0) {
+		Ok_Log("Skipping module initialization\n", 31);
+		Instance->Initialized = TRUE;
+		return EFI_SUCCESS;
+	}
 	EFI_STATUS Status;
 	MODULE_DEPENDENCY *Current = Instance->DependenciesHead;
 	while (Current) {
