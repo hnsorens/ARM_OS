@@ -21,12 +21,12 @@
 
 EXTERN_IMPORT_INTERFACE(pmm, pmm);
 
-static inline u64 *l2v(unsigned long phys)
+static inline u64 *l2v(u64 phys)
 {
 	return (u64 *)(phys + HHDM_OFFSET);
 }
 
-static struct pt_indices extract_indices(unsigned long virt)
+static struct pt_indices extract_indices(u64 virt)
 {
 	struct pt_indices idx;
 
@@ -39,7 +39,7 @@ static struct pt_indices extract_indices(unsigned long virt)
 	return idx;
 }
 
-static bool is_pt_empty(unsigned long pt_phys)
+static bool is_pt_empty(u64 pt_phys)
 {
 	u64 *table = l2v(pt_phys);
 	u64 i;
@@ -59,7 +59,7 @@ static void free_l2_table(u64 *l2)
 
 	for (k = 0; k < 512; k++) {
 		if (pte_valid(l2[k]) && u64able(l2[k]))
-			pmm.free_page(0, l2[k] & PAGE_MASK);
+			pmm.release(l2[k] & PAGE_MASK);
 	}
 }
 
@@ -74,11 +74,11 @@ static void free_l1_table(u64 *l1)
 
 		l2 = l2v(l1[j] & PAGE_MASK);
 		free_l2_table(l2);
-		pmm.free_page(0, l1[j] & PAGE_MASK);
+		pmm.release(l1[j] & PAGE_MASK);
 	}
 }
 
-int pt_free(unsigned long root)
+int pt_free(u64 root)
 {
 	u64 *l0, *l1;
 	u64 i;
@@ -93,10 +93,10 @@ int pt_free(unsigned long root)
 
 		l1 = l2v(l0[i] & PAGE_MASK);
 		free_l1_table(l1);
-		pmm.free_page(0, l0[i] & PAGE_MASK);
+		pmm.release(l0[i] & PAGE_MASK);
 	}
 
-	pmm.free_page(0, root);
+	pmm.release(root);
 	return 0;
 }
 
@@ -112,7 +112,7 @@ static void copy_l3_table(u64 *dst_l3, u64 *src_l3)
 
 static int copy_l2_table(u64 *dst_l2, u64 *src_l2)
 {
-	unsigned long new_l3_phys;
+	u64 new_l3_phys;
 	u64 *src_l3, *dst_l3;
 	u64 k;
 
@@ -138,7 +138,7 @@ static int copy_l2_table(u64 *dst_l2, u64 *src_l2)
 
 static int copy_l1_table(u64 *dst_l1, u64 *src_l1)
 {
-	unsigned long new_l2_phys;
+	u64 new_l2_phys;
 	u64 *src_l2, *dst_l2;
 	u64 j;
 
@@ -165,9 +165,9 @@ static int copy_l1_table(u64 *dst_l1, u64 *src_l1)
 	return 0;
 }
 
-int pt_copy(unsigned long src_root, unsigned long *dst_root)
+int pt_copy(u64 src_root, u64 *dst_root)
 {
-	unsigned long new_l0_phys, new_l1_phys;
+	u64 new_l0_phys, new_l1_phys;
 	u64 *src_l0, *dst_l0, *src_l1, *dst_l1;
 	u64 i;
 
@@ -212,12 +212,12 @@ fail:
 
 /* --- SECTION 3: MAPPING ENGINE OPERATION HELPERS (pt_map) --- */
 
-static int pt_map_single_page(u64 *l0, unsigned long vaddr, unsigned long paddr,
-			      u64 pg_size, enum mmu_flags f)
+static int pt_map_single_page(u64 *l0, u64 vaddr, u64 paddr, u64 pg_size,
+			      enum mmu_flags f)
 {
 	struct pt_indices idx = extract_indices(vaddr);
 	u64 *l1, *l2, *l3;
-	unsigned long tbl_phys;
+	u64 tbl_phys;
 
 	/* Resolve Level 0 -> Level 1 */
 	if (!pte_valid(l0[idx.l0_index])) {
@@ -273,8 +273,8 @@ static int pt_map_single_page(u64 *l0, unsigned long vaddr, unsigned long paddr,
 	return 0;
 }
 
-int pt_map(unsigned long root, unsigned long virt, unsigned long phys,
-	   u64 pg_count, enum page_size pg_size, enum mmu_flags f)
+int pt_map(u64 root, u64 virt, u64 phys, u64 pg_count, enum page_size pg_size,
+	   enum mmu_flags f)
 {
 	u64 *l0;
 	u64 i;
@@ -290,8 +290,8 @@ int pt_map(unsigned long root, unsigned long virt, unsigned long phys,
 	l0 = l2v(root);
 
 	for (i = 0; i < pg_count; i++) {
-		unsigned long curr_v = virt + (i * pg_size);
-		unsigned long curr_p = phys + (i * pg_size);
+		u64 curr_v = virt + (i * pg_size);
+		u64 curr_p = phys + (i * pg_size);
 
 		err = pt_map_single_page(l0, curr_v, curr_p, pg_size, f);
 		if (unlikely(err))
@@ -303,10 +303,10 @@ int pt_map(unsigned long root, unsigned long virt, unsigned long phys,
 
 /* --- SECTION 4: UNMAPPING ENGINE OPERATION HELPERS (pt_unmap) --- */
 
-static void pt_unmap_single_page(u64 *l0, unsigned long vaddr, u64 pg_size)
+static void pt_unmap_single_page(u64 *l0, u64 vaddr, u64 pg_size)
 {
 	struct pt_indices idx = extract_indices(vaddr);
-	unsigned long l1_phys, l2_phys, l3_phys;
+	u64 l1_phys, l2_phys, l3_phys;
 	u64 *l1, *l2, *l3;
 
 	if (!pte_valid(l0[idx.l0_index]))
@@ -338,25 +338,24 @@ static void pt_unmap_single_page(u64 *l0, unsigned long vaddr, u64 pg_size)
 		l3[idx.l3_index] = 0;
 
 	if (is_pt_empty(l3_phys)) {
-		pmm.free_page(0, l3_phys);
+		pmm.release(l3_phys);
 		l2[idx.l2_index] = 0;
 	}
 
 prune_l2:
 	if (is_pt_empty(l2_phys)) {
-		pmm.free_page(0, l2_phys);
+		pmm.release(l2_phys);
 		l1[idx.l1_index] = 0;
 	}
 
 prune_l1:
 	if (is_pt_empty(l1_phys)) {
-		pmm.free_page(0, l1_phys);
+		pmm.release(l1_phys);
 		l0[idx.l0_index] = 0;
 	}
 }
 
-int pt_unmap(unsigned long root, unsigned long virt, u64 pg_count,
-	     enum page_size pg_size)
+int pt_unmap(u64 root, u64 virt, u64 pg_count, enum page_size pg_size)
 {
 	u64 *l0;
 	u64 i;
@@ -374,11 +373,11 @@ int pt_unmap(unsigned long root, unsigned long virt, u64 pg_count,
 
 /* --- SECTION 5: ACCESS ATTRIBUTE MODIFICATION HELPERS (pt_protect) --- */
 
-static int pt_protect_single_page(u64 *l0, unsigned long vaddr, u64 pg_size,
+static int pt_protect_single_page(u64 *l0, u64 vaddr, u64 pg_size,
 				  enum mmu_flags f)
 {
 	struct pt_indices idx = extract_indices(vaddr);
-	unsigned long phys_addr;
+	u64 phys_addr;
 	u64 *l1, *l2, *l3;
 
 	if (!pte_valid(l0[idx.l0_index]))
@@ -419,8 +418,8 @@ static int pt_protect_single_page(u64 *l0, unsigned long vaddr, u64 pg_size,
 	return 0;
 }
 
-int pt_protect(unsigned long root, unsigned long virt, u64 pg_count,
-	       enum page_size pg_size, enum mmu_flags f)
+int pt_protect(u64 root, u64 virt, u64 pg_count, enum page_size pg_size,
+	       enum mmu_flags f)
 {
 	u64 *l0;
 	u64 i;
@@ -451,9 +450,9 @@ int pt_alloc(u64 *out_root)
 	return pmm.alloc_page(0, out_root);
 }
 
-int pt_set_user_ctx(unsigned long root, u16 asid)
+int pt_set_user_ctx(u64 root, u16 asid)
 {
-	unsigned long ttbr = ((u64)asid << 48) | (root & PAGE_MASK);
+	u64 ttbr = ((u64)asid << 48) | (root & PAGE_MASK);
 
 	__asm__ volatile("msr ttbr0_el1, %0\n"
 			 "isb"
@@ -463,9 +462,9 @@ int pt_set_user_ctx(unsigned long root, u16 asid)
 	return 0;
 }
 
-int pt_set_kernel_ctx(unsigned long root, u16 asid)
+int pt_set_kernel_ctx(u64 root, u16 asid)
 {
-	unsigned long ttbr = ((u64)asid << 48) | (root & PAGE_MASK);
+	u64 ttbr = ((u64)asid << 48) | (root & PAGE_MASK);
 
 	__asm__ volatile("msr ttbr1_el1, %0\n"
 			 "isb"
@@ -475,11 +474,10 @@ int pt_set_kernel_ctx(unsigned long root, u16 asid)
 	return 0;
 }
 
-int pt_translate(unsigned long root, unsigned long virt,
-		 unsigned long *phys_out, enum mmu_flags *flags_out)
+int pt_translate(u64 root, u64 virt, u64 *phys_out, enum mmu_flags *flags_out)
 {
 	struct pt_indices idx;
-	unsigned long l1_phys, l2_phys, l3_phys, phys_base;
+	u64 l1_phys, l2_phys, l3_phys, phys_base;
 	u64 *l0, *l1, *l2, *l3;
 
 	if (unlikely(!root || !phys_out || !flags_out))
@@ -554,8 +552,8 @@ int pt_invalidate(u64 virt, u64 pg_count, enum page_size pg_size)
 	}
 
 	for (i = 0; i < pg_count; ++i) {
-		unsigned long target = virt + (i * pg_size);
-		unsigned long val = target >> 12;
+		u64 target = virt + (i * pg_size);
+		u64 val = target >> 12;
 
 		__asm__ volatile("tlbi vale1is, %0" : : "r"(val) : "memory");
 	}

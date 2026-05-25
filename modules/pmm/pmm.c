@@ -170,11 +170,6 @@ void pmm_init(memory_region_t *memory_map, u64 region_count, u64 hhdm_offset)
 			chunk_cursor += allocated_bytes;
 		}
 	}
-
-	for (int i = 0; i < PMM_MAX_ORDER; ++i) {
-		serial.printf("blocks order %d count: %ld\n", i,
-			      g_pmm_allocator.orders[i].block_count);
-	}
 }
 
 /* --- Allocation & Release Operations Implementation --- */
@@ -236,7 +231,7 @@ int pmm_alloc_page(u8 page_order, u64 *out_frame)
 	return ENOMEM;
 }
 
-int pmm_free_page(u8 page_order, u64 frame)
+static int pmm_free_page(u8 page_order, u64 frame)
 {
 	if (page_order >= PMM_MAX_ORDER || (frame % PMM_PAGE_SIZE) != 0)
 		return EINVAL;
@@ -423,27 +418,31 @@ int pmm_alloc_in_range(u64 count, u64 max_addr, u64 *out)
 }
 
 /* --- Reference Counting Engine Routines --- */
-void pmm_retain(u64 frame)
+int pmm_retain(u64 frame)
 {
 	u64 page_idx = u64o_index(frame);
 	if (page_idx >= g_pmm_total_pages || g_pmm_meta_array[page_idx].is_free)
-		return;
+		return EFAULT;
 
 	g_pmm_meta_array[page_idx].ref_count++;
+	return 0;
 }
 
-void pmm_release(u64 frame)
+int pmm_release(u64 frame)
 {
 	u64 page_idx = u64o_index(frame);
 	if (page_idx >= g_pmm_total_pages || g_pmm_meta_array[page_idx].is_free)
-		return;
+		return EFAULT;
 
 	if (g_pmm_meta_array[page_idx].ref_count > 0) {
 		g_pmm_meta_array[page_idx].ref_count--;
 		if (g_pmm_meta_array[page_idx].ref_count == 0) {
-			pmm_free_page(g_pmm_meta_array[page_idx].order, frame);
+			return pmm_free_page(g_pmm_meta_array[page_idx].order,
+					     frame);
 		}
+		return 0;
 	}
+	return EFAULT;
 }
 
 /* --- System Resource Metrics & Statistics Helpers --- */

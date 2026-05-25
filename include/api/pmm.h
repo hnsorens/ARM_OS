@@ -7,7 +7,6 @@ typedef struct pmm_interface
 {
     /* --- Core Allocation --- */
     int (*alloc_page)(u8 page_order, u64 *out_frame);
-    int (*free_page)(u8 page_order, u64 frame);
 
     /* --- The Mandatory Additions --- */
 
@@ -24,8 +23,8 @@ typedef struct pmm_interface
     // 3. Page Reference Counting
     // Critical for "Shared Memory." If two processes use the same physical page,
     // the PMM shouldn't actually free it until BOTH processes are done with it.
-    void (*retain)(u64 frame);
-    void (*release)(u64 frame); // If count hits 0, it calls free_page()
+    int (*retain)(u64 frame);
+    int (*release)(u64 frame); // If count hits 0, it calls free_page()
 
     /* --- Statistics --- */
     u64 (*get_total_memory)(void);

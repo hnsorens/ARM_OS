@@ -246,7 +246,7 @@ int vmm_allocate(u64 root, u64 *vaddr, u64 sz, enum mmu_flags flags,
 		status = mmu.map(root, vma->base + i, phys_page, 1, PS_4KB,
 				 flags);
 		if (status) {
-			pmm.free_page(0, phys_page);
+			pmm.release(phys_page);
 			goto cleanup;
 		}
 	}
@@ -315,7 +315,7 @@ int vmm_free(u64 root, u64 vaddr, u64 sz)
 
 			if (mmu.translate(root, vaddr + i, &phys, &f) == 0) {
 				mmu.unmap(root, vaddr + i, 1, PS_4KB);
-				pmm.free_page(0, phys);
+				pmm.release(phys);
 			}
 		}
 	}
@@ -381,7 +381,7 @@ int vmm_resize(u64 root, u64 vaddr, u64 old_sz, u64 new_sz)
 			enum mmu_flags f = 0;
 			if (mmu.translate(root, vaddr + i, &phys, &f) == 0) {
 				mmu.unmap(root, vaddr + i, 1, PS_4KB);
-				pmm.free_page(0, phys);
+				pmm.release(phys);
 			}
 		}
 		vma->size = new_sz;
@@ -407,7 +407,7 @@ int vmm_resize(u64 root, u64 vaddr, u64 old_sz, u64 new_sz)
 		status = mmu.map(root, vaddr + i, phys_page, 1, PS_4KB,
 				 vma->flags);
 		if (status) {
-			pmm.free_page(0, phys_page);
+			pmm.release(phys_page);
 			goto rollback_expansion;
 		}
 	}
@@ -422,7 +422,7 @@ rollback_expansion:
 		enum mmu_flags f = 0;
 		if (mmu.translate(root, vaddr + undo, &phys, &f) == 0) {
 			mmu.unmap(root, vaddr + undo, 1, PS_4KB);
-			pmm.free_page(0, phys);
+			pmm.release(phys);
 		}
 	}
 	return ENOMEM;

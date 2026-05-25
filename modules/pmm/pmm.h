@@ -39,12 +39,11 @@ void pmm_init(memory_region_t *memory_map, u64 region_count, u64 hhdm_offset);
 
 /* --- High-Level Global Interface Methods --- */
 int pmm_alloc_page(u8 page_order, u64 *out_frame);
-int pmm_free_page(u8 page_order, u64 frame);
 int pmm_alloc_aligned(u64 count, u64 alignment, u64 *out);
 int pmm_alloc_in_range(u64 count, u64 max_addr, u64 *out);
 
-void pmm_retain(u64 frame);
-void pmm_release(u64 frame);
+int pmm_retain(u64 frame);
+int pmm_release(u64 frame);
 
 u64 pmm_get_total_memory(void);
 u64 pmm_get_free_memory(void);
