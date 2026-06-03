@@ -16,6 +16,7 @@ typedef struct vm_area {
     enum mmu_flags      flags;            /* Node architectural MMU permissions */
     enum vmm_region_type type;             /* Memory backing categorization type */
     bool             is_paged;         /* Allocation physical backing state */
+    bool             in_use;
     struct vm_area  *next;             /* Singly linked forward sibling node */
     struct vm_area  *prev;             /* Singly linked reverse sibling node */
 } vm_area_t;
