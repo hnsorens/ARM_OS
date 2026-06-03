@@ -99,7 +99,7 @@ $(IMG): $(BOOTLOADER) $(MODULE_ELFS)
 	done
 
 run: $(IMG)
-	qemu-system-aarch64 -m 16G -cpu cortex-a72 -smp 4 -M virt -d int -accel tcg,thread=multi -bios $(QEMU_FW) \
+	qemu-system-aarch64 -m 16G -cpu cortex-a72 -smp 4 -M virt -accel tcg,thread=multi -bios $(QEMU_FW) \
 		-serial stdio -drive file=$(IMG),format=raw,if=none,id=d0 \
 		-device virtio-blk-device,drive=d0 -mem-prealloc\
 		-gdb tcp::1234

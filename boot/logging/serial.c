@@ -101,6 +101,19 @@ Test_Fail_Log(IN CONST CHAR8 *ModuleName, IN CONST CHAR8 *TestName)
 	return 1 + TestNameLen + 1 + ModuleNameLen + 25;
 }
 
+UINTN
+Test_Skip_Log(IN CONST CHAR8 *ModuleName, IN CONST CHAR8 *TestName)
+{
+	Uart_PutS("[ \x1B[34mTEST SKIP\x1B[0m ] - ", 26);
+	UINTN ModuleNameLen = StrLen(ModuleName);
+	Uart_PutS(ModuleName, ModuleNameLen);
+	Uart_PutS(" \t\t", 3);
+	UINTN TestNameLen = StrLen(TestName);
+	Uart_PutS(TestName, TestNameLen);
+	Uart_PutS("\n", 1);
+	return 1 + TestNameLen + 1 + ModuleNameLen + 25;
+}
+
 VOID Boot_Log_Hex(IN UINT64 Val)
 {
 	CHAR8 HexChars[] = "0123456789ABCDEF";

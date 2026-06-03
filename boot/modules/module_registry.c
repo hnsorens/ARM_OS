@@ -318,8 +318,13 @@ EFI_STATUS InitializeModules(VOID *Data)
 	while (Current) {
 		if (!Current->Entry) {
 			for (INTN I = 0; I < Current->TestCount; ++I) {
-				if (Current->Tests[I].Test()) {
+				INT32 Result = Current->Tests[I].Test();
+				if (Result == 1) {
 					Test_Fail_Log(
+						Current->NameString,
+						Current->Tests[I].TestName);
+				} else if (Result == 2) {
+					Test_Skip_Log(
 						Current->NameString,
 						Current->Tests[I].TestName);
 				} else {

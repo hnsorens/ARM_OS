@@ -171,8 +171,8 @@ int k_slab_alloc(k_slab_cache_t *cache, void **out_obj)
 		s = cache->slabs_empty;
 		move_slab(&cache->slabs_empty, &cache->slabs_partial, s);
 	} else {
-		status = vmm.allocate(cache->root, &vaddr, SLAB_PAGE_SIZE,
-				      MMU_READ | MMU_WRITE, VMM_REGION_HEAP);
+		status = vmm.allocate(cache->root, &vaddr, SLAB_PAGE_SIZE, 0,
+				      VMM_REGION_HEAP);
 		if (status) {
 			goto cleanup;
 		}

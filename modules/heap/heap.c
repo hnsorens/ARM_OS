@@ -92,8 +92,7 @@ int heap_create(u64 root, u64 sz, struct heap_context **out_heap)
 		return ENOMEM;
 
 	/* Ask our underlying VMM to map a completely clear virtual block span context */
-	status = vmm.allocate(root, &vaddr, sz, MMU_READ | MMU_WRITE,
-			      VMM_REGION_HEAP);
+	status = vmm.allocate(root, &vaddr, sz, 0, VMM_REGION_HEAP);
 	if (status)
 		return status;
 

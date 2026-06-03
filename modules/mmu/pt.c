@@ -15,6 +15,8 @@
 #define IS_ALIGNED(x, a) (((x) & ((typeof(x))(a) - 1)) == 0)
 
 #define PTE_FLAGS_MASK 0xFFFF000000000FFFULL
+#define PTE_RETURN_FLAG_MASK \
+	(MMU_RO | MMU_USER | MMU_NO_EXEC | MMU_NOCACHE | MMU_WRITE_THROUGH)
 #define PTE_ADDR_MASK 0x0000FFFFFFFFF000ULL
 #define HHDM_OFFSET 0xFFFF800000000000ULL
 #define TLB_BATCH_THRESHOLD 64
@@ -106,6 +108,7 @@ static void copy_l3_table(u64 *dst_l3, u64 *src_l3)
 {
 	u64 m;
 
+	// Level 3 entries are terminal data pages; copy them exactly as-is
 	for (m = 0; m < 512; m++)
 		dst_l3[m] = src_l3[m];
 }
@@ -120,17 +123,24 @@ static int copy_l2_table(u64 *dst_l2, u64 *src_l2)
 		if (!pte_valid(src_l2[k]))
 			continue;
 
+		// If it's a 2MB huge block mapping, copy it directly (it's terminal data)
 		if (!u64able(src_l2[k])) {
 			dst_l2[k] = src_l2[k];
 			continue;
 		}
 
+		// It's a table pointer; allocate a fresh page for the duplicate tree branch
 		if (unlikely(pmm.alloc_page(0, &new_l3_phys)))
 			return -ENOMEM;
 
-		dst_l2[k] = new_l3_phys | (src_l2[k] & ~PAGE_MASK);
+		// Force a clean table descriptor signature (0x3) without bleeding data flags
+		dst_l2[k] = new_l3_phys | ARM_TABLE_DESCRIPTOR;
+
 		src_l3 = l2v(src_l2[k] & PAGE_MASK);
 		dst_l3 = l2v(new_l3_phys);
+		kmemset(dst_l3, 0,
+			4096); // Always zero memory for newly allocated tables
+
 		copy_l3_table(dst_l3, src_l3);
 	}
 	return 0;
@@ -146,15 +156,19 @@ static int copy_l1_table(u64 *dst_l1, u64 *src_l1)
 		if (!pte_valid(src_l1[j]))
 			continue;
 
+		// If it's a 1GB huge block mapping, copy it directly (it's terminal data)
 		if (!u64able(src_l1[j])) {
 			dst_l1[j] = src_l1[j];
 			continue;
 		}
 
+		// It's a table pointer; allocate a fresh level 2 table page
 		if (unlikely(pmm.alloc_page(0, &new_l2_phys)))
 			return -ENOMEM;
 
-		dst_l1[j] = new_l2_phys | (src_l1[j] & ~PAGE_MASK);
+		// Clean link to the newly allocated physical page frame
+		dst_l1[j] = new_l2_phys | ARM_TABLE_DESCRIPTOR;
+
 		src_l2 = l2v(src_l1[j] & PAGE_MASK);
 		dst_l2 = l2v(new_l2_phys);
 		kmemset(dst_l2, 0, 4096);
@@ -185,15 +199,12 @@ int pt_copy(u64 src_root, u64 *dst_root)
 		if (!pte_valid(src_l0[i]))
 			continue;
 
-		if (!u64able(src_l0[i])) {
-			dst_l0[i] = src_l0[i];
-			continue;
-		}
-
+		// Level 0 entries can ONLY be table descriptors on ARM64 4KB granule
 		if (unlikely(pmm.alloc_page(0, &new_l1_phys)))
 			goto fail;
 
-		dst_l0[i] = new_l1_phys | (src_l0[i] & ~PAGE_MASK);
+		dst_l0[i] = new_l1_phys | ARM_TABLE_DESCRIPTOR;
+
 		src_l1 = l2v(src_l0[i] & PAGE_MASK);
 		dst_l1 = l2v(new_l1_phys);
 		kmemset(dst_l1, 0, 4096);
@@ -233,7 +244,11 @@ static int pt_map_single_page(u64 *l0, u64 vaddr, u64 paddr, u64 pg_size,
 	if (pg_size == PS_1GB) {
 		if (unlikely(pte_valid(l1[idx.l1_index])))
 			return -EEXIST;
-		l1[idx.l1_index] = paddr | f;
+
+		// Clear bits [29:0] of address, force valid bit (0), clear table bit (1)
+		// Then apply user flags cleanly without letting bit 1 break the block layout
+		l1[idx.l1_index] = (paddr & ~0x3FFFFFFF) |
+				   ((f & ~(1ULL << 1)) | 1ULL);
 		return 0;
 	}
 
@@ -251,7 +266,10 @@ static int pt_map_single_page(u64 *l0, u64 vaddr, u64 paddr, u64 pg_size,
 	if (pg_size == PS_2MB) {
 		if (unlikely(pte_valid(l2[idx.l2_index])))
 			return -EEXIST;
-		l2[idx.l2_index] = paddr | f;
+
+		// Clear bits [20:0] of address, force valid bit (0), clear table bit (1)
+		l2[idx.l2_index] = (paddr & ~0x1FFFFF) |
+				   ((f & ~(1ULL << 1)) | 1ULL);
 		return 0;
 	}
 
@@ -269,7 +287,8 @@ static int pt_map_single_page(u64 *l0, u64 vaddr, u64 paddr, u64 pg_size,
 	if (unlikely(pte_valid(l3[idx.l3_index])))
 		return -EEXIST;
 
-	l3[idx.l3_index] = paddr | f | ARM_PAGE_DESCRIPTOR;
+	// 4KB Pages require both Bit 0 and Bit 1 to be 1
+	l3[idx.l3_index] = (paddr & PAGE_MASK) | f | ARM_PAGE_DESCRIPTOR;
 	return 0;
 }
 
@@ -447,7 +466,10 @@ int pt_alloc(u64 *out_root)
 	if (unlikely(!out_root))
 		return -EINVAL;
 
-	return pmm.alloc_page(0, out_root);
+	int status = pmm.alloc_page(0, out_root);
+	kmemset((void *)*out_root, 0, 4096);
+
+	return status;
 }
 
 int pt_set_user_ctx(u64 root, u16 asid)
@@ -492,34 +514,42 @@ int pt_translate(u64 root, u64 virt, u64 *phys_out, enum mmu_flags *flags_out)
 	l1_phys = l0[idx.l0_index] & PAGE_MASK;
 	l1 = l2v(l1_phys);
 
+	if (!pte_valid(l1[idx.l1_index]))
+		return -EFAULT;
+
+	// 1GB Block Translation
 	if (!(l1[idx.l1_index] & (1ULL << 1))) {
-		if (!pte_valid(l1[idx.l1_index]))
-			return -EFAULT;
 		phys_base = l1[idx.l1_index] & ~0x3FFFFFFF;
 		*phys_out = phys_base + (virt & 0x3FFFFFFF);
-		*flags_out = l1[idx.l1_index] & PTE_FLAGS_MASK;
+		*flags_out = l1[idx.l1_index] & PTE_RETURN_FLAG_MASK;
 		return 0;
 	}
 
 	l2_phys = l1[idx.l1_index] & PAGE_MASK;
 	l2 = l2v(l2_phys);
 
+	if (!pte_valid(l2[idx.l2_index]))
+		return -EFAULT;
+
+	// 2MB Block Translation
 	if (!(l2[idx.l2_index] & (1ULL << 1))) {
-		if (!pte_valid(l2[idx.l2_index]))
-			return -EFAULT;
 		phys_base = l2[idx.l2_index] & ~0x1FFFFF;
 		*phys_out = phys_base + (virt & 0x1FFFFF);
-		*flags_out = l2[idx.l2_index] & PTE_FLAGS_MASK;
+		*flags_out = l2[idx.l2_index] & PTE_RETURN_FLAG_MASK;
 		return 0;
 	}
 
 	l3_phys = l2[idx.l2_index] & PAGE_MASK;
 	l3 = l2v(l3_phys);
 
+	if (!pte_valid(l3[idx.l3_index]))
+		return -EFAULT;
+
+	// 4KB Page Translation
 	if (l3[idx.l3_index] & ARM_PAGE_DESCRIPTOR) {
 		phys_base = l3[idx.l3_index] & PAGE_MASK;
 		*phys_out = phys_base + idx.offset;
-		*flags_out = l3[idx.l3_index] & PTE_FLAGS_MASK;
+		*flags_out = l3[idx.l3_index] & PTE_RETURN_FLAG_MASK;
 		return 0;
 	}
 

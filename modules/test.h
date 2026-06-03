@@ -4,7 +4,7 @@
 typedef int (*kernel_test_func_t)(void);
 
 struct kernel_test_entry {
-    const char* test_name;          // Stores the readable name string
+    const char* test_name;         // Stores the readable name string
     kernel_test_func_t function;   // Stores the execution address
 };
 
@@ -24,7 +24,9 @@ struct kernel_test_entry {
 #define TEST_INIT() int __test_status = 0
 
 // Core return macro: use this at the end of your test function
-#define TEST_RESULT() return __test_status
+#define TEST_RESULT() return __test_status;
+
+#define TEST_SKIP() return 2;
 
 // Internal failure handler to keep the macros clean
 #define _TEST_FAIL_MSG(fmt, ...) do { \
@@ -50,6 +52,26 @@ struct kernel_test_entry {
     __typeof__(expected) _exp = (expected); \
     if (_act == _exp) { \
         _TEST_FAIL_MSG("%s:%d: Expected %s (%ld) != %s (%ld)", \
+                       __FILE__, __LINE__, #actual, (long)_act, #expected, (long)_exp); \
+    } \
+} while(0)
+
+// Expects A < B (Less Than)
+#define EXPECT_LT(actual, expected) do { \
+    __typeof__(actual) _act = (actual); \
+    __typeof__(expected) _exp = (expected); \
+    if (!(_act < _exp)) { \
+        _TEST_FAIL_MSG("%s:%d: Expected %s (%ld) < %s (%ld)", \
+                       __FILE__, __LINE__, #actual, (long)_act, #expected, (long)_exp); \
+    } \
+} while(0)
+
+// Expects A <= B (Less Than or Equal To)
+#define EXPECT_LE(actual, expected) do { \
+    __typeof__(actual) _act = (actual); \
+    __typeof__(expected) _exp = (expected); \
+    if (!(_act <= _exp)) { \
+        _TEST_FAIL_MSG("%s:%d: Expected %s (%ld) <= %s (%ld)", \
                        __FILE__, __LINE__, #actual, (long)_act, #expected, (long)_exp); \
     } \
 } while(0)

@@ -5,12 +5,18 @@
 
 enum mmu_flags
 {
-    MMU_READ          = (1 << 0),
-    MMU_WRITE         = (1 << 1),
-    MMU_EXEC          = (1 << 2),
-    MMU_USER          = (1 << 3),
-    MMU_NOCACHE       = (1 << 4),
-    MMU_WRITE_THROUGH = (1 << 5),
+    // If this bit is 0, the page is Read/Write. If the user passes MMU_RO, it sets Bit 7 to 1 (Read-Only).
+    MMU_RO            = (1ULL << 7),  
+    
+    // Maps directly to AP[1] (Bit 6). 1 = User space accessible, 0 = Kernel only.
+    MMU_USER          = (1ULL << 6),  
+
+    // Maps directly to UXN (Unprivileged Execute Never - Bit 54)
+    MMU_NO_EXEC       = (1ULL << 54), 
+
+    // Bits 2-4 select the MAIR (Memory Attribute Indirection Register) cache profiles
+    MMU_NOCACHE       = (1ULL << 2),  // Points to MAIR slot 1 (Device memory)
+    MMU_WRITE_THROUGH = (2ULL << 2),  // Points to MAIR slot 2 (Write-Through)
 };
 
 enum page_size
