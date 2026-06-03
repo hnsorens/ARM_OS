@@ -33,12 +33,13 @@ K_LDFLAGS   = -static -T kernel.ld -nostdlib --emit-relocs
 BOOT_SRCS   := $(shell find boot -name '*.c' 2>/dev/null)
 BOOT_OBJS   := $(patsubst boot/%.c, $(BUILD_DIR)/boot/%.o, $(BOOT_SRCS))
 
-MODULE_DIRS := $(wildcard modules/*/)
+MODULE_DIRS  := $(wildcard modules/*/)
 MODULE_NAMES := $(patsubst modules/%/,%,$(MODULE_DIRS))
-MODULE_ELFS := $(patsubst %, $(BUILD_DIR)/modules/%.elf, $(MODULE_NAMES))
+MODULE_ELFS  := $(patsubst %, $(BUILD_DIR)/modules/%.elf, $(MODULE_NAMES))
 
 .PHONY: all clean run dirs
 
+# The @ at the start of recipes keeps them silent unless we print explicit status lines
 all: dirs $(BOOTLOADER) $(MODULE_ELFS) $(IMG)
 
 dirs:
@@ -50,30 +51,31 @@ dirs:
 
 $(BUILD_DIR)/boot/%.o: boot/%.c
 	@mkdir -p $(dir $@)
-	clang-format -i $<
-	$(CLANG) $(EFI_CFLAGS) -Iboot $< -o $@
+	@clang-format -i $<
+	@echo "  CC      [boot]    $<"
+	@$(CLANG) $(EFI_CFLAGS) -Iboot $< -o $@
 
 $(BOOTLOADER): $(BOOT_OBJS)
-	@echo "Linking Bootloader: $@"
-	$(CLANG) $(EFI_LDFLAGS) $(BOOT_OBJS) -o $@
+	@echo "  LD      [boot]    $(BOOTLOADER)"
+	@$(CLANG) $(EFI_LDFLAGS) $(BOOT_OBJS) -o $@
 
-# --- 2. Modules Build Rules (Corrected Template) ---
+# --- 2. Modules Build Rules Template ---
 
 define MODULE_RULE
-# Define local variables for this specific module
-$(1)_SRC_FILES := $(shell find modules/$(1) -name '*.c' 2>/dev/null)
-$(1)_OBJ_FILES := $$(patsubst modules/$(1)/%.c, $(BUILD_DIR)/modules/$(1)/%.o, $$($(1)_SRC_FILES))
+$(1)_SRC_FILES := $$(shell find modules/$(1) -name '*.c' 2>/dev/null)
+$(1)_OBJ_FILES := $$(patsubst modules/$(1)/%.c, $$(BUILD_DIR)/modules/$(1)/%.o, $$($(1)_SRC_FILES))
 
 # Rule to link the ELF from the object files
-$(BUILD_DIR)/modules/$(1).elf: $$($(1)_OBJ_FILES)
-	@echo "Linking Module ELF: $(1)"
-	$(LD) $(K_LDFLAGS) $$^ -o $$@
+$$(BUILD_DIR)/modules/$(1).elf: $$($(1)_OBJ_FILES)
+	@echo "  MOD_LD  [$(1)]    $$(BUILD_DIR)/modules/$(1).elf"
+	@$$(LD) $$(K_LDFLAGS) $$^ -o $$@
 
 # Rule to compile the source files into object files
-$(BUILD_DIR)/modules/$(1)/%.o: modules/$(1)/%.c
+$$(BUILD_DIR)/modules/$(1)/%.o: modules/$(1)/%.c
 	@mkdir -p $$(dir $$@)
-	clang-format -i $$<
-	$(CC) $(KFLAGS) -Imodules/$(1) $$< -o $$@
+	@clang-format -i $$<
+	@echo "  CC      [$(1)]    $$<"
+	@$$(CC) $$(KFLAGS) -Imodules/$(1) $$< -o $$@
 endef
 
 # Apply the template for every module folder
@@ -82,27 +84,29 @@ $(foreach mod,$(MODULE_NAMES),$(eval $(call MODULE_RULE,$(mod))))
 # --- 3. Disk Image Creation ---
 
 $(IMG): $(BOOTLOADER) $(MODULE_ELFS)
-	@echo "Building Disk Image: $(IMG)"
+	@echo "  IMAGE   Generating $(IMG)..."
 	@rm -f $(IMG)
-	truncate -s 128M $(IMG)
-	sgdisk -o $(IMG)
-	sgdisk -n 1:2048:262110 -t 1:ef00 $(IMG)
-	mformat -i $(IMG)@@1M -F -H 2048 -c 1 -v "ESP" ::
-	mmd -i $(IMG)@@1M ::/EFI
-	mmd -i $(IMG)@@1M ::/EFI/BOOT
-	mmd -i $(IMG)@@1M ::/modules
-	mcopy -i $(IMG)@@1M $(BOOTLOADER) ::/EFI/BOOT/BOOTAA64.EFI
-	if [ -f $(KERNEL_INI) ]; then mcopy -i $(IMG)@@1M $(KERNEL_INI) ::/kernel.ini; fi
+	@truncate -s 128M $(IMG) > /dev/null 2>&1
+	@sgdisk -o $(IMG) > /dev/null 2>&1
+	@sgdisk -n 1:2048:262110 -t 1:ef00 $(IMG) > /dev/null 2>&1
+	@mformat -i $(IMG)@@1M -F -H 2048 -c 1 -v "ESP" :: > /dev/null 2>&1
+	@mmd -i $(IMG)@@1M ::/EFI > /dev/null 2>&1
+	@mmd -i $(IMG)@@1M ::/EFI/BOOT > /dev/null 2>&1
+	@mmd -i $(IMG)@@1M ::/modules > /dev/null 2>&1
+	@mcopy -i $(IMG)@@1M $(BOOTLOADER) ::/EFI/BOOT/BOOTAA64.EFI > /dev/null 2>&1
+	@if [ -f $(KERNEL_INI) ]; then mcopy -i $(IMG)@@1M $(KERNEL_INI) ::/kernel.ini > /dev/null 2>&1; fi
 	@for mod in $(MODULE_ELFS); do \
-		echo "Adding module: $$mod"; \
-		mcopy -i $(IMG)@@1M $$mod ::/modules/; \
+		mcopy -i $(IMG)@@1M $$mod ::/modules/ > /dev/null 2>&1; \
 	done
+	@echo "  READY   $(IMG) is built successfully."
 
 run: $(IMG)
-	qemu-system-aarch64 -m 16G -cpu cortex-a72 -smp 4 -M virt -accel tcg,thread=multi -bios $(QEMU_FW) \
-		-serial stdio -drive file=$(IMG),format=raw,if=none,id=d0 \
-		-device virtio-blk-device,drive=d0 -mem-prealloc\
-		-gdb tcp::1234
+	@echo "  QEMU    Launching virtual machine..."
+	@qemu-system-aarch64 -m 16G -cpu cortex-a72 -smp 4 -M virt -accel tcg,thread=multi -bios $(QEMU_FW) \
+	    -serial stdio -drive file=$(IMG),format=raw,if=none,id=d0 \
+	    -device virtio-blk-device,drive=d0 -mem-prealloc \
+	    -gdb tcp::1234
 
 clean:
-	rm -rf $(BUILD_DIR) $(IMG)
+	@echo "  CLEAN   Removing target build trees..."
+	@rm -rf $(BUILD_DIR) $(IMG)

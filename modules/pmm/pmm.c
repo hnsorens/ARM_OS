@@ -66,8 +66,6 @@ void pmm_init(memory_region_t *memory_map, u64 region_count, u64 hhdm_offset)
 	g_pmm_hhdm_offset = hhdm_offset;
 	u64 highest_address = 0;
 
-	serial.printf("Beginning pmm Initialization\n");
-
 	for (u64 i = 0; i < region_count; i++) {
 		u64 end_addr = memory_map[i].start +
 			       (memory_map[i].size * PMM_PAGE_SIZE);
@@ -76,14 +74,10 @@ void pmm_init(memory_region_t *memory_map, u64 region_count, u64 hhdm_offset)
 		}
 	}
 
-	serial.printf("Finished finding highest address\n");
-
 	g_pmm_total_pages = highest_address / PMM_PAGE_SIZE;
 	u64 meta_array_size = g_pmm_total_pages * sizeof(pmm_page_meta_t);
 	u64 meta_pages_needed =
 		(meta_array_size + PMM_PAGE_SIZE - 1) / PMM_PAGE_SIZE;
-
-	serial.printf("Calculated total pages\n");
 
 	/* Secure space for the global allocation array inside a free block */
 	u64 meta_phys_alloc_start = 0;
@@ -99,19 +93,11 @@ void pmm_init(memory_region_t *memory_map, u64 region_count, u64 hhdm_offset)
 		}
 	}
 
-	serial.printf("Allocate global allocation array %lx\n",
-		      meta_phys_alloc_start);
-
 	g_pmm_meta_array = (pmm_page_meta_t *)u64o_kv(meta_phys_alloc_start);
-
-	serial.printf("Got pmm meta %lx %lx, %ld\n", g_pmm_meta_array,
-		      g_pmm_total_pages, sizeof(pmm_page_meta_t));
 
 	/* Pre-initialize physical page frame descriptor limits */
 	kmemset(g_pmm_meta_array, 0,
 		sizeof(pmm_page_meta_t) * g_pmm_total_pages);
-
-	serial.printf("Initialized pmm meta array\n");
 
 	for (u8 o = 0; o < PMM_MAX_ORDER; o++) {
 		g_pmm_allocator.orders[o].head = NULL;
