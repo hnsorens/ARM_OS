@@ -496,6 +496,24 @@ int pt_set_kernel_ctx(u64 root, u16 asid)
 	return 0;
 }
 
+int pt_get_user_ctx(u64 *root)
+{
+	u64 ttbr0;
+	// Read Translation Table Base Register 0 for Exception Level 1 (User)
+	__asm__ volatile("mrs %0, ttbr0_el1" : "=r"(ttbr0));
+	*root = ttbr0 & PAGE_MASK;
+	return 0;
+}
+
+int pt_get_kernel_ctx(u64 *root)
+{
+	u64 ttbr1;
+	// Read Translation Table Base Register 1 for Exception Level 1 (Kernel)
+	__asm__ volatile("mrs %0, ttbr1_el1" : "=r"(ttbr1));
+	*root = ttbr1 & PAGE_MASK;
+	return 0;
+}
+
 int pt_translate(u64 root, u64 virt, u64 *phys_out, enum mmu_flags *flags_out)
 {
 	struct pt_indices idx;

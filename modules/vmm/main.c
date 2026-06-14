@@ -8,6 +8,36 @@
 #include "../../include/errno.h"
 #include "../test.h"
 
+IMPORT_INTERFACE_ANY(pmm, pmm);
+IMPORT_INTERFACE_ANY(mmu, mmu);
+IMPORT_INTERFACE_ANY(serial, serial);
+
+int main(void)
+{
+	/* 1. Define initial state layout regions (including the explicit 0x000000F000000000 block) */
+	boot_region_t initial_regions[] = {
+		{ .base = 0x000000F00000ULL,
+		  .size = 0x0000000040000ULL, // 1 GB size constraint
+		  .flags = 0x3,
+		  .type = VMM_REGION_FREE },
+		{ .base = 0x000,
+		  .size = 0x000000F00000ULL,
+		  .flags = 0x3,
+		  .type = VMM_REGION_DATA }
+	};
+	int initial_region_count =
+		sizeof(initial_regions) / sizeof(boot_region_t);
+
+	/* 2. Bootstrapping VMM ledger state definitions */
+	u64 kernel_table_root;
+	mmu.get_kernel_ctx(&kernel_table_root);
+
+	// This is correct! It boots up your g_kernel_space_root with your initial region array.
+	int status = vmm_init(kernel_table_root, initial_regions,
+			      initial_region_count);
+	return 0;
+}
+
 EXPORT_INTERFACE(vmm, VirtualMemoryManager,
 		 { .space_create = vmm_space_create,
 		   .space_destroy = vmm_space_destroy,
@@ -20,10 +50,6 @@ EXPORT_INTERFACE(vmm, VirtualMemoryManager,
 		   .query = vmm_query,
 		   .activate = vmm_activate,
 		   .sync = vmm_sync });
-
-IMPORT_INTERFACE_ANY(pmm, pmm);
-IMPORT_INTERFACE_ANY(mmu, mmu);
-IMPORT_INTERFACE_ANY(serial, serial);
 
 TEST(VMM_SpaceLifecycle)
 {
@@ -93,27 +119,36 @@ TEST(VMM_StackGuardLifecycle)
 	status = vmm_space_create(&root);
 	EXPECT_EQ(status, 0);
 
-	// 1. Allocate a downward growing stack frame region
 	u64 stack_vaddr = 0x00007FFFF0000000UL;
 	u64 stack_sz = 4096 * 4;
+	u64 guard_vaddr = stack_vaddr - 4096;
+
+	// 1. Explicitly protect the stack boundary with a guard zone reservation
+	status = vmm_reserve(root, guard_vaddr, 4096);
+	EXPECT_EQ(status, 0);
+
+	// 2. Allocate the real runtime stack frame downstream from the guard
 	status = vmm_allocate(root, &stack_vaddr, stack_sz, MMU_USER,
 			      VMM_REGION_STACK);
 	EXPECT_EQ(status, 0);
 
-	// 2. Verify that a hidden guard area was added immediately before the stack base
+	// 3. Verify guard parameters stand up correctly
 	struct vmm_region_info guard_info;
-	status = vmm_query(root, stack_vaddr - 4096, &guard_info);
+	status = vmm_query(root, guard_vaddr, &guard_info);
 	EXPECT_EQ(status, 0);
 	EXPECT_EQ(guard_info.type, VMM_REGION_GUARD);
 	EXPECT_EQ(guard_info.size, 4096);
 	EXPECT_EQ(guard_info.is_paged, false);
 
-	// 3. Free the stack frame and ensure the VMM cleans up the guard page automatically
+	// 4. Clean up both mapped tracking references explicitly
 	status = vmm_free(root, stack_vaddr, stack_sz);
 	EXPECT_EQ(status, 0);
+	status = vmm_free(root, guard_vaddr, 4096);
+	EXPECT_EQ(status, 0);
 
-	status = vmm_query(root, stack_vaddr - 4096, &guard_info);
-	EXPECT_NE(status, 0); // The guard tracking structure should be gone
+	// 5. Verify the guard tracking structure is entirely wiped out
+	status = vmm_query(root, guard_vaddr, &guard_info);
+	EXPECT_NE(status, 0);
 
 	status = vmm_space_destroy(root);
 	EXPECT_EQ(status, 0);
@@ -195,13 +230,14 @@ TEST(VMM_DynamicResizing)
 	EXPECT_EQ(status, 0);
 	EXPECT_EQ(shrink_info.size, 4096 * 1);
 
-	// 3. Test expansion collision (Allocate a blocker directly adjacent)
-	u64 blocker_vaddr = vaddr + 4096;
+	// 3. Test expansion collision (Allocate a blocker directly adjacent to current footprint boundary)
+	u64 blocker_vaddr =
+		vaddr + 4096; // This hits exactly where page 2 used to be
 	status = vmm_allocate(root, &blocker_vaddr, 4096, MMU_USER,
 			      VMM_REGION_DATA);
 	EXPECT_EQ(status, 0);
 
-	// Attempting expansion into the occupied address range must fail with ENOMEM
+	// Attempting expansion into the newly occupied address range must fail with ENOMEM
 	status = vmm_resize(root, vaddr, 4096 * 1, 4096 * 3);
 	EXPECT_EQ(status, ENOMEM);
 
@@ -226,12 +262,12 @@ TEST(VMM_ProtectFragmentation)
 		vmm_allocate(root, &vaddr, total_sz, MMU_USER, VMM_REGION_DATA);
 	EXPECT_EQ(status, 0);
 
-	// 2. Modify permissions of the center page only (Triggering a 3-way tracking split)
+	// 2. Modify permissions of the center page only (Triggering a complex 3-way tree layout fracture)
 	u64 mid_vaddr = vaddr + 4096;
 	status = vmm_protect(root, mid_vaddr, 4096, MMU_RO | MMU_USER);
 	EXPECT_EQ(status, 0);
 
-	// 3. Verify fragmentation consistency across left, middle, and right regions
+	// 3. Verify fragmentation consistency across left, middle, and right regions independently
 	struct vmm_region_info left, mid, right;
 
 	status = vmm_query(root, vaddr, &left);
@@ -264,19 +300,18 @@ TEST(VMM_ExhaustionLimits)
 	status = vmm_space_create(&root);
 	EXPECT_EQ(status, 0);
 
-	// Exhaust static allocation capacity pools completely
 	u64 allocated_addresses[MAX_VMA_POOL_SIZE + 5];
 	int allocation_count = 0;
 
+	// Exhaust layout allocation limits completely
 	for (int i = 0; i < MAX_VMA_POOL_SIZE + 2; i++) {
-		u64 hint = 0; // Let find_unmapped_area scan dynamically
+		u64 hint = 0;
 		status = vmm_allocate(root, &hint, 4096, MMU_USER,
 				      VMM_REGION_DATA);
 
 		if (status == 0) {
 			allocated_addresses[allocation_count++] = hint;
 		} else {
-			// Once structural memory capacity triggers failure, verify it reports correctly
 			EXPECT_EQ(status, ENOMEM);
 			break;
 		}

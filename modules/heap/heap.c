@@ -2,17 +2,14 @@
 #include "../utils.h"
 #include "../modules.h"
 #include "../../include/api/vmm.h"
+#include "../../include/api/serial_debug.h"
 #include "../../include/errno.h"
 
 EXTERN_IMPORT_INTERFACE(vmm, vmm);
+EXTERN_IMPORT_INTERFACE(serial, serial);
 
-#define MAX_HEAP_INSTANCES 16
-
-/* --- Internal Core Heap State Engine Containers --- */
-static struct heap_context s_heap_instances[MAX_HEAP_INSTANCES];
-
-/* Alignment utility macros safeguarding native pointer width tracking configurations */
-#define HEAP_ALIGN(x) (((x) + (sizeof(void *) - 1)) & ~(sizeof(void *) - 1))
+/* Enforce strict 16-byte architecture alignment safety loops */
+#define HEAP_ALIGN(x) (((x) + 15) & ~15)
 #define BLOCK_HEADER_SIZE HEAP_ALIGN(sizeof(struct heap_block))
 #define CONTEXT_SIZE HEAP_ALIGN(sizeof(struct heap_context))
 
@@ -26,8 +23,10 @@ static void split_block(struct heap_block *block, u64 size)
 		return;
 	}
 
-	new_block = (struct heap_block *)((uintptr_t)block + BLOCK_HEADER_SIZE +
-					  size);
+	/* Enforce explicit byte positioning for the split block */
+	uintptr_t new_block_addr = (uintptr_t)block + BLOCK_HEADER_SIZE + size;
+	new_block = (struct heap_block *)new_block_addr;
+
 	new_block->magic = HEAP_MAGIC_FREE;
 	new_block->is_free = true;
 	new_block->size = rem_size - BLOCK_HEADER_SIZE;
@@ -74,40 +73,39 @@ static void coalesce_blocks(struct heap_block *block)
 int heap_create(u64 root, u64 sz, struct heap_context **out_heap)
 {
 	int status;
-	u64 vaddr = 0;
-	struct heap_context *heap_slot = NULL;
+	u64 vaddr = 0xFFFF800400000000ULL;
+	struct heap_context *heap_slot;
 	struct heap_block *root_block;
 
-	if (!root || sz <= (BLOCK_HEADER_SIZE + CONTEXT_SIZE) || !out_heap)
+	if (!root || !out_heap)
 		return EINVAL;
 
-	/* Find a vacant structural context tracking card frame slot */
-	for (u64 i = 0; i < MAX_HEAP_INSTANCES; i++) {
-		if (s_heap_instances[i].vaddr_base == 0) {
-			heap_slot = &s_heap_instances[i];
-			break;
-		}
-	}
-	if (!heap_slot)
-		return ENOMEM;
+	// Ensure the requested size can easily hold the context header, the first block header, and baseline data
+	sz += CONTEXT_SIZE + BLOCK_HEADER_SIZE;
+	sz = (sz + (4096 - 1)) & ~(4096 - 1);
 
-	/* Ask our underlying VMM to map a completely clear virtual block span context */
-	status = vmm.allocate(root, &vaddr, sz, 0, VMM_REGION_HEAP);
+	/* Ask underlying VMM to allocate the raw page block */
+	status = vmm.allocate(root, &vaddr, sz, 0x3, VMM_REGION_HEAP);
 	if (status)
 		return status;
 
-	sz = (sz + (4096 - 1)) & ~(4096 - 1);
+	/* Calculate addresses explicitly using raw integer bytes to prevent scaling issues */
+	uintptr_t base_address = (uintptr_t)vaddr;
+	uintptr_t root_block_address = base_address + CONTEXT_SIZE;
 
+	/* Self-Bootstrap: Place the context struct cleanly at the virtual address base */
+
+	heap_slot = (struct heap_context *)base_address;
 	heap_slot->vmm_root = root;
 	heap_slot->vaddr_base = vaddr;
 	heap_slot->total_size = sz;
 	heap_slot->used_size = 0;
 
-	/* Carve out the baseline internal free chunk tracker across the remaining mapped block layout */
-	root_block = (struct heap_block *)vaddr;
+	/* Place the initial root block strictly past the context layout structure boundary */
+	root_block = (struct heap_block *)root_block_address;
 	root_block->magic = HEAP_MAGIC_FREE;
 	root_block->is_free = true;
-	root_block->size = sz - BLOCK_HEADER_SIZE;
+	root_block->size = sz - CONTEXT_SIZE - BLOCK_HEADER_SIZE;
 	root_block->next = NULL;
 	root_block->prev = NULL;
 
@@ -120,18 +118,10 @@ int heap_create(u64 root, u64 sz, struct heap_context **out_heap)
 /* Completely dismantles a heap instance, releasing its virtual memory range back to the VMM */
 int heap_destroy(struct heap_context *heap)
 {
-	int status;
-
 	if (!heap || heap->vaddr_base == 0)
 		return EINVAL;
 
-	/* Clear virtual mapping directories and reclaim back physical context page tracking nodes */
-	status = vmm.free(heap->vmm_root, heap->vaddr_base, heap->total_size);
-	if (status)
-		return status;
-
-	kmemset(heap, 0, sizeof(struct heap_context));
-	return 0;
+	return vmm.free(heap->vmm_root, heap->vaddr_base, heap->total_size);
 }
 
 /* Allocates an arbitrary sequential chunk of byte-level payload space from a specific heap */
@@ -150,7 +140,7 @@ int heap_malloc(struct heap_context *heap, u64 size, void **out_ptr)
 	aligned_size = HEAP_ALIGN(size);
 	curr = heap->head;
 
-	/* First-fit allocation strategy block search loop tied to this heap instance context */
+	/* First-fit allocation strategy block search loop */
 	while (curr) {
 		if (curr->is_free && curr->size >= aligned_size) {
 			split_block(curr, aligned_size);
@@ -173,16 +163,15 @@ int heap_free(struct heap_context *heap, void *ptr)
 {
 	struct heap_block *block;
 
-	if (!heap)
-		return EINVAL;
-	if (!ptr)
-		return 0;
+	if (!heap || !ptr)
+		return (!heap) ? EINVAL : 0;
 
 	block = (struct heap_block *)((uintptr_t)ptr - BLOCK_HEADER_SIZE);
 
 	/* Anti-corruption security sanity checks */
-	if (block->magic != HEAP_MAGIC_ALLOCATED)
+	if (block->magic != HEAP_MAGIC_ALLOCATED) {
 		return EINVAL;
+	}
 
 	block->is_free = true;
 	block->magic = HEAP_MAGIC_FREE;
@@ -219,10 +208,11 @@ int heap_realloc(struct heap_context *heap, void *ptr, u64 new_size,
 	block = (struct heap_block *)((uintptr_t)ptr - BLOCK_HEADER_SIZE);
 	aligned_size = HEAP_ALIGN(new_size);
 
-	if (block->magic != HEAP_MAGIC_ALLOCATED)
+	if (block->magic != HEAP_MAGIC_ALLOCATED) {
 		return EINVAL;
+	}
 
-	/* If current block satisfies boundaries already, check if we can reuse or downsize it */
+	/* If current block satisfies boundaries already, reuse or downsize it */
 	if (block->size >= aligned_size) {
 		split_block(block, aligned_size);
 		*out_ptr = ptr;
@@ -265,66 +255,104 @@ int heap_realloc(struct heap_context *heap, void *ptr, u64 new_size,
 int heap_memalign(struct heap_context *heap, u64 alignment, u64 size,
 		  void **out_ptr)
 {
-	u64 raw_size;
-	void *raw_ptr;
-	uintptr_t raw_addr;
-	uintptr_t aligned_addr;
-	u64 adjustment;
-	int status;
-	struct heap_block *raw_block;
-	struct heap_block *aligned_block;
+	struct heap_block *curr;
+	u64 aligned_size;
 
 	if (!heap || !out_ptr)
 		return EINVAL;
 
-	/* Enforce binary power-of-two constraints configuration limits */
-	if ((alignment & (alignment - 1)) != 0 || alignment == 0)
+	/* Enforce strict power-of-two mask validations */
+	if (alignment == 0 || (alignment & (alignment - 1)) != 0)
 		return EINVAL;
-	if (alignment < sizeof(void *))
-		return heap_malloc(heap, size, out_ptr);
 
-	/* Allocate excess pad overhead space to shift within requested alignment boundaries */
-	raw_size = size + alignment + BLOCK_HEADER_SIZE;
-	status = heap_malloc(heap, raw_size, &raw_ptr);
-	if (status)
-		return status;
+	if (alignment < 16)
+		alignment = 16;
 
-	raw_addr = (uintptr_t)raw_ptr;
-	aligned_addr = (raw_addr + BLOCK_HEADER_SIZE + alignment - 1) &
-		       ~(alignment - 1);
-	adjustment = aligned_addr - raw_addr;
-
-	if (adjustment == 0) {
-		*out_ptr = raw_ptr;
+	if (size == 0) {
+		*out_ptr = NULL;
 		return 0;
 	}
 
-	/* Trace original tracked structure layout offsets and split alignment headers */
-	raw_block = (struct heap_block *)(raw_addr - BLOCK_HEADER_SIZE);
-	heap->used_size -= (BLOCK_HEADER_SIZE + raw_block->size);
+	aligned_size = HEAP_ALIGN(size);
+	curr = heap->head;
 
-	aligned_block = (struct heap_block *)(aligned_addr - BLOCK_HEADER_SIZE);
-	aligned_block->magic = HEAP_MAGIC_ALLOCATED;
-	aligned_block->is_free = false;
-	aligned_block->size = raw_block->size - adjustment;
-	aligned_block->next = raw_block->next;
-	aligned_block->prev = raw_block;
+	while (curr) {
+		if (curr->is_free) {
+			uintptr_t raw_payload_addr =
+				(uintptr_t)curr + BLOCK_HEADER_SIZE;
+			uintptr_t aligned_payload_addr =
+				(raw_payload_addr + alignment - 1) &
+				~(alignment - 1);
+			u64 padding = aligned_payload_addr - raw_payload_addr;
 
-	if (raw_block->next) {
-		raw_block->next->prev = aligned_block;
+			/* Scenario A: The current free block raw pointer perfectly aligns natively */
+			if (padding == 0 && curr->size >= aligned_size) {
+				split_block(curr, aligned_size);
+				curr->is_free = false;
+				curr->magic = HEAP_MAGIC_ALLOCATED;
+				heap->used_size +=
+					(BLOCK_HEADER_SIZE + curr->size);
+				*out_ptr = (void *)aligned_payload_addr;
+				return 0;
+			}
+
+			/* NEW FIX: If padding is too small to form a split header, push it forward 
+               by alignment increments until it is large enough. */
+			u64 min_required_padding =
+				BLOCK_HEADER_SIZE + HEAP_MIN_BLOCK_SIZE;
+			if (padding > 0 && padding < min_required_padding) {
+				u64 remaining_pad =
+					min_required_padding - padding;
+				// Round up the remaining padding needed to the next multiple of alignment
+				u64 alignment_chunks =
+					(remaining_pad + alignment - 1) &
+					~(alignment - 1);
+				padding += alignment_chunks;
+				aligned_payload_addr =
+					raw_payload_addr + padding;
+			}
+
+			/* Scenario B: Offset padding needed (guaranteed now to be safely splittable) */
+			if (padding >= min_required_padding &&
+			    curr->size >= (padding + aligned_size)) {
+				u64 old_total_size = curr->size;
+
+				/* Shrink current block to act as the front pad block */
+				curr->size = padding - BLOCK_HEADER_SIZE;
+
+				struct heap_block *aligned_block =
+					(struct heap_block
+						 *)(aligned_payload_addr -
+						    BLOCK_HEADER_SIZE);
+				aligned_block->magic = HEAP_MAGIC_FREE;
+				aligned_block->is_free = true;
+				aligned_block->size = old_total_size - padding;
+
+				/* Link new aligned block into tracking context BEFORE splitting to keep links linear */
+				aligned_block->next = curr->next;
+				aligned_block->prev = curr;
+				if (curr->next) {
+					curr->next->prev = aligned_block;
+				}
+				curr->next = aligned_block;
+
+				/* Now safe to split trailing excess off the back end of the aligned block */
+				split_block(aligned_block, aligned_size);
+				aligned_block->is_free = false;
+				aligned_block->magic = HEAP_MAGIC_ALLOCATED;
+
+				/* Correctly track exact dynamic footprints */
+				heap->used_size += (BLOCK_HEADER_SIZE +
+						    aligned_block->size);
+				*out_ptr = (void *)aligned_payload_addr;
+				return 0;
+			}
+		}
+		curr = curr->next;
 	}
-	raw_block->next = aligned_block;
-	raw_block->size = adjustment - BLOCK_HEADER_SIZE;
-	raw_block->magic = HEAP_MAGIC_ALLOCATED;
 
-	heap->used_size += (BLOCK_HEADER_SIZE + raw_block->size);
-	heap->used_size += (BLOCK_HEADER_SIZE + aligned_block->size);
-
-	/* Release preceding padding blocks back into the pool to preserve density metrics */
-	heap_free(heap, (void *)raw_ptr);
-
-	*out_ptr = (void *)aligned_addr;
-	return 0;
+	*out_ptr = NULL;
+	return ENOMEM;
 }
 
 /* Copies operational module usage metrics safely into diagnostic parameters */
@@ -332,9 +360,11 @@ int heap_get_stats(struct heap_context *heap, u64 *used, u64 *total)
 {
 	if (!heap)
 		return EINVAL;
+
 	if (used)
 		*used = heap->used_size;
 	if (total)
 		*total = heap->total_size;
+
 	return 0;
 }

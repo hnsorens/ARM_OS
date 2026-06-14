@@ -272,7 +272,8 @@ static int pmm_free_page(u8 page_order, u64 frame)
 /* --- Specialized Multi-Page Allocation Controllers --- */
 int pmm_alloc_aligned(u64 count, u64 alignment, u64 *out)
 {
-	if (count == 0 || alignment < PMM_PAGE_SIZE || !out)
+	if (count == 0 || alignment < PMM_PAGE_SIZE ||
+	    (alignment & (alignment - 1)) != 0 || !out)
 		return EINVAL;
 
 	u8 target_order = 0;
@@ -457,7 +458,9 @@ int pmm_reserve_range(u64 start, u64 sz)
 	for (u64 idx = start_page_idx; idx < end_page_idx; idx++) {
 		if (g_pmm_meta_array[idx].is_free) {
 			u8 current_order = g_pmm_meta_array[idx].order;
-			u64 block_base_phys = index_to_paddr(idx);
+			u64 block_base_idx = idx &
+					     ~((1UL << current_order) - 1);
+			u64 block_base_phys = index_to_paddr(block_base_idx);
 			pmm_block_node_t *node =
 				(pmm_block_node_t *)u64o_kv(block_base_phys);
 
@@ -465,13 +468,17 @@ int pmm_reserve_range(u64 start, u64 sz)
 
 			u64 block_pages = 1UL << current_order;
 			for (u64 p = 0; p < block_pages; p++) {
-				g_pmm_meta_array[idx + p].is_free = 0;
-				g_pmm_meta_array[idx + p].ref_count = 1;
-				g_pmm_meta_array[idx + p].order = 0;
+				g_pmm_meta_array[block_base_idx + p].is_free =
+					0;
+				g_pmm_meta_array[block_base_idx + p].ref_count =
+					1;
+				g_pmm_meta_array[block_base_idx + p].order = 0;
 			}
 
 			g_pmm_allocator.free_memory_bytes -=
 				(1UL << current_order) * PMM_PAGE_SIZE;
+
+			idx = block_base_idx + block_pages - 1;
 		}
 	}
 

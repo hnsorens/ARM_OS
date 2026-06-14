@@ -34,6 +34,8 @@ typedef struct mmu_interface
 
     int (*set_user_ctx)(u64 root, u16 acid);
     int (*set_kernel_ctx)(u64 root, u16 acid);
+    int (*get_user_ctx)(u64 *root);
+    int (*get_kernel_ctx)(u64 *root);
 
     int (*map)(u64 root, u64 virt, u64 phys, u64 pg_count, enum page_size pg_size, enum mmu_flags flags);
     int (*unmap)(u64 root, u64 virt, u64 pg_count, enum page_size pg_size);

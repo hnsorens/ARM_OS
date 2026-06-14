@@ -201,4 +201,8 @@ int pt_invalidate(u64 virt, u64 pg_count, enum page_size pg_size);
  */
 int pt_set_mair(u64 mair_value);
 
+int pt_get_user_ctx(u64 *root);
+
+int pt_get_kernel_ctx(u64 *root);
+
 #endif

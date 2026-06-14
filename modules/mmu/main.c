@@ -15,6 +15,8 @@ EXPORT_INTERFACE(mmu, MemoryManagementUnit,
 			 .copy = pt_copy,
 			 .set_user_ctx = pt_set_user_ctx,
 			 .set_kernel_ctx = pt_set_kernel_ctx,
+			 .get_user_ctx = pt_get_user_ctx,
+			 .get_kernel_ctx = pt_get_kernel_ctx,
 			 .map = pt_map,
 			 .unmap = pt_unmap,
 			 .protect = pt_protect,
@@ -226,13 +228,9 @@ TEST(MMU_UserContextSwitchAndInvalidate)
 	status = pt_alloc(&root_proc2);
 	EXPECT_EQ(status, 0);
 
-	serial.printf("hehe\n");
-
 	// Switch active user address space context to Process 1 (ACID 1)
 	status = pt_set_user_ctx(root_proc1, 1);
 	EXPECT_EQ(status, 0);
-
-	serial.printf("asd\n");
 
 	// Invalidate 4 pages at a specific address to sweep away stale TLB traces
 	status = pt_invalidate(0x00007FFFF0000000UL, 4, PS_4KB);
