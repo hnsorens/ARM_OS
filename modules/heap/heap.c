@@ -116,6 +116,12 @@ int heap_create(u64 root, u64 sz, struct heap_context **out_heap)
 }
 
 /* Completely dismantles a heap instance, releasing its virtual memory range back to the VMM */
+/**
+ * Completely dismantles a heap instance, releasing its virtual memory range back to the VMM.
+ *
+ * @param heap Pointer to the heap context
+ * @return Status code indicating success or failure
+ */
 int heap_destroy(struct heap_context *heap)
 {
 	if (!heap || heap->vaddr_base == 0)
@@ -356,6 +362,14 @@ int heap_memalign(struct heap_context *heap, u64 alignment, u64 size,
 }
 
 /* Copies operational module usage metrics safely into diagnostic parameters */
+/**
+ * Copies operational module usage metrics safely into diagnostic parameters.
+ *
+ * @param heap Pointer to the heap context
+ * @param used Pointer to store the used memory size
+ * @param total Pointer to store the total memory size
+ * @return Status code indicating success or failure
+ */
 int heap_get_stats(struct heap_context *heap, u64 *used, u64 *total)
 {
 	if (!heap)
