@@ -3,6 +3,7 @@
 #include "../modules.h"
 #include "../../include/api/vmm.h"
 #include "../../include/api/serial_debug.h"
+#include "../../include/api/serial_debug.h"
 #include "../../include/errno.h"
 
 EXTERN_IMPORT_INTERFACE(vmm, vmm);
@@ -12,6 +13,7 @@ EXTERN_IMPORT_INTERFACE(serial, serial);
 #define HEAP_ALIGN(x) (((x) + 15) & ~15)
 #define BLOCK_HEADER_SIZE HEAP_ALIGN(sizeof(struct heap_block))
 #define CONTEXT_SIZE HEAP_ALIGN(sizeof(struct heap_context))
+#define CONTEXT_SIZE HEAP_ALIGN(sizeof(struct heap_context))
 
 /* Splits an active parent block down if remaining space satisfies minimum sizing bounds */
 static void split_block(struct heap_block *block, u64 size)
@@ -19,6 +21,7 @@ static void split_block(struct heap_block *block, u64 size)
 	struct heap_block *new_block;
 	u64 rem_size = block->size - size;
 
+	// If the remaining space is too small to form a new block, return
 	if (rem_size < (BLOCK_HEADER_SIZE + HEAP_MIN_BLOCK_SIZE)) {
 		return;
 	}
@@ -33,6 +36,7 @@ static void split_block(struct heap_block *block, u64 size)
 	new_block->next = block->next;
 	new_block->prev = block;
 
+	// Update the next block's previous pointer if it exists
 	if (block->next) {
 		block->next->prev = new_block;
 	}
@@ -41,6 +45,7 @@ static void split_block(struct heap_block *block, u64 size)
 }
 
 /* Merges contiguous free fragments forward and backward to prevent long-term layout fragmentation */
+// Merges contiguous free fragments forward and backward to prevent long-term layout fragmentation
 static void coalesce_blocks(struct heap_block *block)
 {
 	if (!block)
@@ -70,6 +75,7 @@ static void coalesce_blocks(struct heap_block *block)
 }
 
 /* Dynamically allocates virtual memory space via VMM and initializes a new heap instance */
+// Dynamically allocates virtual memory space via VMM and initializes a new heap instance
 int heap_create(u64 root, u64 sz, struct heap_context **out_heap)
 {
 	int status;
@@ -81,6 +87,7 @@ int heap_create(u64 root, u64 sz, struct heap_context **out_heap)
 		return EINVAL;
 
 	// Ensure the requested size can easily hold the context header, the first block header, and baseline data
+	// Add some padding to ensure alignment and space for future allocations
 	sz += CONTEXT_SIZE + BLOCK_HEADER_SIZE;
 	sz = (sz + (4096 - 1)) & ~(4096 - 1);
 
@@ -90,6 +97,8 @@ int heap_create(u64 root, u64 sz, struct heap_context **out_heap)
 		return status;
 
 	/* Calculate addresses explicitly using raw integer bytes to prevent scaling issues */
+	// Calculate addresses explicitly using raw integer bytes to prevent scaling issues
+	// Ensure the base address and root block address are correctly aligned
 	uintptr_t base_address = (uintptr_t)vaddr;
 	uintptr_t root_block_address = base_address + CONTEXT_SIZE;
 
@@ -115,6 +124,7 @@ int heap_create(u64 root, u64 sz, struct heap_context **out_heap)
 	return 0;
 }
 
+// Completely dismantles a heap instance, releasing its virtual memory range back to the VMM
 /* Completely dismantles a heap instance, releasing its virtual memory range back to the VMM */
 /**
  * Completely dismantles a heap instance, releasing its virtual memory range back to the VMM.
@@ -131,6 +141,7 @@ int heap_destroy(struct heap_context *heap)
 }
 
 /* Allocates an arbitrary sequential chunk of byte-level payload space from a specific heap */
+// Uses a first-fit allocation strategy to find and allocate memory
 int heap_malloc(struct heap_context *heap, u64 size, void **out_ptr)
 {
 	struct heap_block *curr;
@@ -165,6 +176,7 @@ int heap_malloc(struct heap_context *heap, u64 size, void **out_ptr)
 }
 
 /* Evaluates validation context maps and returns blocks back into active target pools */
+// Frees an allocated block and attempts to coalesce with adjacent free blocks
 int heap_free(struct heap_context *heap, void *ptr)
 {
 	struct heap_block *block;
@@ -193,6 +205,7 @@ int heap_free(struct heap_context *heap, void *ptr)
 }
 
 /* Adjusts, migrates, or expands active sequential blocks safely within a specific heap */
+// Reallocates memory by either resizing the existing block or allocating a new one
 int heap_realloc(struct heap_context *heap, void *ptr, u64 new_size,
 		 void **out_ptr)
 {
@@ -258,6 +271,7 @@ int heap_realloc(struct heap_context *heap, void *ptr, u64 new_size,
 }
 
 /* Spawns custom byte alignments tracking specific architectural boundaries from a heap */
+// Allocates memory with a specified alignment
 int heap_memalign(struct heap_context *heap, u64 alignment, u64 size,
 		  void **out_ptr)
 {
@@ -280,6 +294,7 @@ int heap_memalign(struct heap_context *heap, u64 alignment, u64 size,
 	}
 
 	aligned_size = HEAP_ALIGN(size);
+	// Iterate through the list of blocks to find a suitable free block
 	curr = heap->head;
 
 	while (curr) {
@@ -370,6 +385,7 @@ int heap_memalign(struct heap_context *heap, u64 alignment, u64 size,
  * @param total Pointer to store the total memory size
  * @return Status code indicating success or failure
  */
+// Retrieves the used and total memory sizes from a heap
 int heap_get_stats(struct heap_context *heap, u64 *used, u64 *total)
 {
 	if (!heap)
