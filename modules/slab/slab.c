@@ -1,8 +1,8 @@
 #include "slab.h"
-#include "../../include/api/vmm.h"
-#include "../modules.h"
-#include "../utils.h"
-#include "../../include/errno.h"
+#include <api/vmm.h>
+#include <modules.h>
+#include <utils.h>
+#include <errno.h>
 
 EXTERN_IMPORT_INTERFACE(vmm, vmm);
 

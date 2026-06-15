@@ -5,10 +5,13 @@ OBJCOPY = aarch64-linux-gnu-objcopy
 CLANG   = clang
 
 # --- Paths ---
-SYSROOT    = /usr/aarch64-linux-gnu
-EFI_INC    = $(SYSROOT)/include/efi
-BUILD_DIR  = build
-QEMU_FW    = /usr/share/edk2/aarch64/QEMU_EFI.fd
+PROJECT_ROOT := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
+SYSROOT        = /usr/aarch64-linux-gnu
+EFI_INC        = $(SYSROOT)/include/efi
+MODULE_API_INC = $(PROJECT_ROOT)/include
+MODULE_INC     = $(PROJECT_ROOT)/modules
+BUILD_DIR      = build
+QEMU_FW        = /usr/share/edk2/aarch64/QEMU_EFI.fd
 
 # --- Targets ---
 BOOTLOADER = $(BUILD_DIR)/bootloader.efi
@@ -25,7 +28,7 @@ EFI_LDFLAGS = -target aarch64-unknown-windows -fuse-ld=lld-link -nostdlib \
 
 KFLAGS      = -ffreestanding -fno-stack-protector -fno-stack-check \
               -mgeneral-regs-only -fno-builtin -nostdlib -mcmodel=large \
-              -fno-pic -fno-plt -c
+              -fno-pic -fno-plt -c -I$(MODULE_INC) -I$(MODULE_API_INC)
 
 K_LDFLAGS   = -static -T kernel.ld -nostdlib --emit-relocs
 
@@ -110,3 +113,7 @@ run: $(IMG)
 clean:
 	@echo "  CLEAN   Removing target build trees..."
 	@rm -rf $(BUILD_DIR) $(IMG)
+
+test: KFLAGS += -DTESTING
+
+test: run

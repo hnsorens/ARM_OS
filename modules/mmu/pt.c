@@ -1,10 +1,9 @@
 #include "pt.h"
-#include "../modules.h"
-#include "../../include/api/mmu.h"
-#include "../../include/api/pmm.h"
-#include "../../include/errno.h"
-#include "../utils.h"
-#include "../../include/errno.h"
+#include <modules.h>
+#include <api/mmu.h>
+#include <api/pmm.h>
+#include <errno.h>
+#include <utils.h>
 
 /* --- Linux Kernel Style Optimization & Predicate Macros --- */
 #define likely(x) __builtin_expect(!!(x), 1)

@@ -4,7 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
-#include "../../include/type.h"
+#include <type.h>
 
 #define SLAB_MAX_CACHES      16
 #define SLAB_PAGE_SIZE       4096

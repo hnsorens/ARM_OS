@@ -1,7 +1,7 @@
 #ifndef SLAB_ALLOCATOR_API_H
 #define SLAB_ALLOCATOR_API_H
 
-#include "../type.h"
+#include <type.h>
 
 struct k_slab_cache;
 

@@ -1,7 +1,7 @@
 #ifndef HEAP_H
 #define HEAP_H
 
-#include "../../include/type.h"
+#include <type.h>
 
 #define HEAP_MIN_BLOCK_SIZE  32
 #define HEAP_MAGIC_ALLOCATED 0x414C4F43 /* "ALOC" */

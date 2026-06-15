@@ -3,7 +3,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
-#include "../../include/api/mmu.h"
+#include <api/mmu.h>
 
 /* --- Virtual Address Index Extraction Macros --- */
 #define P0_INDEX(x) (((x) >> 39) & 0x1FF)

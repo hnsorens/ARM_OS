@@ -1,7 +1,7 @@
 #ifndef PMM_H
 #define PMM_H
 
-#include "../boot_info.h"
+#include <boot_info.h>
 
 #define PMM_MAX_ORDER     64     /* 4KB * (2^15) = 128MB max contiguous block allocation */
 #define PMM_PAGE_SIZE     4096   /* Architectural Base Page Size */

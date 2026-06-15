@@ -1,16 +1,13 @@
 #include "heap.h"
-#include "../modules.h"
-#include "../test.h"
-#include "../../include/api/heap.h"
-#include "../../include/api/vmm.h"
-#include "../../include/api/serial_debug.h"
-#include "../../include/errno.h"
+#include <modules.h>
+#include <test.h>
+#include <api/heap.h>
+#include <api/vmm.h>
+#include <api/serial_debug.h>
+#include <errno.h>
 
 IMPORT_INTERFACE_ANY(vmm, vmm);
 IMPORT_INTERFACE_ANY(serial, serial);
-
-// for test
-IMPORT_INTERFACE_ANY(mmu, mmu);
 
 EXPORT_INTERFACE(heap, Heap,
 		 { .malloc = heap_malloc,
@@ -18,6 +15,10 @@ EXPORT_INTERFACE(heap, Heap,
 		   .realloc = heap_realloc,
 		   .memalign = heap_memalign,
 		   .get_stats = heap_get_stats });
+
+#ifdef TESTING
+
+IMPORT_INTERFACE_ANY(mmu, mmu);
 
 TEST(Heap_LifecycleAndBasicMalloc)
 {
@@ -250,3 +251,5 @@ TEST(Heap_SecurityAndEdgeCases)
 	heap_destroy(heap);
 	TEST_RESULT();
 }
+
+#endif

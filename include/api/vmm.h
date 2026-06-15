@@ -1,7 +1,7 @@
 #ifndef VMM_API_H
 #define VMM_API_H
 
-#include "../type.h"
+#include <type.h>
 #include "mmu.h"
 
 enum vmm_region_type {

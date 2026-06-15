@@ -1,11 +1,11 @@
 #include "vmm.h"
-#include "../../include/api/pmm.h"
-#include "../../include/api/mmu.h"
-#include "../../include/api/serial_debug.h"
-#include "../modules.h"
-#include "../utils.h"
-#include "../../include/type.h"
-#include "../../include/errno.h"
+#include <api/pmm.h>
+#include <api/mmu.h>
+#include <api/serial_debug.h>
+#include <modules.h>
+#include <utils.h>
+#include <type.h>
+#include <errno.h>
 
 EXTERN_IMPORT_INTERFACE(mmu, mmu);
 EXTERN_IMPORT_INTERFACE(pmm, pmm);

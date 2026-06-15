@@ -1,9 +1,9 @@
 #include "pt.h"
-#include "../modules.h"
-#include "../test.h"
-#include "../../include/api/mmu.h"
-#include "../../include/api/pmm.h"
-#include "../../include/api/serial_debug.h"
+#include <modules.h>
+#include <test.h>
+#include <api/mmu.h>
+#include <api/pmm.h>
+#include <api/serial_debug.h>
 
 IMPORT_INTERFACE_ANY(pmm, pmm);
 IMPORT_INTERFACE_ANY(serial, serial)
@@ -25,6 +25,8 @@ EXPORT_INTERFACE(mmu, MemoryManagementUnit,
 			 .invalidate = pt_invalidate,
 			 .set_mair = pt_set_mair,
 		 });
+
+#ifdef TESTING
 
 TEST(PageTableCreation)
 {
@@ -251,3 +253,5 @@ TEST(MMU_UserContextSwitchAndInvalidate)
 
 	TEST_RESULT();
 }
+
+#endif

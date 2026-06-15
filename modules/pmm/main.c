@@ -1,12 +1,9 @@
-#include "../modules.h"
-
-#include "../test.h"
-
-#include "../../include/api/pmm.h"
-#include "../../include/api/serial_debug.h"
-#include "../boot_info.h"
-
 #include "pmm.h"
+#include <modules.h>
+#include <test.h>
+#include <api/pmm.h>
+#include <api/serial_debug.h>
+#include <boot_info.h>
 
 #define HHDM_OFFSET 0xFFFF800000000000UL
 
@@ -29,6 +26,8 @@ EXPORT_INTERFACE(pmm, PhysicalMemoryAllocator,
 			 .get_free_memory = pmm_get_free_memory,
 			 .reserve_range = pmm_reserve_range,
 		 });
+
+#ifdef TESTING
 
 TEST(AllocTest)
 {
@@ -314,3 +313,5 @@ TEST(RobustnessEdgeCaseTest)
 
 	TEST_RESULT();
 }
+
+#endif

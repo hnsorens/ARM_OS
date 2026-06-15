@@ -9,3 +9,4 @@ disk.img
 *.efi
 *.img
 *.disk
+.aider*

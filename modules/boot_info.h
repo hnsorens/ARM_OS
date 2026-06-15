@@ -1,7 +1,7 @@
 #ifndef BOOT_INFO_H
 #define BOOT_INFO_H
 
-#include "../include/type.h"
+#include <type.h>
 
 typedef enum memory_type
 {

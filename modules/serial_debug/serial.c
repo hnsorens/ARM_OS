@@ -1,14 +1,11 @@
-
-
+#include "serial.h"
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdint.h>
-
-#include "serial.h"
-#include "../modules.h"
-#include "../../include/type.h"
+#include <modules.h>
+#include <type.h>
 
 // PL011 UART Registers (ARM Versatile Express base)
 #define UART0_BASE 0x09000000

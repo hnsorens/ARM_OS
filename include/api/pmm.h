@@ -1,7 +1,7 @@
 #ifndef PMM_API_H
 #define PMM_API_H
 
-#include "../type.h"
+#include <type.h>
 
 typedef struct pmm_interface 
 {

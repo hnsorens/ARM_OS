@@ -1,10 +1,10 @@
 #include "heap.h"
-#include "../utils.h"
-#include "../modules.h"
-#include "../../include/api/vmm.h"
-#include "../../include/api/serial_debug.h"
-#include "../../include/api/serial_debug.h"
-#include "../../include/errno.h"
+#include <utils.h>
+#include <modules.h>
+#include <api/vmm.h>
+#include <api/serial_debug.h>
+#include <api/serial_debug.h>
+#include <errno.h>
 
 EXTERN_IMPORT_INTERFACE(vmm, vmm);
 EXTERN_IMPORT_INTERFACE(serial, serial);

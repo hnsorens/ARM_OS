@@ -1,12 +1,11 @@
 #include "vmm.h"
-#include "../modules.h"
-
-#include "../../include/api/vmm.h"
-#include "../../include/api/pmm.h"
-#include "../../include/api/mmu.h"
-#include "../../include/api/serial_debug.h"
-#include "../../include/errno.h"
-#include "../test.h"
+#include <modules.h>
+#include <api/vmm.h>
+#include <api/pmm.h>
+#include <api/mmu.h>
+#include <api/serial_debug.h>
+#include <errno.h>
+#include <test.h>
 
 IMPORT_INTERFACE_ANY(pmm, pmm);
 IMPORT_INTERFACE_ANY(mmu, mmu);
@@ -50,6 +49,8 @@ EXPORT_INTERFACE(vmm, VirtualMemoryManager,
 		   .query = vmm_query,
 		   .activate = vmm_activate,
 		   .sync = vmm_sync });
+
+#ifdef TESTING
 
 TEST(VMM_SpaceLifecycle)
 {
@@ -327,3 +328,5 @@ TEST(VMM_ExhaustionLimits)
 	EXPECT_EQ(status, 0);
 	TEST_RESULT();
 }
+
+#endif

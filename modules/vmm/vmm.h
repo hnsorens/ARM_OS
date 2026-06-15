@@ -1,8 +1,8 @@
 #ifndef VMM_H
 #define VMM_H
 
-#include "../../include/api/mmu.h"
-#include "../../include/api/vmm.h"
+#include <api/mmu.h>
+#include <api/vmm.h>
 
 typedef struct boot_region {
     u64 base;       /**< The starting virtual address of the region */

@@ -1,8 +1,8 @@
 #include "pmm.h"
-#include "../utils.h"
-#include "../../include/errno.h"
-#include "../modules.h"
-#include "../../include/api/serial_debug.h"
+#include <utils.h>
+#include <errno.h>
+#include <modules.h>
+#include <api/serial_debug.h>
 
 EXTERN_IMPORT_INTERFACE(serial, serial);
 

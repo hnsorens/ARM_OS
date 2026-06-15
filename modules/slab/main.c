@@ -1,12 +1,11 @@
 #include "slab.h"
-#include "../modules.h"
-#include "../test.h"
-
-#include "../../include/api/slab.h"
-#include "../../include/api/vmm.h"
-#include "../../include/api/serial_debug.h"
-#include "../../include/api/mmu.h"
-#include "../../include/errno.h"
+#include <modules.h>
+#include <test.h>
+#include <api/slab.h>
+#include <api/vmm.h>
+#include <api/serial_debug.h>
+#include <api/mmu.h>
+#include <errno.h>
 
 IMPORT_INTERFACE_ANY(vmm, vmm);
 IMPORT_INTERFACE_ANY(serial, serial);
@@ -20,6 +19,8 @@ EXPORT_INTERFACE(slab, SlabAllocator,
 			 .free = k_slab_free,
 			 .shrink = k_slab_shrink,
 		 });
+
+#ifdef TESTING
 
 TEST(Slab_CacheLifecycle)
 {
@@ -78,8 +79,6 @@ TEST(Slab_BasicAllocationAndFree)
 	status = k_slab_create_cache(vmm_root, 64, 16, &cache);
 	EXPECT_EQ(status, 0);
 
-	serial.printf("got here 1\n");
-
 	void *obj1 = NULL;
 	void *obj2 = NULL;
 
@@ -87,23 +86,19 @@ TEST(Slab_BasicAllocationAndFree)
 	status = k_slab_alloc(cache, &obj1);
 	EXPECT_EQ(status, 0);
 	EXPECT_NE(obj1, NULL);
-	serial.printf("got here 2\n");
 
 	status = k_slab_alloc(cache, &obj2);
 	EXPECT_EQ(status, 0);
 	EXPECT_NE(obj2, NULL);
 	EXPECT_NE(obj1, obj2); // Memory spaces must be separate
-	serial.printf("got here 3\n");
 
 	// 2. Confirm addresses align cleanly with alignment requirements
 	EXPECT_EQ((uintptr_t)obj1 % 16, 0);
 	EXPECT_EQ((uintptr_t)obj2 % 16, 0);
-	serial.printf("got here 4\n");
 
 	// 3. Drop allocations backward into the container layer
 	status = k_slab_free(cache, obj1);
 	EXPECT_EQ(status, 0);
-	serial.printf("got here 5\n");
 
 	status = k_slab_free(cache, obj2);
 	EXPECT_EQ(status, 0);
@@ -308,3 +303,5 @@ TEST(Slab_RobustnessEdgeCases)
 
 	TEST_RESULT();
 }
+
+#endif

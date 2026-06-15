@@ -1,7 +1,7 @@
 #ifndef HEAP_API_H
 #define HEAP_API_H
 
-#include "../type.h"
+#include <type.h>
 
 struct heap_context;
 

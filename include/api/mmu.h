@@ -1,7 +1,7 @@
 #ifndef MMU_API_H
 #define MMU_API_H
 
-#include "../type.h"
+#include <type.h>
 
 enum mmu_flags
 {
