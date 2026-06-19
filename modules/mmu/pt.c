@@ -588,6 +588,7 @@ int pt_invalidate(u64 virt, u64 pg_count, enum page_size pg_size)
 {
 	u64 i;
 
+	// Global flush fallback works seamlessly across both halves
 	if (pg_count > TLB_BATCH_THRESHOLD) {
 		__asm__ volatile("tlbi vmalle1is\n"
 				 "dsb ish\n"
@@ -598,13 +599,37 @@ int pt_invalidate(u64 virt, u64 pg_count, enum page_size pg_size)
 		return 0;
 	}
 
+	// Retrieve the active ASID from TTBR0_EL1 to ensure precise matching
+	u64 ttbr0;
+	__asm__ volatile("mrs %0, ttbr0_el1" : "=r"(ttbr0));
+	u64 asid = (ttbr0 >> 48) & 0xFFFFULL;
+
 	for (i = 0; i < pg_count; ++i) {
 		u64 target = virt + (i * pg_size);
-		u64 val = target >> 12;
 
-		__asm__ volatile("tlbi vale1is, %0" : : "r"(val) : "memory");
+		/* * ARM64 TLBI Formatter:
+         * Bits [43:0]  = Target Virtual Address bits [55:12]
+         * Bits [63:48] = ASID value
+         */
+		u64 tlbi_payload = ((target >> 12) & 0x000000FFFFFFFFFFULL);
+		tlbi_payload |= (asid << 48);
+
+		// If it's a high half address, we MUST use 'va' instructions instead of 'val'
+		// to cleanly assert architecture table level context across boundaries.
+		if (target >= 0xFFFF800000000000ULL) {
+			__asm__ volatile("tlbi vae1is, %0"
+					 :
+					 : "r"(tlbi_payload)
+					 : "memory");
+		} else {
+			__asm__ volatile("tlbi vale1is, %0"
+					 :
+					 : "r"(tlbi_payload)
+					 : "memory");
+		}
 	}
 
+	// Pipeline Synchronization Barrier
 	__asm__ volatile("dsb ish\n"
 			 "isb"
 			 :

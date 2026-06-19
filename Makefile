@@ -106,9 +106,9 @@ $(IMG): $(BOOTLOADER) $(MODULE_ELFS)
 run: $(IMG)
 	@echo "  QEMU    Launching virtual machine..."
 	@qemu-system-aarch64 -m 16G -cpu cortex-a72 -smp 4 -M virt -accel tcg,thread=multi -bios $(QEMU_FW) \
-	    -serial stdio -drive file=$(IMG),format=raw,if=none,id=d0 \
-	    -device virtio-blk-device,drive=d0 -mem-prealloc \
-	    -gdb tcp::1234
+		-drive file=$(IMG),format=raw,if=none,id=d0 \
+		-device virtio-blk-device,drive=d0 -mem-prealloc \
+		-gdb tcp::1234 -nographic
 
 clean:
 	@echo "  CLEAN   Removing target build trees..."

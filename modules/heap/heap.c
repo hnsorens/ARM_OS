@@ -79,7 +79,7 @@ static void coalesce_blocks(struct heap_block *block)
 int heap_create(u64 root, u64 sz, struct heap_context **out_heap)
 {
 	int status;
-	u64 vaddr = 0xFFFF800400000000ULL;
+	u64 vaddr = 0xFFFF900000000000ULL;
 	struct heap_context *heap_slot;
 	struct heap_block *root_block;
 
@@ -92,7 +92,7 @@ int heap_create(u64 root, u64 sz, struct heap_context **out_heap)
 	sz = (sz + (4096 - 1)) & ~(4096 - 1);
 
 	/* Ask underlying VMM to allocate the raw page block */
-	status = vmm.allocate(root, &vaddr, sz, 0x3, VMM_REGION_HEAP);
+	status = vmm.allocate(root, &vaddr, sz, 0x713, VMM_REGION_HEAP);
 	if (status)
 		return status;
 

@@ -297,8 +297,8 @@ TEST(VMM_ExhaustionLimits)
 	// Exhaust layout allocation limits completely
 	for (int i = 0; i < MAX_VMA_POOL_SIZE + 2; i++) {
 		u64 hint = 0;
-		status = vmm_allocate(root, &hint, 4096, MMU_USER,
-				      VMM_REGION_DATA);
+		status =
+			vmm_allocate(root, &hint, 4096, 0x713, VMM_REGION_DATA);
 
 		if (status == 0) {
 			allocated_addresses[allocation_count++] = hint;

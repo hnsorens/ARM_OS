@@ -182,10 +182,12 @@ static vm_area_t *find_vma(vmm_space_t *space, u64 addr)
 
 static void insert_vma(vmm_space_t *space, vm_area_t *vma)
 {
+	/* FIX: Initialized structure bounds before moving down loop paths */
+	vma->prev = NULL;
+	vma->next = NULL;
+
 	if (!space->vma_head) {
 		space->vma_head = vma;
-		vma->prev = NULL;
-		vma->next = NULL;
 		return;
 	}
 	vm_area_t *curr = space->vma_head;
@@ -204,8 +206,6 @@ static void insert_vma(vmm_space_t *space, vm_area_t *vma)
 			curr = curr->next;
 		}
 	}
-	vma->prev = NULL;
-	vma->next = NULL;
 }
 
 static void remove_tree_node(vmm_space_t *space, vm_area_t *target)
@@ -391,6 +391,8 @@ int vmm_allocate(u64 root, u64 *vaddr, u64 sz, enum mmu_flags flags,
 		vm_area_t *existing = find_vma(space, *vaddr);
 		if (existing && existing->type == type &&
 		    existing->size >= sz) {
+			/* FIX: Synced target pointer output on quick shortcut match execution paths */
+			*vaddr = existing->base;
 			spinlock_release(&space->lock);
 			return 0;
 		}
