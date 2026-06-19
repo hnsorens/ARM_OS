@@ -41,7 +41,8 @@ typedef struct vmm_space {
     vm_area_t       *mmap_cache;       /* Fast lookup translation reference descriptor cache */
     vm_area_t       *vma_head;         /* Root node pointer of the balanced sorted VMA tree */
     spinlock_t       lock;              /* Mutual exclusion synchronization primitive */
-    bool             in_use;            /* Descriptor registration state flag */
+    struct vmm_space *next;            /* Traversal link reference for active spaces */
+    bool              in_use;           /* Intrusive state allocation tracker flag */
 } vmm_space_t;
 
 /* --- Exported Virtual Memory Manager Interface API --- */

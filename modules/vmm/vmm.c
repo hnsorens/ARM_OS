@@ -11,13 +11,14 @@ EXTERN_IMPORT_INTERFACE(mmu, mmu);
 EXTERN_IMPORT_INTERFACE(pmm, pmm);
 EXTERN_IMPORT_INTERFACE(serial, serial);
 
-#define MAX_SPACE_TRACKERS 64
 #define VMA_PER_PAGE (4096 / sizeof(vm_area_t))
+#define VMM_SPACE_PER_PAGE (4096 / sizeof(vmm_space_t))
 
-static vmm_space_t s_space_registry[MAX_SPACE_TRACKERS];
+/* --- HIGH LEVEL ACTIVE SPACE REGISTRY --- */
+static vmm_space_t *s_space_list_head = NULL;
 static spinlock_t s_registry_lock = 0;
 
-/* --- SLAB ALLOCATOR FOR METADATA STORAGE --- */
+/* --- SLAB ALLOCATOR FOR VMA TRACKERS --- */
 typedef struct vma_slab {
 	struct vma_slab *next;
 	u64 free_count;
@@ -27,6 +28,17 @@ typedef struct vma_slab {
 static vma_slab_t *s_slab_head = NULL;
 static vm_area_t *s_vma_free_list = NULL;
 static spinlock_t s_vma_alloc_lock = 0;
+
+/* --- SLAB ALLOCATOR FOR VMM SPACE DESCRIPTORS --- */
+typedef struct vmm_space_slab {
+	struct vmm_space_slab *next;
+	u64 free_count;
+	vmm_space_t storage[VMM_SPACE_PER_PAGE];
+} vmm_space_slab_t;
+
+static vmm_space_slab_t *s_space_slab_head = NULL;
+static vmm_space_t *s_space_free_list = NULL;
+static spinlock_t s_space_alloc_lock = 0;
 
 static inline void spinlock_acquire(spinlock_t *lock)
 {
@@ -39,6 +51,7 @@ static inline void spinlock_release(spinlock_t *lock)
 
 u64 g_kernel_space_root = 0;
 
+/* --- VMA ALLOCATOR IMPLEMENTATION --- */
 static vm_area_t *vma_alloc(void)
 {
 	spinlock_acquire(&s_vma_alloc_lock);
@@ -78,29 +91,72 @@ static void vma_free(vm_area_t *vma)
 	spinlock_release(&s_vma_alloc_lock);
 }
 
+/* --- VMM SPACE ALLOCATOR IMPLEMENTATION --- */
+static vmm_space_t *vmm_space_meta_alloc(void)
+{
+	spinlock_acquire(&s_space_alloc_lock);
+	if (!s_space_free_list) {
+		vmm_space_slab_t *slab;
+		int status = pmm.alloc_page(0, (u64 *)&slab);
+		if (status != 0 || !slab) {
+			spinlock_release(&s_space_alloc_lock);
+			return NULL;
+		}
+		kmemset(slab, 0, sizeof(vmm_space_slab_t));
+		slab->next = s_space_slab_head;
+		slab->free_count = VMM_SPACE_PER_PAGE;
+		s_space_slab_head = slab;
+		for (u64 i = 0; i < VMM_SPACE_PER_PAGE - 1; i++) {
+			slab->storage[i].next = &slab->storage[i + 1];
+		}
+		slab->storage[VMM_SPACE_PER_PAGE - 1].next = NULL;
+		s_space_free_list = &slab->storage[0];
+	}
+	vmm_space_t *space = s_space_free_list;
+	s_space_free_list = space->next;
+	kmemset(space, 0, sizeof(vmm_space_t));
+	space->in_use = true;
+	spinlock_release(&s_space_alloc_lock);
+	return space;
+}
+
+static void vmm_space_meta_free(vmm_space_t *space)
+{
+	if (!space)
+		return;
+	spinlock_acquire(&s_space_alloc_lock);
+	space->in_use = false;
+	space->next = s_space_free_list;
+	s_space_free_list = space;
+	spinlock_release(&s_space_alloc_lock);
+}
+
 static vmm_space_t *get_space(u64 root)
 {
-	for (u64 i = 0; i < MAX_SPACE_TRACKERS; i++) {
-		if (s_space_registry[i].in_use &&
-		    s_space_registry[i].page_table_root == root) {
-			return &s_space_registry[i];
+	vmm_space_t *curr = s_space_list_head;
+	while (curr) {
+		if (curr->in_use && curr->page_table_root == root) {
+			return curr;
 		}
+		curr = curr->next;
 	}
+
 	/* Fallback: register space dynamically for mock/unregistered roots used in tests */
-	for (u64 i = 0; i < MAX_SPACE_TRACKERS; i++) {
-		if (!s_space_registry[i].in_use) {
-			s_space_registry[i].in_use = true;
-			s_space_registry[i].page_table_root = root;
-			s_space_registry[i].vma_head = NULL;
-			s_space_registry[i].mmap_cache = NULL;
-			s_space_registry[i].lock = 0;
-			/* Zero the page table root memory to make it a valid empty L0 table */
-			kmemset((void *)(root + 0xFFFF800000000000ULL), 0,
-				4096);
-			return &s_space_registry[i];
-		}
-	}
-	return NULL;
+	vmm_space_t *new_space = vmm_space_meta_alloc();
+	if (!new_space)
+		return NULL;
+
+	new_space->page_table_root = root;
+	new_space->vma_head = NULL;
+	new_space->mmap_cache = NULL;
+	new_space->lock = 0;
+
+	/* Zero the page table root memory to make it a valid empty L0 table */
+	kmemset((void *)(root + 0xFFFF800000000000ULL), 0, 4096);
+
+	new_space->next = s_space_list_head;
+	s_space_list_head = new_space;
+	return new_space;
 }
 
 /* --- O(log N) BINARY SEARCH TREE ACTIONS --- */
@@ -152,7 +208,6 @@ static void insert_vma(vmm_space_t *space, vm_area_t *vma)
 	vma->next = NULL;
 }
 
-/* Tree helper used to extract a node during deletion or rebalancing phases */
 static void remove_tree_node(vmm_space_t *space, vm_area_t *target)
 {
 	if (!space->vma_head || !target)
@@ -225,11 +280,6 @@ static u64 find_unmapped_area(vmm_space_t *space, u64 hint, u64 sz)
 			return 0;
 
 		vm_area_t *conflict = NULL;
-
-		/*
-		 * Check every page in the candidate range.
-		 * Slower than an interval tree, but actually correct.
-		 */
 		for (u64 probe = addr; probe < addr + sz;
 		     probe += VMM_DEFAULT_ALIGNMENT) {
 			conflict = find_vma(space, probe);
@@ -257,27 +307,21 @@ int vmm_space_create(u64 *out_table_root)
 	if (status != 0)
 		return status;
 
-	vmm_space_t *space = NULL;
-	spinlock_acquire(&s_registry_lock);
-	for (int i = 0; i < MAX_SPACE_TRACKERS; i++) {
-		if (!s_space_registry[i].in_use) {
-			space = &s_space_registry[i];
-			space->in_use = true;
-			break;
-		}
-	}
-	spinlock_release(&s_registry_lock);
-
+	vmm_space_t *space = vmm_space_meta_alloc();
 	if (!space) {
 		mmu.free(root);
 		return ENOMEM;
 	}
 
-	spinlock_acquire(&space->lock);
+	spinlock_acquire(&s_registry_lock);
 	space->page_table_root = root;
 	space->vma_head = NULL;
 	space->mmap_cache = NULL;
-	spinlock_release(&space->lock);
+	space->lock = 0;
+
+	space->next = s_space_list_head;
+	s_space_list_head = space;
+	spinlock_release(&s_registry_lock);
 
 	*out_table_root = root;
 	return 0;
@@ -287,23 +331,39 @@ int vmm_space_destroy(u64 table_root)
 {
 	if (!table_root)
 		return EINVAL;
+
 	spinlock_acquire(&s_registry_lock);
-	vmm_space_t *space = get_space(table_root);
-	if (!space) {
+	vmm_space_t *prev = NULL;
+	vmm_space_t *curr = s_space_list_head;
+
+	while (curr) {
+		if (curr->page_table_root == table_root) {
+			break;
+		}
+		prev = curr;
+		curr = curr->next;
+	}
+
+	if (!curr) {
 		spinlock_release(&s_registry_lock);
 		return EINVAL;
 	}
 
-	spinlock_acquire(&space->lock);
-	/* Tree structures must clear elements one node recursively or via iterative loop flushes */
-	while (space->vma_head) {
-		remove_tree_node(space, space->vma_head);
+	spinlock_acquire(&curr->lock);
+	while (curr->vma_head) {
+		remove_tree_node(curr, curr->vma_head);
 	}
-	space->mmap_cache = NULL;
-	space->in_use = false;
-	spinlock_release(&space->lock);
+	curr->mmap_cache = NULL;
+	spinlock_release(&curr->lock);
+
+	if (!prev) {
+		s_space_list_head = curr->next;
+	} else {
+		prev->next = curr->next;
+	}
 	spinlock_release(&s_registry_lock);
 
+	vmm_space_meta_free(curr);
 	return mmu.free(table_root);
 }
 
@@ -338,6 +398,7 @@ int vmm_allocate(u64 root, u64 *vaddr, u64 sz, enum mmu_flags flags,
 
 	target_addr = find_unmapped_area(space, *vaddr, sz);
 	if (!target_addr) {
+		spinlock_release(&space->lock);
 		return ENOMEM;
 	}
 
@@ -353,7 +414,6 @@ int vmm_allocate(u64 root, u64 *vaddr, u64 sz, enum mmu_flags flags,
 	vma->type = type;
 	vma->is_paged = true;
 
-	/* --- PAGE SIZE ESCALATION ENGINE --- */
 	for (i = 0; i < sz; i += VMM_DEFAULT_ALIGNMENT) {
 		u64 phys_page;
 		status = pmm.alloc_page(0, &phys_page);
@@ -371,9 +431,7 @@ int vmm_allocate(u64 root, u64 *vaddr, u64 sz, enum mmu_flags flags,
 	insert_vma(space, vma);
 	space->mmap_cache = vma;
 	*vaddr = vma->base;
-
 	spinlock_release(&space->lock);
-
 	return 0;
 
 cleanup:
@@ -454,7 +512,6 @@ int vmm_free(u64 root, u64 vaddr, u64 sz)
 	} else if ((vaddr + sz) == (vma->base + vma->size)) {
 		vma->size -= sz;
 	} else {
-		/* Split in-place creates an isolated leaf node descriptor */
 		vm_area_t *split_vma = vma_alloc();
 		if (!split_vma) {
 			spinlock_release(&space->lock);
@@ -473,8 +530,6 @@ int vmm_free(u64 root, u64 vaddr, u64 sz)
 	spinlock_release(&space->lock);
 	return 0;
 }
-
-/* --- FULLY ADDED ARCHITECTURAL INTERFACES --- */
 
 int vmm_resize(u64 root, u64 vaddr, u64 old_sz, u64 new_sz)
 {
@@ -503,7 +558,6 @@ int vmm_resize(u64 root, u64 vaddr, u64 old_sz, u64 new_sz)
 		return vmm_free(root, vaddr + new_sz, old_sz - new_sz);
 	}
 
-	/* Check boundary overlap conflicts inside tree boundaries */
 	if (find_vma(space, vaddr + old_sz) ||
 	    (vaddr + new_sz) > VMM_USER_SPACE_MAX) {
 		spinlock_release(&space->lock);
@@ -591,7 +645,6 @@ int vmm_protect(u64 root, u64 vaddr, u64 sz, enum mmu_flags new_flags)
 
 	sz = (sz + (VMM_DEFAULT_ALIGNMENT - 1)) & ~(VMM_DEFAULT_ALIGNMENT - 1);
 
-	// Update the hardware page table mappings
 	int status = mmu.protect(root, vaddr, sz / VMM_DEFAULT_ALIGNMENT,
 				 PS_4KB, new_flags);
 	if (status) {
@@ -600,10 +653,8 @@ int vmm_protect(u64 root, u64 vaddr, u64 sz, enum mmu_flags new_flags)
 	}
 
 	if (vaddr == vma->base && sz == vma->size) {
-		/* Case 1: Perfect match - simple replacement */
 		vma->flags = new_flags;
 	} else if (vaddr == vma->base) {
-		/* Case 2: Shaving off the front edge */
 		vm_area_t *split_node = vma_alloc();
 		if (!split_node) {
 			spinlock_release(&space->lock);
@@ -619,7 +670,6 @@ int vmm_protect(u64 root, u64 vaddr, u64 sz, enum mmu_flags new_flags)
 		vma->size -= sz;
 		insert_vma(space, split_node);
 	} else if ((vaddr + sz) == (vma->base + vma->size)) {
-		/* Case 3: Shaving off the back edge */
 		vm_area_t *split_node = vma_alloc();
 		if (!split_node) {
 			spinlock_release(&space->lock);
@@ -634,7 +684,6 @@ int vmm_protect(u64 root, u64 vaddr, u64 sz, enum mmu_flags new_flags)
 		vma->size -= sz;
 		insert_vma(space, split_node);
 	} else {
-		/* Case 4: The Core Center Slice (3-Way Structural Split) */
 		vm_area_t *mid_node = vma_alloc();
 		vm_area_t *right_node = vma_alloc();
 		if (!mid_node || !right_node) {
@@ -646,12 +695,10 @@ int vmm_protect(u64 root, u64 vaddr, u64 sz, enum mmu_flags new_flags)
 			return ENOMEM;
 		}
 
-		// 1. Capture original right-hand metrics before we alter anything
 		u64 original_right_base = vaddr + sz;
 		u64 original_right_size =
 			(vma->base + vma->size) - original_right_base;
 
-		// 2. Set up the middle and right pieces
 		mid_node->base = vaddr;
 		mid_node->size = sz;
 		mid_node->flags = new_flags;
@@ -660,13 +707,10 @@ int vmm_protect(u64 root, u64 vaddr, u64 sz, enum mmu_flags new_flags)
 
 		right_node->base = original_right_base;
 		right_node->size = original_right_size;
-		right_node->flags = vma->flags; // Inherits old permissions
+		right_node->flags = vma->flags;
 		right_node->type = vma->type;
 		right_node->is_paged = vma->is_paged;
 
-		// 3. CRITICAL FIX: Isolate, modify, and fix up the original left node sizes
-		// In a Binary Tree, modifying sizes in-place breaks the search order.
-		// We temporarily pull it out, resize it, and re-insert it.
 		u64 original_left_base = vma->base;
 		u64 original_left_size = vaddr - vma->base;
 		enum mmu_flags original_left_flags = vma->flags;
@@ -688,7 +732,6 @@ int vmm_protect(u64 root, u64 vaddr, u64 sz, enum mmu_flags new_flags)
 		left_node->type = original_left_type;
 		left_node->is_paged = original_left_paged;
 
-		// 4. Clean re-insertion of all three fragmented parts into the tree
 		insert_vma(space, left_node);
 		insert_vma(space, mid_node);
 		insert_vma(space, right_node);
@@ -741,30 +784,27 @@ static int vmm_space_create_with_state(u64 boot_pt_root,
 {
 	if (!boot_pt_root || !out_space_root)
 		return EINVAL;
-	vmm_space_t *space = NULL;
 
-	spinlock_acquire(&s_registry_lock);
-	for (int i = 0; i < MAX_SPACE_TRACKERS; i++) {
-		if (!s_space_registry[i].in_use) {
-			space = &s_space_registry[i];
-			space->in_use = true;
-			break;
-		}
-	}
-	spinlock_release(&s_registry_lock);
+	vmm_space_t *space = vmm_space_meta_alloc();
 	if (!space)
 		return ENOMEM;
 
-	spinlock_acquire(&space->lock);
+	spinlock_acquire(&s_registry_lock);
 	space->page_table_root = boot_pt_root;
 	space->vma_head = NULL;
 	space->mmap_cache = NULL;
+	space->lock = 0;
 
 	for (int i = 0; i < region_count; i++) {
 		const boot_region_t *boot_zone = &regions[i];
 		vm_area_t *vma = vma_alloc();
 		if (!vma) {
-			spinlock_release(&space->lock);
+			// Cleanup allocated VMA nodes built up to this point
+			while (space->vma_head) {
+				remove_tree_node(space, space->vma_head);
+			}
+			spinlock_release(&s_registry_lock);
+			vmm_space_meta_free(space);
 			return ENOMEM;
 		}
 		vma->base = boot_zone->base;
@@ -774,8 +814,12 @@ static int vmm_space_create_with_state(u64 boot_pt_root,
 		vma->is_paged = true;
 		insert_vma(space, vma);
 	}
+
+	space->next = s_space_list_head;
+	s_space_list_head = space;
+	spinlock_release(&s_registry_lock);
+
 	*out_space_root = boot_pt_root;
-	spinlock_release(&space->lock);
 	return 0;
 }
 
@@ -783,11 +827,15 @@ int vmm_init(u64 boot_pt_root, const boot_region_t *regions, int region_count)
 {
 	if (!boot_pt_root)
 		return EINVAL;
-	for (int i = 0; i < MAX_SPACE_TRACKERS; i++) {
-		s_space_registry[i].page_table_root = 0;
-		s_space_registry[i].vma_head = NULL;
-		s_space_registry[i].in_use = false;
-	}
+
+	spinlock_acquire(&s_registry_lock);
+	s_space_list_head = NULL;
+	s_slab_head = NULL;
+	s_vma_free_list = NULL;
+	s_space_slab_head = NULL;
+	s_space_free_list = NULL;
+	spinlock_release(&s_registry_lock);
+
 	return vmm_space_create_with_state(boot_pt_root, regions, region_count,
 					   &g_kernel_space_root);
 }
