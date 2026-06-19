@@ -1,3 +1,4 @@
+#include "boot_info.h"
 #include "vmm.h"
 #include <modules.h>
 #include <api/vmm.h>
@@ -11,28 +12,17 @@ IMPORT_INTERFACE_ANY(pmm, pmm);
 IMPORT_INTERFACE_ANY(mmu, mmu);
 IMPORT_INTERFACE_ANY(serial, serial);
 
-int main(void)
+int main(boot_info_t *boot_info)
 {
-	/* 1. Define initial state layout regions (including the explicit 0x000000F000000000 block) */
-	boot_region_t initial_regions[] = {
-		{ .base = 0x000000F00000ULL,
-		  .size = 0x0000000040000ULL, // 1 GB size constraint
-		  .flags = 0x3,
-		  .type = VMM_REGION_FREE },
-		{ .base = 0x000,
-		  .size = 0x000000F00000ULL,
-		  .flags = 0x3,
-		  .type = VMM_REGION_DATA }
-	};
 	int initial_region_count =
-		sizeof(initial_regions) / sizeof(boot_region_t);
+		sizeof(boot_info->virtual_regions) / sizeof(boot_region_t);
 
 	/* 2. Bootstrapping VMM ledger state definitions */
 	u64 kernel_table_root;
 	mmu.get_kernel_ctx(&kernel_table_root);
 
 	// This is correct! It boots up your g_kernel_space_root with your initial region array.
-	int status = vmm_init(kernel_table_root, initial_regions,
+	int status = vmm_init(kernel_table_root, boot_info->virtual_regions,
 			      initial_region_count);
 	return 0;
 }

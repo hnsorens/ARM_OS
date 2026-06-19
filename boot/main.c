@@ -13,8 +13,13 @@
 #include "modules/module_import_handle.h"
 
 #define STACK_SIZE_PAGES 0x100
+#define PT_MEMORY_SIZE 0x1000000000000
 
 BootInfoStruct *BootInfo = 0;
+extern UINTN LoadOffset;
+
+// Region for HHDM and code
+VirtualMemoryRegion VirtualRegions;
 
 VOID Kernel_Panic()
 {
@@ -142,6 +147,11 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
 	}
 	Ok_Log("Allocating boot info\n", 21);
 
+	BootInfo->virtualRegion[0].base = 0;
+	BootInfo->virtualRegion[0].size = 0x7FFF80000000;
+	BootInfo->virtualRegion[0].flags = 0x3;
+	BootInfo->virtualRegion[0].type = VMM_REGION_DATA;
+
 	// Allocate Stack
 	EFI_PHYSICAL_ADDRESS StackPhysicalAddress = 0;
 	Status = SystemTable->BootServices->AllocatePages(
@@ -197,6 +207,13 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
 		return Status;
 	}
 	Ok_Log("Handling module imports\n", 24);
+
+	BootInfo->virtualRegion[0].size += LoadOffset;
+	BootInfo->virtualRegion[1].base = BootInfo->virtualRegion[0].size;
+	BootInfo->virtualRegion[1].size =
+		PT_MEMORY_SIZE - BootInfo->virtualRegion[0].size;
+	BootInfo->virtualRegion[1].flags = 0x3;
+	BootInfo->virtualRegion[1].type = VMM_REGION_FREE;
 
 	BootInfo->memoryMapSize = MemoryMapRegionsCount;
 	BootInfo->memoryRegions = (MemoryRegion *)MemoryMap;

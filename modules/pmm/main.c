@@ -13,6 +13,8 @@ int main(boot_info_t *boot_info)
 {
 	pmm_init(boot_info->memory_regions, boot_info->memory_map_size,
 		 HHDM_OFFSET);
+
+	return 0;
 }
 
 EXPORT_INTERFACE(pmm, PhysicalMemoryAllocator,
