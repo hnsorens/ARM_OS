@@ -1,3 +1,8 @@
+/**
+ * @file pmm.c
+ * @brief Core Binary-Buddy Engine Logic and Physical Memory Tracking Array Manipulators.
+ */
+
 #include "pmm.h"
 #include <utils.h>
 #include <errno.h>
@@ -6,13 +11,13 @@
 
 EXTERN_IMPORT_INTERFACE(serial, serial);
 
-/* Global tracking instance variables */
+/* --- Static Internal Subsystem Tracking Registries --- */
 static pmm_allocator_t g_pmm_allocator;
 static pmm_page_meta_t *g_pmm_meta_array = NULL;
 static u64 g_pmm_total_pages = 0;
 static u64 g_pmm_hhdm_offset = 0;
 
-/* Helper address arithmetic translation inline routines */
+/* --- Internal Inline Address Geometry Translators --- */
 static inline void *u64o_kv(u64 phys)
 {
 	return (void *)(phys + g_pmm_hhdm_offset);
@@ -33,7 +38,7 @@ static inline u64 index_to_paddr(u64 index)
 	return (u64)(index * PMM_PAGE_SIZE);
 }
 
-/* --- Internal Core Free List Manipulation Helpers --- */
+/* --- Core Intrusive List Element Manipulators --- */
 static void pmm_list_add(u8 order, pmm_block_node_t *node)
 {
 	pmm_order_list_t *list = &g_pmm_allocator.orders[order];
@@ -79,13 +84,11 @@ void pmm_init(memory_region_t *memory_map, u64 region_count, u64 hhdm_offset)
 	u64 meta_pages_needed =
 		(meta_array_size + PMM_PAGE_SIZE - 1) / PMM_PAGE_SIZE;
 
-	/* Secure space for the global allocation array inside a free block */
 	u64 meta_phys_alloc_start = 0;
 	for (u64 i = 0; i < region_count; i++) {
 		if (memory_map[i].memory_type == MEMORY_FREE &&
 		    memory_map[i].size >= meta_pages_needed) {
 			meta_phys_alloc_start = memory_map[i].start;
-
 			memory_map[i].start +=
 				(meta_pages_needed * PMM_PAGE_SIZE);
 			memory_map[i].size -= meta_pages_needed;
@@ -94,8 +97,6 @@ void pmm_init(memory_region_t *memory_map, u64 region_count, u64 hhdm_offset)
 	}
 
 	g_pmm_meta_array = (pmm_page_meta_t *)u64o_kv(meta_phys_alloc_start);
-
-	/* Pre-initialize physical page frame descriptor limits */
 	kmemset(g_pmm_meta_array, 0,
 		sizeof(pmm_page_meta_t) * g_pmm_total_pages);
 
@@ -107,7 +108,6 @@ void pmm_init(memory_region_t *memory_map, u64 region_count, u64 hhdm_offset)
 	g_pmm_allocator.total_memory_bytes = 0;
 	g_pmm_allocator.free_memory_bytes = 0;
 
-	/* Populate buddy sections sequentially using valid memory maps */
 	for (u64 i = 0; i < region_count; i++) {
 		if (memory_map[i].memory_type != MEMORY_FREE)
 			continue;
@@ -120,7 +120,6 @@ void pmm_init(memory_region_t *memory_map, u64 region_count, u64 hhdm_offset)
 			u64 remaining_bytes = chunk_end - chunk_cursor;
 			u8 target_order = PMM_MAX_ORDER - 1;
 
-			/* FIX: Look for the LARGEST valid buddy order block that fits alignment and bounds constraints */
 			while (target_order > 0) {
 				u64 block_bytes =
 					(1UL << target_order) * PMM_PAGE_SIZE;
@@ -136,7 +135,6 @@ void pmm_init(memory_region_t *memory_map, u64 region_count, u64 hhdm_offset)
 			u64 base_page_idx = u64o_index(chunk_cursor);
 			u64 block_pages = 1UL << target_order;
 
-			/* Set metadata configurations across the entire range of pages inside this block */
 			for (u64 p = 0; p < block_pages; p++) {
 				g_pmm_meta_array[base_page_idx + p].is_free = 1;
 				g_pmm_meta_array[base_page_idx + p].order =
@@ -145,7 +143,6 @@ void pmm_init(memory_region_t *memory_map, u64 region_count, u64 hhdm_offset)
 					0;
 			}
 
-			/* Overlay the free-list node directly into the newly registered frame head */
 			pmm_block_node_t *node =
 				(pmm_block_node_t *)u64o_kv(chunk_cursor);
 			pmm_list_add(target_order, node);
@@ -158,7 +155,7 @@ void pmm_init(memory_region_t *memory_map, u64 region_count, u64 hhdm_offset)
 	}
 }
 
-/* --- Allocation & Release Operations Implementation --- */
+/* --- Allocation Operations Implementation --- */
 int pmm_alloc_page(u8 page_order, u64 *out_frame)
 {
 	if (page_order >= PMM_MAX_ORDER || !out_frame)
@@ -175,13 +172,11 @@ int pmm_alloc_page(u8 page_order, u64 *out_frame)
 		pmm_list_remove(current_order, chosen_node);
 
 		u64 tracking_index = u64o_index(found_block_phys);
-
 		u64 allocated_pages = 1UL << current_order;
 		for (u64 p = 0; p < allocated_pages; p++) {
 			g_pmm_meta_array[tracking_index + p].is_free = 0;
 		}
 
-		/* Split larger blocks into required buddy sizes sequentially */
 		while (current_order > page_order) {
 			current_order--;
 			u64 split_block_size =
@@ -269,7 +264,7 @@ static int pmm_free_page(u8 page_order, u64 frame)
 	return 0;
 }
 
-/* --- Specialized Multi-Page Allocation Controllers --- */
+/* --- Specialized Allocation Implementations --- */
 int pmm_alloc_aligned(u64 count, u64 alignment, u64 *out)
 {
 	if (count == 0 || alignment < PMM_PAGE_SIZE ||
@@ -404,7 +399,7 @@ int pmm_alloc_in_range(u64 count, u64 max_addr, u64 *out)
 	return ENOMEM;
 }
 
-/* --- Reference Counting Engine Routines --- */
+/* --- Reference Management Operations --- */
 int pmm_retain(u64 frame)
 {
 	u64 page_idx = u64o_index(frame);
@@ -432,7 +427,7 @@ int pmm_release(u64 frame)
 	return EFAULT;
 }
 
-/* --- System Resource Metrics & Statistics Helpers --- */
+/* --- Diagnostic and Statistic Queries --- */
 u64 pmm_get_total_memory(void)
 {
 	return g_pmm_allocator.total_memory_bytes;
@@ -477,7 +472,6 @@ int pmm_reserve_range(u64 start, u64 sz)
 
 			g_pmm_allocator.free_memory_bytes -=
 				(1UL << current_order) * PMM_PAGE_SIZE;
-
 			idx = block_base_idx + block_pages - 1;
 		}
 	}

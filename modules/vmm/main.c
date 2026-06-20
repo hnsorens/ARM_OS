@@ -1,3 +1,10 @@
+/**
+ * @file main.c
+ * @brief Virtual Memory Manager (VMM) System Interface & Lifecycle Validation Suite
+ * * Orchestrates address space generation, translation tree mappings, structural VMA 
+ * fragmentation mechanics, and exports core subsystem interfaces into the global module registry.
+ */
+
 #include "boot_info.h"
 #include "vmm.h"
 #include <modules.h>
@@ -8,25 +15,34 @@
 #include <errno.h>
 #include <test.h>
 
+/* --- Subsystem Module Imports --- */
 IMPORT_INTERFACE_ANY(pmm, pmm);
 IMPORT_INTERFACE_ANY(mmu, mmu);
 IMPORT_INTERFACE_ANY(serial, serial);
 
+/**
+ * @brief Subsystem Bootstrap Entry Point
+ * Initializes the global kernel virtual memory context based on static mappings 
+ * provided by physical boot state configurations.
+ * * @param[in] boot_info Root descriptor layout capturing structural hardware descriptors.
+ * @return 0 on successful environment layout construction, or operational error tokens.
+ */
 int main(boot_info_t *boot_info)
 {
 	int initial_region_count =
 		sizeof(boot_info->virtual_regions) / sizeof(boot_region_t);
 
-	/* 2. Bootstrapping VMM ledger state definitions */
+	/* --- Bootstrapping VMM ledger state definitions --- */
 	u64 kernel_table_root;
 	mmu.get_kernel_ctx(&kernel_table_root);
 
-	// This is correct! It boots up your g_kernel_space_root with your initial region array.
+	/* Construct operational parameters anchoring the static kernel map architecture */
 	int status = vmm_init(kernel_table_root, boot_info->virtual_regions,
 			      initial_region_count);
 	return 0;
 }
 
+/* --- Subsystem API Interface Export Registration --- */
 EXPORT_INTERFACE(vmm, VirtualMemoryManager,
 		 { .space_create = vmm_space_create,
 		   .space_destroy = vmm_space_destroy,
@@ -42,6 +58,11 @@ EXPORT_INTERFACE(vmm, VirtualMemoryManager,
 
 #ifdef TESTING
 
+/**
+ * @brief Test Case: Address Space Isolation Lifecycle
+ * Assesses structural setup boundaries, physical page directory root generations,
+ * target error handling bounds validation, and clean teardown passes.
+ */
 TEST(VMM_SpaceLifecycle)
 {
 	TEST_INIT();
@@ -66,6 +87,11 @@ TEST(VMM_SpaceLifecycle)
 	TEST_RESULT();
 }
 
+/**
+ * @brief Test Case: Anonymous Memory Allocation and Query Verification
+ * Verifies address placement parameters, checks metadata properties via targeted
+ * query operations, and checks boundary protection faults on invalid ranges.
+ */
 TEST(VMM_AllocationAndQuery)
 {
 	TEST_INIT();
@@ -101,6 +127,11 @@ TEST(VMM_AllocationAndQuery)
 	TEST_RESULT();
 }
 
+/**
+ * @brief Test Case: Stack Guard Page Boundaries and Reservations
+ * Assesses ability to map a strict physical guard page region lacking 
+ * frame-level backing directly adjacent to an active thread stack structure.
+ */
 TEST(VMM_StackGuardLifecycle)
 {
 	TEST_INIT();
@@ -146,6 +177,11 @@ TEST(VMM_StackGuardLifecycle)
 	TEST_RESULT();
 }
 
+/**
+ * @brief Test Case: Mid-Range VMA Subrange Splitting Mechanics
+ * Forces structural allocation division by punching an unmapped gap through the 
+ * center of a monolithic contiguous allocation block layout.
+ */
 TEST(VMM_FreeSubrangeSplitting)
 {
 	TEST_INIT();
@@ -167,7 +203,7 @@ TEST(VMM_FreeSubrangeSplitting)
 	status = vmm_free(root, punch_vaddr, 4096);
 	EXPECT_EQ(status, 0);
 
-	// 3. Verify the layout was fractured into two distinct valid tracking sections
+	/* 3. Verify the layout was fractured into two discrete valid tracking sections */
 	struct vmm_region_info left_chunk;
 	status = vmm_query(root, vaddr, &left_chunk);
 	EXPECT_EQ(status, 0);
@@ -189,6 +225,11 @@ TEST(VMM_FreeSubrangeSplitting)
 	TEST_RESULT();
 }
 
+/**
+ * @brief Test Case: Dynamic Range Scaling and Collision Assessment
+ * Profiles onward linear footprint dilation, backwards contraction adjustments,
+ * and tracks allocation refusal when a static blocker node thwarts a target expansion path.
+ */
 TEST(VMM_DynamicResizing)
 {
 	TEST_INIT();
@@ -228,7 +269,7 @@ TEST(VMM_DynamicResizing)
 			      VMM_REGION_DATA);
 	EXPECT_EQ(status, 0);
 
-	// Attempting expansion into the newly occupied address range must fail with ENOMEM
+	/* Attempting expansion into the newly occupied address range must fail with ENOMEM */
 	status = vmm_resize(root, vaddr, 4096 * 1, 4096 * 3);
 	EXPECT_EQ(status, ENOMEM);
 
@@ -237,6 +278,11 @@ TEST(VMM_DynamicResizing)
 	TEST_RESULT();
 }
 
+/**
+ * @brief Test Case: Complex 3-Way Protection Fragmentation Layouts
+ * Assesses granular hardware page table attribute adjustments by modifying entry flags 
+ * on an isolated middle subrange inside an otherwise uniform allocation block.
+ */
 TEST(VMM_ProtectFragmentation)
 {
 	TEST_INIT();
@@ -258,7 +304,7 @@ TEST(VMM_ProtectFragmentation)
 	status = vmm_protect(root, mid_vaddr, 4096, MMU_RO | MMU_USER);
 	EXPECT_EQ(status, 0);
 
-	// 3. Verify fragmentation consistency across left, middle, and right regions independently
+	/* 3. Verify fragmentation consistency across left, middle, and right regions independently */
 	struct vmm_region_info left, mid, right;
 
 	status = vmm_query(root, vaddr, &left);
@@ -281,6 +327,11 @@ TEST(VMM_ProtectFragmentation)
 	TEST_RESULT();
 }
 
+/**
+ * @brief Test Case: Resource Limit Saturation and Node Exhaustion Checks
+ * Simulates high structural stress by rapidly filling the VMA tracking structures 
+ * to their maximal threshold, asserting clean errors, then clearing the ledger completely.
+ */
 TEST(VMM_ExhaustionLimits)
 {
 #define MAX_VMA_POOL_SIZE 512
@@ -294,7 +345,7 @@ TEST(VMM_ExhaustionLimits)
 	u64 allocated_addresses[MAX_VMA_POOL_SIZE + 5];
 	int allocation_count = 0;
 
-	// Exhaust layout allocation limits completely
+	/* Exhaust layout allocation limits completely */
 	for (int i = 0; i < MAX_VMA_POOL_SIZE + 2; i++) {
 		u64 hint = 0;
 		status =
@@ -308,7 +359,7 @@ TEST(VMM_ExhaustionLimits)
 		}
 	}
 
-	// Ensure we can clear everything back down to an empty baseline pool state safely
+	/* Ensure we can clear everything back down to an empty baseline pool state safely */
 	for (int i = 0; i < allocation_count; i++) {
 		status = vmm_free(root, allocated_addresses[i], 4096);
 		EXPECT_EQ(status, 0);

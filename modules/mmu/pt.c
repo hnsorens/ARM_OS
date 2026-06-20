@@ -1,3 +1,8 @@
+/**
+ * @file pt.c
+ * @brief Core Implementation details of the AArch64 Multi-Level Translation Page Table Engine.
+ */
+
 #include "pt.h"
 #include <modules.h>
 #include <api/mmu.h>
@@ -20,13 +25,24 @@
 #define HHDM_OFFSET 0xFFFF800000000000ULL
 #define TLB_BATCH_THRESHOLD 64
 
+/* --- Core Module Linkage Hooks --- */
 EXTERN_IMPORT_INTERFACE(pmm, pmm);
 
+/**
+ * @brief Internal Helper: Computes the virtual memory address alias via High Half Direct Map offsets.
+ * @param[in] phys Base physical address coordinates to adjust.
+ * @return u64* Pointer targeting the matching virtual address mirror window location.
+ */
 static inline u64 *l2v(u64 phys)
 {
 	return (u64 *)(phys + HHDM_OFFSET);
 }
 
+/**
+ * @brief Internal Helper: Deconstructs a linear virtual address into relative multi-level page indexes.
+ * @param[in] virt Raw virtual address address space coordinates to disassemble.
+ * @return struct pt_indices Decoded architectural indexing metadata tracking structures.
+ */
 static struct pt_indices extract_indices(u64 virt)
 {
 	struct pt_indices idx;
@@ -40,6 +56,11 @@ static struct pt_indices extract_indices(u64 virt)
 	return idx;
 }
 
+/**
+ * @brief Internal Helper: Inspects an active page directory frame to verify if all elements are dead.
+ * @param[in] pt_phys Physical frame address targeting the memory lookup matrix to check.
+ * @return bool True if every entry inside the structural tracking container is zero.
+ */
 static bool is_pt_empty(u64 pt_phys)
 {
 	u64 *table = l2v(pt_phys);
@@ -54,6 +75,10 @@ static bool is_pt_empty(u64 pt_phys)
 
 /* --- SECTION 1: SYSTEM TEARDOWN HELPERS (pt_free) --- */
 
+/**
+ * @brief Internal Helper: Traverses and wipes terminal entries across Level 2 descriptors.
+ * @param[in,out] l2 Pointer addressing the base level 2 table matrix cluster.
+ */
 static void free_l2_table(u64 *l2)
 {
 	u64 k;
@@ -64,6 +89,10 @@ static void free_l2_table(u64 *l2)
 	}
 }
 
+/**
+ * @brief Internal Helper: Traverses down Level 1 table descriptor matrices to clear ancestral links.
+ * @param[in,out] l1 Pointer addressing the base level 1 table matrix structure.
+ */
 static void free_l1_table(u64 *l1)
 {
 	u64 *l2;
@@ -81,11 +110,15 @@ static void free_l1_table(u64 *l1)
 
 int pt_free(u64 root)
 {
-	u64 *l0, *l1;
+	int status = 0;
+	u64 *l0 = NULL;
+	u64 *l1 = NULL;
 	u64 i;
 
-	if (unlikely(!root))
-		return -EINVAL;
+	if (unlikely(!root)) {
+		status = -EINVAL;
+		goto cleanup;
+	}
 
 	l0 = l2v(root);
 	for (i = 0; i < 512; i++) {
@@ -98,97 +131,134 @@ int pt_free(u64 root)
 	}
 
 	pmm.release(root);
-	return 0;
+
+cleanup:
+	return status;
 }
 
 /* --- SECTION 2: SYSTEM CLONE HELPERS (pt_copy) --- */
 
+/**
+ * @brief Internal Helper: Performs an exact hardware duplicate clone of terminal Level 3 descriptors.
+ * @param[out] dst_l3 Pointer tracking destination page map indices.
+ * @param[in]  src_l3 Pointer targeting raw source model templates.
+ */
 static void copy_l3_table(u64 *dst_l3, u64 *src_l3)
 {
 	u64 m;
 
-	// Level 3 entries are terminal data pages; copy them exactly as-is
 	for (m = 0; m < 512; m++)
 		dst_l3[m] = src_l3[m];
 }
 
+/**
+ * @brief Internal Helper: Iteratively mirrors layout schemas across active Level 2 structures.
+ * @param[out] dst_l2 Tracking matrix pointing to target duplicate destination structures.
+ * @param[in]  src_l2 Baseline operational framework matching template inputs.
+ * @return int Operational execution status context values.
+ */
 static int copy_l2_table(u64 *dst_l2, u64 *src_l2)
 {
+	int status = 0;
 	u64 new_l3_phys;
-	u64 *src_l3, *dst_l3;
+	u64 *src_l3 = NULL;
+	u64 *dst_l3 = NULL;
 	u64 k;
 
 	for (k = 0; k < 512; k++) {
 		if (!pte_valid(src_l2[k]))
 			continue;
 
-		// If it's a 2MB huge block mapping, copy it directly (it's terminal data)
 		if (!u64able(src_l2[k])) {
 			dst_l2[k] = src_l2[k];
 			continue;
 		}
 
-		// It's a table pointer; allocate a fresh page for the duplicate tree branch
-		if (unlikely(pmm.alloc_page(0, &new_l3_phys)))
-			return -ENOMEM;
+		status = pmm.alloc_page(0, &new_l3_phys);
+		if (unlikely(status)) {
+			status = -ENOMEM;
+			goto cleanup;
+		}
 
-		// Force a clean table descriptor signature (0x3) without bleeding data flags
 		dst_l2[k] = new_l3_phys | ARM_TABLE_DESCRIPTOR;
 
 		src_l3 = l2v(src_l2[k] & PAGE_MASK);
 		dst_l3 = l2v(new_l3_phys);
-		kmemset(dst_l3, 0,
-			4096); // Always zero memory for newly allocated tables
+		kmemset(dst_l3, 0, 4096);
 
 		copy_l3_table(dst_l3, src_l3);
 	}
-	return 0;
+
+cleanup:
+	return status;
 }
 
+/**
+ * @brief Internal Helper: Deep copies architectural frameworks tracking Level 1 page hierarchies.
+ * @param[out] dst_l1 Destination pointer target mapping clone storage directories.
+ * @param[in]  src_l1 Master structural source map layout configurations.
+ * @return int Operational execution status context values.
+ */
 static int copy_l1_table(u64 *dst_l1, u64 *src_l1)
 {
+	int status = 0;
 	u64 new_l2_phys;
-	u64 *src_l2, *dst_l2;
+	u64 *src_l2 = NULL;
+	u64 *dst_l2 = NULL;
 	u64 j;
 
 	for (j = 0; j < 512; j++) {
 		if (!pte_valid(src_l1[j]))
 			continue;
 
-		// If it's a 1GB huge block mapping, copy it directly (it's terminal data)
 		if (!u64able(src_l1[j])) {
 			dst_l1[j] = src_l1[j];
 			continue;
 		}
 
-		// It's a table pointer; allocate a fresh level 2 table page
-		if (unlikely(pmm.alloc_page(0, &new_l2_phys)))
-			return -ENOMEM;
+		status = pmm.alloc_page(0, &new_l2_phys);
+		if (unlikely(status)) {
+			status = -ENOMEM;
+			goto cleanup;
+		}
 
-		// Clean link to the newly allocated physical page frame
 		dst_l1[j] = new_l2_phys | ARM_TABLE_DESCRIPTOR;
 
 		src_l2 = l2v(src_l1[j] & PAGE_MASK);
 		dst_l2 = l2v(new_l2_phys);
 		kmemset(dst_l2, 0, 4096);
 
-		if (unlikely(copy_l2_table(dst_l2, src_l2)))
-			return -ENOMEM;
+		status = copy_l2_table(dst_l2, src_l2);
+		if (unlikely(status)) {
+			goto cleanup;
+		}
 	}
-	return 0;
+
+cleanup:
+	return status;
 }
 
 int pt_copy(u64 src_root, u64 *dst_root)
 {
-	u64 new_l0_phys, new_l1_phys;
-	u64 *src_l0, *dst_l0, *src_l1, *dst_l1;
+	int status = 0;
+	u64 new_l0_phys = 0;
+	u64 new_l1_phys = 0;
+	u64 *src_l0 = NULL;
+	u64 *dst_l0 = NULL;
+	u64 *src_l1 = NULL;
+	u64 *dst_l1 = NULL;
 	u64 i;
 
-	if (unlikely(!src_root || !dst_root))
-		return -EINVAL;
+	if (unlikely(!src_root || !dst_root)) {
+		status = -EINVAL;
+		goto cleanup;
+	}
 
-	if (unlikely(pmm.alloc_page(0, &new_l0_phys)))
-		return -ENOMEM;
+	status = pmm.alloc_page(0, &new_l0_phys);
+	if (unlikely(status)) {
+		status = -ENOMEM;
+		goto cleanup;
+	}
 
 	src_l0 = l2v(src_root);
 	dst_l0 = l2v(new_l0_phys);
@@ -198,9 +268,11 @@ int pt_copy(u64 src_root, u64 *dst_root)
 		if (!pte_valid(src_l0[i]))
 			continue;
 
-		// Level 0 entries can ONLY be table descriptors on ARM64 4KB granule
-		if (unlikely(pmm.alloc_page(0, &new_l1_phys)))
-			goto fail;
+		status = pmm.alloc_page(0, &new_l1_phys);
+		if (unlikely(status)) {
+			status = -ENOMEM;
+			goto fail_unwind;
+		}
 
 		dst_l0[i] = new_l1_phys | ARM_TABLE_DESCRIPTOR;
 
@@ -208,31 +280,50 @@ int pt_copy(u64 src_root, u64 *dst_root)
 		dst_l1 = l2v(new_l1_phys);
 		kmemset(dst_l1, 0, 4096);
 
-		if (unlikely(copy_l1_table(dst_l1, src_l1)))
-			goto fail;
+		status = copy_l1_table(dst_l1, src_l1);
+		if (unlikely(status)) {
+			goto fail_unwind;
+		}
 	}
 
 	*dst_root = new_l0_phys;
-	return 0;
+	goto cleanup;
 
-fail:
+fail_unwind:
 	pt_free(new_l0_phys);
-	return -ENOMEM;
+
+cleanup:
+	return status;
 }
 
 /* --- SECTION 3: MAPPING ENGINE OPERATION HELPERS (pt_map) --- */
 
+/**
+ * @brief Internal Helper: Traverses tree nodes to establish a single targeted address entry link.
+ * @param[in,out] l0 Base memory coordinate anchoring root directory structures.
+ * @param[in]     vaddr Virtual translation route path coordinate destination.
+ * @param[in]     paddr Physical system target core destination offset frame address.
+ * @param[in]     pg_size Discrete architectural geometry constraint flag.
+ * @param[in]     f System operational access flags profile configuration bitmask.
+ * @return int Operational execution status context values.
+ */
 static int pt_map_single_page(u64 *l0, u64 vaddr, u64 paddr, u64 pg_size,
 			      enum mmu_flags f)
 {
+	int status = 0;
 	struct pt_indices idx = extract_indices(vaddr);
-	u64 *l1, *l2, *l3;
+	u64 *l1 = NULL;
+	u64 *l2 = NULL;
+	u64 *l3 = NULL;
 	u64 tbl_phys;
 
-	/* Resolve Level 0 -> Level 1 */
+	/* Resolve Level 0 -> Level 1 Directory Transitions */
 	if (!pte_valid(l0[idx.l0_index])) {
-		if (unlikely(pmm.alloc_page(0, &tbl_phys)))
-			return -ENOMEM;
+		status = pmm.alloc_page(0, &tbl_phys);
+		if (unlikely(status)) {
+			status = -ENOMEM;
+			goto cleanup;
+		}
 		l1 = l2v(tbl_phys);
 		kmemset(l1, 0, 4096);
 		l0[idx.l0_index] = tbl_phys | ARM_TABLE_DESCRIPTOR;
@@ -240,21 +331,24 @@ static int pt_map_single_page(u64 *l0, u64 vaddr, u64 paddr, u64 pg_size,
 		l1 = l2v(l0[idx.l0_index] & PAGE_MASK);
 	}
 
+	/* Process Massive 1GB Monolithic Block Allocations directly inside Level 1 structures */
 	if (pg_size == PS_1GB) {
-		if (unlikely(pte_valid(l1[idx.l1_index])))
-			return -EEXIST;
-
-		// Clear bits [29:0] of address, force valid bit (0), clear table bit (1)
-		// Then apply user flags cleanly without letting bit 1 break the block layout
+		if (unlikely(pte_valid(l1[idx.l1_index]))) {
+			status = -EEXIST;
+			goto cleanup;
+		}
 		l1[idx.l1_index] = (paddr & ~0x3FFFFFFF) |
 				   ((f & ~(1ULL << 1)) | 1ULL);
-		return 0;
+		goto cleanup;
 	}
 
-	/* Resolve Level 1 -> Level 2 */
+	/* Resolve Level 1 -> Level 2 Directory Transitions */
 	if (!pte_valid(l1[idx.l1_index])) {
-		if (unlikely(pmm.alloc_page(0, &tbl_phys)))
-			return -ENOMEM;
+		status = pmm.alloc_page(0, &tbl_phys);
+		if (unlikely(status)) {
+			status = -ENOMEM;
+			goto cleanup;
+		}
 		l2 = l2v(tbl_phys);
 		kmemset(l2, 0, 4096);
 		l1[idx.l1_index] = tbl_phys | ARM_TABLE_DESCRIPTOR;
@@ -262,20 +356,24 @@ static int pt_map_single_page(u64 *l0, u64 vaddr, u64 paddr, u64 pg_size,
 		l2 = l2v(l1[idx.l1_index] & PAGE_MASK);
 	}
 
+	/* Process Midsize 2MB Block Allocations inside Level 2 boundaries safely */
 	if (pg_size == PS_2MB) {
-		if (unlikely(pte_valid(l2[idx.l2_index])))
-			return -EEXIST;
-
-		// Clear bits [20:0] of address, force valid bit (0), clear table bit (1)
+		if (unlikely(pte_valid(l2[idx.l2_index]))) {
+			status = -EEXIST;
+			goto cleanup;
+		}
 		l2[idx.l2_index] = (paddr & ~0x1FFFFF) |
 				   ((f & ~(1ULL << 1)) | 1ULL);
-		return 0;
+		goto cleanup;
 	}
 
-	/* Resolve Level 2 -> Level 3 */
+	/* Resolve Level 2 -> Level 3 Terminal Frame Transitions */
 	if (!pte_valid(l2[idx.l2_index])) {
-		if (unlikely(pmm.alloc_page(0, &tbl_phys)))
-			return -ENOMEM;
+		status = pmm.alloc_page(0, &tbl_phys);
+		if (unlikely(status)) {
+			status = -ENOMEM;
+			goto cleanup;
+		}
 		l3 = l2v(tbl_phys);
 		kmemset(l3, 0, 4096);
 		l2[idx.l2_index] = tbl_phys | ARM_TABLE_DESCRIPTOR;
@@ -283,27 +381,38 @@ static int pt_map_single_page(u64 *l0, u64 vaddr, u64 paddr, u64 pg_size,
 		l3 = l2v(l2[idx.l2_index] & PAGE_MASK);
 	}
 
-	if (unlikely(pte_valid(l3[idx.l3_index])))
-		return -EEXIST;
+	if (unlikely(pte_valid(l3[idx.l3_index]))) {
+		status = -EEXIST;
+		goto cleanup;
+	}
 
-	// 4KB Pages require both Bit 0 and Bit 1 to be 1
+	/* Finalize 4KB Standard Granule Page link parameters securely */
 	l3[idx.l3_index] = (paddr & PAGE_MASK) | f | ARM_PAGE_DESCRIPTOR;
-	return 0;
+
+cleanup:
+	return status;
 }
 
 int pt_map(u64 root, u64 virt, u64 phys, u64 pg_count, enum page_size pg_size,
 	   enum mmu_flags f)
 {
-	u64 *l0;
+	int status = 0;
+	u64 *l0 = NULL;
 	u64 i;
-	int err;
 
-	if (unlikely(!root))
-		return -EINVAL;
-	if (unlikely(!IS_ALIGNED(virt, pg_size) || !IS_ALIGNED(phys, pg_size)))
-		return -EINVAL;
-	if (unlikely(virt + (pg_count * pg_size) < virt))
-		return -EOVERFLOW;
+	if (unlikely(!root)) {
+		status = -EINVAL;
+		goto cleanup;
+	}
+	if (unlikely(!IS_ALIGNED(virt, pg_size) ||
+		     !IS_ALIGNED(phys, pg_size))) {
+		status = -EINVAL;
+		goto cleanup;
+	}
+	if (unlikely(virt + (pg_count * pg_size) < virt)) {
+		status = -EOVERFLOW;
+		goto cleanup;
+	}
 
 	l0 = l2v(root);
 
@@ -311,21 +420,33 @@ int pt_map(u64 root, u64 virt, u64 phys, u64 pg_count, enum page_size pg_size,
 		u64 curr_v = virt + (i * pg_size);
 		u64 curr_p = phys + (i * pg_size);
 
-		err = pt_map_single_page(l0, curr_v, curr_p, pg_size, f);
-		if (unlikely(err))
-			return err;
+		status = pt_map_single_page(l0, curr_v, curr_p, pg_size, f);
+		if (unlikely(status)) {
+			goto cleanup;
+		}
 	}
 
-	return pt_invalidate(virt, pg_count, pg_size);
+	status = pt_invalidate(virt, pg_count, pg_size);
+
+cleanup:
+	return status;
 }
 
 /* --- SECTION 4: UNMAPPING ENGINE OPERATION HELPERS (pt_unmap) --- */
 
+/**
+ * @brief Internal Helper: Drops individual translation routes out of the active hardware matrix maps.
+ * @param[in,out] l0 Base pointer referencing root level address directory anchors.
+ * @param[in]     vaddr Virtual system mapping target address to systematically unmap.
+ * @param[in]     pg_size Sizing footprint metrics classifying targeted allocations.
+ */
 static void pt_unmap_single_page(u64 *l0, u64 vaddr, u64 pg_size)
 {
 	struct pt_indices idx = extract_indices(vaddr);
 	u64 l1_phys, l2_phys, l3_phys;
-	u64 *l1, *l2, *l3;
+	u64 *l1 = NULL;
+	u64 *l2 = NULL;
+	u64 *l3 = NULL;
 
 	if (!pte_valid(l0[idx.l0_index]))
 		return;
@@ -375,99 +496,142 @@ prune_l1:
 
 int pt_unmap(u64 root, u64 virt, u64 pg_count, enum page_size pg_size)
 {
-	u64 *l0;
+	int status = 0;
+	u64 *l0 = NULL;
 	u64 i;
 
-	if (unlikely(!root))
-		return -EINVAL;
+	if (unlikely(!root)) {
+		status = -EINVAL;
+		goto cleanup;
+	}
 
 	l0 = l2v(root);
 
 	for (i = 0; i < pg_count; i++)
 		pt_unmap_single_page(l0, virt + (i * pg_size), pg_size);
 
-	return pt_invalidate(virt, pg_count, pg_size);
+	status = pt_invalidate(virt, pg_count, pg_size);
+
+cleanup:
+	return status;
 }
 
 /* --- SECTION 5: ACCESS ATTRIBUTE MODIFICATION HELPERS (pt_protect) --- */
 
+/**
+ * @brief Internal Helper: Edits target access bitwise fields within single map tracking descriptor entries.
+ * @param[in,out] l0 Base root memory alignment array pointer mapping context tracking chains.
+ * @param[in]     vaddr Virtual index translation track target route coordinates.
+ * @param[in]     pg_size Target sizing metrics mapping structural alignment layout steps.
+ * @param[in]     f Modified flags configuration profiles to safely apply over active entries.
+ * @return int Operational execution status context values.
+ */
 static int pt_protect_single_page(u64 *l0, u64 vaddr, u64 pg_size,
 				  enum mmu_flags f)
 {
+	int status = 0;
 	struct pt_indices idx = extract_indices(vaddr);
 	u64 phys_addr;
-	u64 *l1, *l2, *l3;
+	u64 *l1 = NULL;
+	u64 *l2 = NULL;
+	u64 *l3 = NULL;
 
-	if (!pte_valid(l0[idx.l0_index]))
-		return -EFAULT;
+	if (!pte_valid(l0[idx.l0_index])) {
+		status = -EFAULT;
+		goto cleanup;
+	}
 	l1 = l2v(l0[idx.l0_index] & PAGE_MASK);
 
 	if (pg_size == PS_1GB) {
-		if (!pte_valid(l1[idx.l1_index]))
-			return -EFAULT;
+		if (!pte_valid(l1[idx.l1_index])) {
+			status = -EFAULT;
+			goto cleanup;
+		}
 		phys_addr = l1[idx.l1_index] & PTE_ADDR_MASK;
 		l1[idx.l1_index] = phys_addr | f;
-		return 0;
+		goto cleanup;
 	}
 
-	if (!pte_valid(l1[idx.l1_index]))
-		return -EFAULT;
+	if (!pte_valid(l1[idx.l1_index])) {
+		status = -EFAULT;
+		goto cleanup;
+	}
 	l2 = l2v(l1[idx.l1_index] & PAGE_MASK);
 
 	if (pg_size == PS_2MB) {
-		if (!pte_valid(l2[idx.l2_index]))
-			return -EFAULT;
+		if (!pte_valid(l2[idx.l2_index])) {
+			status = -EFAULT;
+			goto cleanup;
+		}
 		phys_addr = l2[idx.l2_index] & PTE_ADDR_MASK;
 		l2[idx.l2_index] = phys_addr | f;
-		return 0;
+		goto cleanup;
 	}
 
-	if (!pte_valid(l2[idx.l2_index]))
-		return -EFAULT;
+	if (!pte_valid(l2[idx.l2_index])) {
+		status = -EFAULT;
+		goto cleanup;
+	}
 	l3 = l2v(l2[idx.l2_index] & PAGE_MASK);
 
 	if (pg_size == PS_4KB) {
-		if (!pte_valid(l3[idx.l3_index]))
-			return -EFAULT;
+		if (!pte_valid(l3[idx.l3_index])) {
+			status = -EFAULT;
+			goto cleanup;
+		}
 		phys_addr = l3[idx.l3_index] & PTE_ADDR_MASK;
 		l3[idx.l3_index] = phys_addr | f | ARM_PAGE_DESCRIPTOR;
 	}
 
-	return 0;
+cleanup:
+	return status;
 }
 
 int pt_protect(u64 root, u64 virt, u64 pg_count, enum page_size pg_size,
 	       enum mmu_flags f)
 {
-	u64 *l0;
+	int status = 0;
+	u64 *l0 = NULL;
 	u64 i;
-	int err;
 
-	if (unlikely(!root))
-		return -EINVAL;
+	if (unlikely(!root)) {
+		status = -EINVAL;
+		goto cleanup;
+	}
 
 	l0 = l2v(root);
 
 	for (i = 0; i < pg_count; i++) {
-		err = pt_protect_single_page(l0, virt + (i * pg_size), pg_size,
-					     f);
-		if (unlikely(err))
-			return err;
+		status = pt_protect_single_page(l0, virt + (i * pg_size),
+						pg_size, f);
+		if (unlikely(status)) {
+			goto cleanup;
+		}
 	}
 
-	return pt_invalidate(virt, pg_count, pg_size);
+	status = pt_invalidate(virt, pg_count, pg_size);
+
+cleanup:
+	return status;
 }
 
 /* --- SECTION 6: SYSTEM UTILITIES AND CORE API ENTRY POINTS --- */
 
 int pt_alloc(u64 *out_root)
 {
-	if (unlikely(!out_root))
-		return -EINVAL;
+	int status = 0;
 
-	int status = pmm.alloc_page(0, out_root);
-	kmemset((void *)*out_root, 0, 4096);
+	if (unlikely(!out_root)) {
+		status = -EINVAL;
+		goto cleanup;
+	}
 
+	status = pmm.alloc_page(0, out_root);
+	if (status == 0) {
+		kmemset((void *)*out_root, 0, 4096);
+	}
+
+cleanup:
 	return status;
 }
 
@@ -498,7 +662,6 @@ int pt_set_kernel_ctx(u64 root, u16 asid)
 int pt_get_user_ctx(u64 *root)
 {
 	u64 ttbr0;
-	// Read Translation Table Base Register 0 for Exception Level 1 (User)
 	__asm__ volatile("mrs %0, ttbr0_el1" : "=r"(ttbr0));
 	*root = ttbr0 & PAGE_MASK;
 	return 0;
@@ -507,7 +670,6 @@ int pt_get_user_ctx(u64 *root)
 int pt_get_kernel_ctx(u64 *root)
 {
 	u64 ttbr1;
-	// Read Translation Table Base Register 1 for Exception Level 1 (Kernel)
 	__asm__ volatile("mrs %0, ttbr1_el1" : "=r"(ttbr1));
 	*root = ttbr1 & PAGE_MASK;
 	return 0;
@@ -515,62 +677,79 @@ int pt_get_kernel_ctx(u64 *root)
 
 int pt_translate(u64 root, u64 virt, u64 *phys_out, enum mmu_flags *flags_out)
 {
+	int status = 0;
 	struct pt_indices idx;
 	u64 l1_phys, l2_phys, l3_phys, phys_base;
-	u64 *l0, *l1, *l2, *l3;
+	u64 *l0 = NULL;
+	u64 *l1 = NULL;
+	u64 *l2 = NULL;
+	u64 *l3 = NULL;
 
-	if (unlikely(!root || !phys_out || !flags_out))
-		return -EINVAL;
+	if (unlikely(!root || !phys_out || !flags_out)) {
+		status = -EINVAL;
+		goto cleanup;
+	}
 
 	idx = extract_indices(virt);
 	l0 = l2v(root);
 
-	if (!pte_valid(l0[idx.l0_index]))
-		return -EFAULT;
+	if (!pte_valid(l0[idx.l0_index])) {
+		status = -EFAULT;
+		goto cleanup;
+	}
 
 	l1_phys = l0[idx.l0_index] & PAGE_MASK;
 	l1 = l2v(l1_phys);
 
-	if (!pte_valid(l1[idx.l1_index]))
-		return -EFAULT;
+	if (!pte_valid(l1[idx.l1_index])) {
+		status = -EFAULT;
+		goto cleanup;
+	}
 
-	// 1GB Block Translation
+	/* Process Massive 1GB Block Translation Path Heuristics */
 	if (!(l1[idx.l1_index] & (1ULL << 1))) {
 		phys_base = l1[idx.l1_index] & ~0x3FFFFFFF;
 		*phys_out = phys_base + (virt & 0x3FFFFFFF);
 		*flags_out = l1[idx.l1_index] & PTE_RETURN_FLAG_MASK;
-		return 0;
+		goto cleanup;
 	}
 
 	l2_phys = l1[idx.l1_index] & PAGE_MASK;
 	l2 = l2v(l2_phys);
 
-	if (!pte_valid(l2[idx.l2_index]))
-		return -EFAULT;
+	if (!pte_valid(l2[idx.l2_index])) {
+		status = -EFAULT;
+		goto cleanup;
+	}
 
-	// 2MB Block Translation
+	/* Process Midsize 2MB Block Translation Path Heuristics */
 	if (!(l2[idx.l2_index] & (1ULL << 1))) {
 		phys_base = l2[idx.l2_index] & ~0x1FFFFF;
 		*phys_out = phys_base + (virt & 0x1FFFFF);
 		*flags_out = l2[idx.l2_index] & PTE_RETURN_FLAG_MASK;
-		return 0;
+		goto cleanup;
 	}
 
 	l3_phys = l2[idx.l2_index] & PAGE_MASK;
 	l3 = l2v(l3_phys);
 
-	if (!pte_valid(l3[idx.l3_index]))
-		return -EFAULT;
+	if (!pte_valid(l3[idx.l3_index])) {
+		status = -EFAULT;
+		goto cleanup;
+	}
 
-	// 4KB Page Translation
+	/* Process Standard 4KB Page Translation Terminal Map Attributes */
 	if (l3[idx.l3_index] & ARM_PAGE_DESCRIPTOR) {
 		phys_base = l3[idx.l3_index] & PAGE_MASK;
 		*phys_out = phys_base + idx.offset;
 		*flags_out = l3[idx.l3_index] & PTE_RETURN_FLAG_MASK;
-		return 0;
+		goto cleanup;
 	}
 
-	return -EFAULT;
+	status = -EFAULT;
+
+cleanup:
+	return status;
 }
 
 int pt_flush(void)
@@ -588,7 +767,6 @@ int pt_invalidate(u64 virt, u64 pg_count, enum page_size pg_size)
 {
 	u64 i;
 
-	// Global flush fallback works seamlessly across both halves
 	if (pg_count > TLB_BATCH_THRESHOLD) {
 		__asm__ volatile("tlbi vmalle1is\n"
 				 "dsb ish\n"
@@ -599,7 +777,6 @@ int pt_invalidate(u64 virt, u64 pg_count, enum page_size pg_size)
 		return 0;
 	}
 
-	// Retrieve the active ASID from TTBR0_EL1 to ensure precise matching
 	u64 ttbr0;
 	__asm__ volatile("mrs %0, ttbr0_el1" : "=r"(ttbr0));
 	u64 asid = (ttbr0 >> 48) & 0xFFFFULL;
@@ -607,15 +784,13 @@ int pt_invalidate(u64 virt, u64 pg_count, enum page_size pg_size)
 	for (i = 0; i < pg_count; ++i) {
 		u64 target = virt + (i * pg_size);
 
-		/* * ARM64 TLBI Formatter:
-         * Bits [43:0]  = Target Virtual Address bits [55:12]
-         * Bits [63:48] = ASID value
+		/* * AArch64 Architectural TLBI Payload Formatter Map:
+         * Bits [43:0]  = Target Virtual Address range payload segments [55:12]
+         * Bits [63:48] = Assigned Address Space Identifier (ASID) tag code context
          */
 		u64 tlbi_payload = ((target >> 12) & 0x000000FFFFFFFFFFULL);
 		tlbi_payload |= (asid << 48);
 
-		// If it's a high half address, we MUST use 'va' instructions instead of 'val'
-		// to cleanly assert architecture table level context across boundaries.
 		if (target >= 0xFFFF800000000000ULL) {
 			__asm__ volatile("tlbi vae1is, %0"
 					 :
@@ -629,7 +804,6 @@ int pt_invalidate(u64 virt, u64 pg_count, enum page_size pg_size)
 		}
 	}
 
-	// Pipeline Synchronization Barrier
 	__asm__ volatile("dsb ish\n"
 			 "isb"
 			 :

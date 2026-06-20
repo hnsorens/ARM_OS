@@ -1,3 +1,8 @@
+/**
+ * @file pt.h
+ * @brief Public Architectural Definitions and Translation Vector Interfaces for the AArch64 MMU Engine.
+ */
+
 #ifndef PAGE_TABLE_H
 #define PAGE_TABLE_H
 
@@ -11,14 +16,17 @@
 #define P2_INDEX(x) (((x) >> 21) & 0x1FF)
 #define P3_INDEX(x) (((x) >> 12) & 0x1FF)
 
-/* Deconstructed components of a 4-level virtual address translation path */
+/**
+ * @struct pt_indices
+ * @brief Structural layout tracking index metrics extracted from raw virtual address targets.
+ */
 struct pt_indices
 {
-    u16 l0_index;
-    u16 l1_index;
-    u16 l2_index;
-    u16 l3_index;
-    u16 offset;
+    u16 l0_index;  /**< Level 0 Page Directory Translation Map Pointer Index */
+    u16 l1_index;  /**< Level 1 Page Directory Translation Map Pointer Index (1GB Blocks) */
+    u16 l2_index;  /**< Level 2 Page Directory Translation Map Pointer Index (2MB Blocks) */
+    u16 l3_index;  /**< Level 3 Page Directory Translation Map Pointer Index (4KB Pages) */
+    u16 offset;    /**< Terminal byte offset criteria into standard raw page granules */
 };
 
 /* --- AArch64 Descriptor Type Encodings --- */
@@ -100,109 +108,119 @@ struct pt_indices
 
 /**
  * @brief Allocates an empty 4KB physical page frame to act as a root L0 table.
- * @param out_root Destination storage location for the root frame physical address.
- * @return int Execution confirmation code.
+ * @param[out] out_root Destination storage location for the root frame physical address.
+ * @return int Operational execution status context values.
  */
 int pt_alloc(u64 *out_root);
 
 /**
  * @brief Destroys and cleans up nested page tables recursively.
- * @param root Physical address of the root L0 page directory tree.
- * @return int Execution confirmation code.
+ * @param[in] root Physical address of the root L0 page directory tree.
+ * @return int Operational execution status context values.
  */
 int pt_free(u64 root);
 
 /**
  * @brief Generates an independent deep copy clone of an active mapping tree context.
- * @param src_root Physical address of the template source tree.
- * @param dest_root Destination address to output the cloned tree base frame address.
- * @return int Execution confirmation code.
+ * @param[in]  src_root  Physical address of the template source tree.
+ * @param[out] dest_root Destination address to output the cloned tree base frame address.
+ * @return int Operational execution status context values.
  */
 int pt_copy(u64 src_root, u64 *dest_root);
 
 /**
  * @brief Binds a user mapping directory tree and its ASID into hardware TTBR0_EL1.
- * @param root Physical base address hosting the targeted user space directory.
- * @param asid Hardware Address Space Identifier context tag tracking code.
- * @return int Execution confirmation code.
+ * @param[in] root Physical base address hosting the targeted user space directory.
+ * @param[in] asid Hardware Address Space Identifier context tag tracking code.
+ * @return int Operational execution status context values.
  */
 int pt_set_user_ctx(u64 root, u16 asid);
 
 /**
  * @brief Binds a secure kernel directory tree and its ASID into hardware TTBR1_EL1.
- * @param root Physical base address anchoring the kernel space page structure.
- * @param asid Hardware Address Space Identifier context tag tracking code.
- * @return int Execution confirmation code.
+ * @param[in] root Physical base address anchoring the kernel space page structure.
+ * @param[in] asid Hardware Address Space Identifier context tag tracking code.
+ * @return int Operational execution status context values.
  */
 int pt_set_kernel_ctx(u64 root, u16 asid);
 
 /**
  * @brief Generates coherent structural mappings linking virtual ranges to physical target sectors.
- * @param root Physical root anchor point targeting the Level 0 system translation structure table.
- * @param virt Target base virtual range start pointer location frame coordinates.
- * @param phys Source destination frame tracking alignment memory physical mapping start points.
- * @param pg_count Total contiguous page allocation chunks to process.
- * @param pg_size Sizing layout attribute configurations (PS_4KB, PS_2MB, PS_1GB).
- * @param f Architectural allocation flags (Read/Write access, execution locks, cache controls).
- * @return int Execution confirmation code.
+ * @param[in] root     Physical root anchor point targeting the Level 0 system translation structure table.
+ * @param[in] virt     Target base virtual range start pointer location frame coordinates.
+ * @param[in] phys     Source destination frame tracking alignment memory physical mapping start points.
+ * @param[in] pg_count Total contiguous page allocation chunks to process.
+ * @param[in] pg_size  Sizing layout attribute configurations (PS_4KB, PS_2MB, PS_1GB).
+ * @param[in] f        Architectural allocation flags (Read/Write access, execution locks, cache controls).
+ * @return int Operational execution status context values.
  */
 int pt_map(u64 root, u64 virt, u64 phys, u64 pg_count, enum page_size pg_size, enum mmu_flags f);
 
 /**
  * @brief Tears down page map links across virtual spaces and dynamically prunes unneeded tables.
- * @param root Physical address hosting the parent Level 0 structure tree base space.
- * @param virt Targeted virtual memory tracking path path start coordinate to unmap.
- * @param pg_count Contiguous volume tracker indicating the exact range width to process.
- * @param pg_size Page size tracking definition attributes (PS_4KB, PS_2MB, PS_1GB).
- * @return int Execution confirmation code.
+ * @param[in] root     Physical address hosting the parent Level 0 structure tree base space.
+ * @param[in] virt     Targeted virtual memory tracking path path start coordinate to unmap.
+ * @param[in] pg_count Contiguous volume tracker indicating the exact range width to process.
+ * @param[in] pg_size  Page size tracking definition attributes (PS_4KB, PS_2MB, PS_1GB).
+ * @return int Operational execution status context values.
  */
 int pt_unmap(u64 root, u64 virt, u64 pg_count, enum page_size pg_size);
 
 /**
  * @brief Adjusts attribute protection settings across target virtual translation blocks.
- * @param root Physical location anchor hosting the translation structure base directory frame.
- * @param virt Target memory block destination virtual map path start point context.
- * @param pg_count Contiguous volume tracker stating the range footprint limit.
- * @param pg_size Sizing attributes determining table alignment (PS_4KB, PS_2MB, PS_1GB).
- * @param f Execution restrictions and flag modifiers to safely apply to the targets.
- * @return int Execution confirmation code.
+ * @param[in] root     Physical location anchor hosting the translation structure base directory frame.
+ * @param[in] virt     Target memory block destination virtual map path start point context.
+ * @param[in] pg_count Contiguous volume tracker stating the range footprint limit.
+ * @param[in] pg_size  Sizing attributes determining table alignment (PS_4KB, PS_2MB, PS_1GB).
+ * @param[in] f        Execution restrictions and flag modifiers to safely apply to the targets.
+ * @return int Operational execution status context values.
  */
 int pt_protect(u64 root, u64 virt, u64 pg_count, enum page_size pg_size, enum mmu_flags f);
 
 /**
  * @brief Manually resolves custom virtual path lines down to physical hardware addresses.
- * @param root Physical entry base destination anchoring the structural Level 0 table frame space.
- * @param virt Target memory tracking path virtual address location to query.
- * @param phys_out Output variable used to record recovered destination physical address coordinates.
- * @param flags_out Output variable used to store extracted page translation attributes.
- * @return int Execution confirmation code.
+ * @param[in]  root      Physical entry base destination anchoring the structural Level 0 table frame space.
+ * @param[in]  virt      Target memory tracking path virtual address location to query.
+ * @param[out] phys_out  Output variable used to record recovered destination physical address coordinates.
+ * @param[out] flags_out Output variable used to store extracted page translation attributes.
+ * @return int Operational execution status context values.
  */
 int pt_translate(u64 root, u64 virt, u64 *phys_out, enum mmu_flags *flags_out);
 
 /**
  * @brief Flushes the entire TLB cache hardware tracking table across all active SMP cores.
- * @return int Execution confirmation code.
+ * @return int Operational execution status context values.
  */
 int pt_flush(void);
 
 /**
  * @brief Evicts range explicit address context structures out of the TLB pipeline.
- * @param virt Target memory block destination virtual translation base pointer location to invalidate.
- * @param pg_count Contiguous step boundaries tracker stating overall range footprint limits.
- * @param pg_size Sizing configurations matching original translation block properties.
- * @return int Execution confirmation code.
+ * @param[in] virt     Target memory block destination virtual translation base pointer location to invalidate.
+ * @param[in] pg_count Contiguous step boundaries tracker stating overall range footprint limits.
+ * @param[in] pg_size  Sizing configurations matching original translation block properties.
+ * @return int Operational execution status context values.
  */
 int pt_invalidate(u64 virt, u64 pg_count, enum page_size pg_size);
 
 /**
  * @brief Configures MAIR profile attributes inside the host register file vector.
- * @param mair_value The absolute 64-bit multi-attribute profile tracking bitmask.
- * @return int Execution confirmation code.
+ * @param[in] mair_value The absolute 64-bit multi-attribute profile tracking bitmask.
+ * @return int Operational execution status context values.
  */
 int pt_set_mair(u64 mair_value);
 
+/**
+ * @brief Extracts the physical base register values committed into hardware register map systems.
+ * @param[out] root Destination target allocation parameter to track.
+ * @return int Operational execution status context values.
+ */
 int pt_get_user_ctx(u64 *root);
 
+/**
+ * @brief Extracts the physical base register values committed into secure kernel hardware vectors.
+ * @param[out] root Destination target allocation parameter to track.
+ * @return int Operational execution status context values.
+ */
 int pt_get_kernel_ctx(u64 *root);
 
 #endif
