@@ -36,13 +36,17 @@ K_LDFLAGS   = -static -T kernel.ld -nostdlib --emit-relocs
 BOOT_SRCS   := $(shell find boot -name '*.c' 2>/dev/null)
 BOOT_OBJS   := $(patsubst boot/%.c, $(BUILD_DIR)/boot/%.o, $(BOOT_SRCS))
 
-MODULE_DIRS  := $(wildcard modules/*/)
-MODULE_NAMES := $(patsubst modules/%/,%,$(MODULE_DIRS))
+# NEW: Find all directories inside modules/ that actually contain .c files
+MODULE_SOURCE_DIRS := $(shell find modules -type f -name '*.c' -exec dirname {} \; | sort -u)
+
+# NEW: Translate those paths into dot-separated names (e.g., modules/memory/allocators/heap -> memory.allocators.heap)
+# 1. Strip the "modules/" prefix
+# 2. Swap slashes for dots
+MODULE_NAMES := $(subst /,.,$(patsubst modules/%,%,$(MODULE_SOURCE_DIRS)))
 MODULE_ELFS  := $(patsubst %, $(BUILD_DIR)/modules/%.elf, $(MODULE_NAMES))
 
 .PHONY: all clean run dirs
 
-# The @ at the start of recipes keeps them silent unless we print explicit status lines
 all: dirs $(BOOTLOADER) $(MODULE_ELFS) $(IMG)
 
 dirs:
@@ -62,27 +66,31 @@ $(BOOTLOADER): $(BOOT_OBJS)
 	@echo "  LD      [boot]    $(BOOTLOADER)"
 	@$(CLANG) $(EFI_LDFLAGS) $(BOOT_OBJS) -o $@
 
-# --- 2. Modules Build Rules Template ---
+# --- 2. Hierarchical Modules Build Rules Template ---
 
+# $(1) = Dot-separated module name (e.g., memory.allocators.heap)
+# $(2) = Original path containing the source files (e.g., modules/memory/allocators/heap)
 define MODULE_RULE
-$(1)_SRC_FILES := $$(shell find modules/$(1) -name '*.c' 2>/dev/null)
-$(1)_OBJ_FILES := $$(patsubst modules/$(1)/%.c, $$(BUILD_DIR)/modules/$(1)/%.o, $$($(1)_SRC_FILES))
+$(1)_SRC_FILES := $$(shell find $(2) -maxdepth 1 -name '*.c' 2>/dev/null)
+$(1)_OBJ_FILES := $$(patsubst $(2)/%.c, $$(BUILD_DIR)/modules/$(1)/%.o, $$($(1)_SRC_FILES))
 
-# Rule to link the ELF from the object files
+# Rule to link the final flat ELF file into the build/modules directory
 $$(BUILD_DIR)/modules/$(1).elf: $$($(1)_OBJ_FILES)
 	@echo "  MOD_LD  [$(1)]    $$(BUILD_DIR)/modules/$(1).elf"
 	@$$(LD) $$(K_LDFLAGS) $$^ -o $$@
 
-# Rule to compile the source files into object files
-$$(BUILD_DIR)/modules/$(1)/%.o: modules/$(1)/%.c
+# Rule to compile the objects, flattening them by using the dot-name in the object path
+$$(BUILD_DIR)/modules/$(1)/%.o: $(2)/%.c
 	@mkdir -p $$(dir $$@)
 	@clang-format -i $$<
 	@echo "  CC      [$(1)]    $$<"
-	@$$(CC) $$(KFLAGS) -Imodules/$(1) $$< -o $$@
+	@$$(CC) $$(KFLAGS) -I$(2) $$< -o $$@
 endef
 
-# Apply the template for every module folder
-$(foreach mod,$(MODULE_NAMES),$(eval $(call MODULE_RULE,$(mod))))
+# Dynamic evaluation loop passing BOTH the dotted name and original path to the template
+$(foreach dir,$(MODULE_SOURCE_DIRS),\
+    $(eval $(call MODULE_RULE,$(subst /,.,$(patsubst modules/%,%,$(dir))),$(dir)))\
+)
 
 # --- 3. Disk Image Creation ---
 
@@ -111,9 +119,8 @@ run: $(IMG)
 		-gdb tcp::1234 -nographic
 
 clean:
-	@echo "  CLEAN   Removing target build trees..."
+	@echo "  Removing target build trees..."
 	@rm -rf $(BUILD_DIR) $(IMG)
 
 test: KFLAGS += -DTESTING
-
 test: run

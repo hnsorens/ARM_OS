@@ -1,8 +1,6 @@
 #ifndef BOOT_INFO_H
 #define BOOT_INFO_H
 
-#include "api/vmm.h"
-#include "vmm/vmm.h"
 #include <stdint.h>
 #include <type.h>
 
