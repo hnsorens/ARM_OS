@@ -1,0 +1,3 @@
+#pragma once
+
+#define HHDM_OFFSET 0xFFFF800000000000ULL

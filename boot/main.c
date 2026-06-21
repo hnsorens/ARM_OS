@@ -13,13 +13,9 @@
 #include "modules/module_import_handle.h"
 
 #define STACK_SIZE_PAGES 0x100
-#define PT_MEMORY_SIZE 0x1000000000000
 
 BootInfoStruct *BootInfo = 0;
 extern UINTN LoadOffset;
-
-// Region for HHDM and code
-VirtualMemoryRegion VirtualRegions;
 
 VOID Kernel_Panic()
 {

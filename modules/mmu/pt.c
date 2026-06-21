@@ -9,6 +9,7 @@
 #include <api/pmm.h>
 #include <errno.h>
 #include <utils.h>
+#include <constants.h>
 
 /* --- Linux Kernel Style Optimization & Predicate Macros --- */
 #define likely(x) __builtin_expect(!!(x), 1)
@@ -22,7 +23,6 @@
 #define PTE_RETURN_FLAG_MASK \
 	(MMU_RO | MMU_USER | MMU_NO_EXEC | MMU_NOCACHE | MMU_WRITE_THROUGH)
 #define PTE_ADDR_MASK 0x0000FFFFFFFFF000ULL
-#define HHDM_OFFSET 0xFFFF800000000000ULL
 #define TLB_BATCH_THRESHOLD 64
 
 /* --- Core Module Linkage Hooks --- */

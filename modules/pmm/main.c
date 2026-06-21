@@ -9,8 +9,7 @@
 #include <api/pmm.h>
 #include <api/serial_debug.h>
 #include <boot_info.h>
-
-#define HHDM_OFFSET 0xFFFF800000000000UL
+#include <constants.h>
 
 IMPORT_INTERFACE_ANY(serial, serial)
 
