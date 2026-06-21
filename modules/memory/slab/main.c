@@ -161,7 +161,6 @@ TEST(Slab_SlabStateTransitions)
 
 	/* Configures page properties such that exactly 4 objects fit per backing layout window */
 	status = k_slab_create_cache(vmm_root, 1024, 8, &cache);
-	serial.printf("cache %lx\n", cache);
 	EXPECT_EQ(status, 0);
 
 	u32 max_slots = cache->slots_per_slab;

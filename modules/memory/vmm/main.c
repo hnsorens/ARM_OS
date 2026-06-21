@@ -29,10 +29,10 @@ IMPORT_INTERFACE_ANY(serial, serial);
  */
 int main(boot_info_t *boot_info)
 {
-	boot_region_t region = { .base = 0xFFFF800000000000,
-				      .size = boot_info->virtual_start - 0xFFFF800000000000,
-				      .flags = 0x3,
-				      .type = VMM_REGION_DATA };
+	boot_region_t region = { .base = 0,
+				 .size = boot_info->virtual_start,
+				 .flags = 0x3,
+				 .type = VMM_REGION_DATA };
 
 	/* --- Bootstrapping VMM ledger state definitions --- */
 	u64 kernel_table_root;

@@ -199,7 +199,8 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
 	}
 	Ok_Log("Handling module imports\n", 24);
 
-	BootInfo->virtualStart = VIRTUAL_MODULE_LOAD_START + LoadOffset;
+	BootInfo->virtualStart =
+		VIRTUAL_MODULE_LOAD_START + LoadOffset + 0x100000;
 	BootInfo->memoryMapSize = MemoryMapRegionsCount;
 	BootInfo->memoryRegions = (MemoryRegion *)MemoryMap;
 
