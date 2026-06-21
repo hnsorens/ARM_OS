@@ -1,6 +1,7 @@
 #ifndef BOOT_INFO_H
 #define BOOT_INFO_H
 
+#include "modules/elf_loader.h"
 #include <stdint.h>
 typedef enum MemoryType
 {
@@ -36,8 +37,8 @@ typedef struct VirtualMemoryRegion {
 typedef struct BootInfoStruct
 {
     MemoryRegion *memoryRegions;
-    unsigned long memoryMapSize;
-    VirtualMemoryRegion virtualRegion[2];
+    UINT64 memoryMapSize;
+    UINT64 virtualStart;
 } BootInfoStruct;
 
 #endif

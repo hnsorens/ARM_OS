@@ -3,6 +3,7 @@
 
 #include "api/vmm.h"
 #include "vmm/vmm.h"
+#include <stdint.h>
 #include <type.h>
 
 typedef enum memory_type
@@ -22,8 +23,9 @@ typedef struct memory_region
 typedef struct boot_info 
 {
     memory_region_t *memory_regions;
-    unsigned long memory_map_size;
-    boot_region_t virtual_regions[2];
+    uint64_t memory_map_size;
+    uint64_t virtual_start;
+    //boot_region_t virtual_regions[2];
 } boot_info_t;
 
 

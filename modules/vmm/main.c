@@ -29,16 +29,23 @@ IMPORT_INTERFACE_ANY(serial, serial);
  */
 int main(boot_info_t *boot_info)
 {
-	int initial_region_count =
-		sizeof(boot_info->virtual_regions) / sizeof(boot_region_t);
+	u64 start = boot_info->virtual_start;
+
+	boot_region_t regions[] = { { .base = 0xFFFF800000000000,
+				      .size = start - 0xFFFF800000000000,
+				      .flags = 0x3,
+				      .type = VMM_REGION_DATA },
+				    { .base = start,
+				      .size = 0xFFFFFFFFF,
+				      .flags = 0x3,
+				      .type = VMM_REGION_FREE } };
 
 	/* --- Bootstrapping VMM ledger state definitions --- */
 	u64 kernel_table_root;
 	mmu.get_kernel_ctx(&kernel_table_root);
 
 	/* Construct operational parameters anchoring the static kernel map architecture */
-	int status = vmm_init(kernel_table_root, boot_info->virtual_regions,
-			      initial_region_count);
+	int status = vmm_init(kernel_table_root, regions, 2);
 	return 0;
 }
 

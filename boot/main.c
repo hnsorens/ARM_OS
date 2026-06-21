@@ -147,11 +147,6 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
 	}
 	Ok_Log("Allocating boot info\n", 21);
 
-	BootInfo->virtualRegion[0].base = 0xFFFF800000000000;
-	BootInfo->virtualRegion[0].size = 0x7FFF80000000;
-	BootInfo->virtualRegion[0].flags = 0x3;
-	BootInfo->virtualRegion[0].type = VMM_REGION_DATA;
-
 	// Allocate Stack
 	EFI_PHYSICAL_ADDRESS StackPhysicalAddress = 0;
 	Status = SystemTable->BootServices->AllocatePages(
@@ -208,14 +203,7 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
 	}
 	Ok_Log("Handling module imports\n", 24);
 
-	BootInfo->virtualRegion[0].size += LoadOffset;
-	BootInfo->virtualRegion[1].base = BootInfo->virtualRegion[0].size +
-					  BootInfo->virtualRegion[0].base;
-	BootInfo->virtualRegion[1].size =
-		PT_MEMORY_SIZE - BootInfo->virtualRegion[0].size;
-	BootInfo->virtualRegion[1].flags = 0x3;
-	BootInfo->virtualRegion[1].type = VMM_REGION_FREE;
-
+	BootInfo->virtualStart = VIRTUAL_MODULE_LOAD_START + LoadOffset;
 	BootInfo->memoryMapSize = MemoryMapRegionsCount;
 	BootInfo->memoryRegions = (MemoryRegion *)MemoryMap;
 
