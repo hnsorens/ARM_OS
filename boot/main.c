@@ -42,29 +42,22 @@ VOID Jump_To_Kernel(EFI_VIRTUAL_ADDRESS Entry, EFI_VIRTUAL_ADDRESS BootInfoPtr,
 	);
 }
 
-VOID Begin_Kernel(EFI_VIRTUAL_ADDRESS StackBase)
+VOID Begin_Kernel()
 {
-	Ok_Log("Setting stack pointer\n", 22);
-	asm volatile("mov sp, %0\n\t" // Switch the stack pointer
-		     "mov x29, #0\n\t" // Reset frame pointer for the new stack
-		     :
-		     : "r"(StackBase)
-		     : "sp", "x29", "memory");
+	Ok_Log("Beginning initialization\n", 25);
+	EFI_STATUS Status = InitializeModules(BootInfo);
+	while (1)
+		;
+	if (EFI_ERROR(Status)) {
+		Fail_Log("Initializing modules\n", 21);
+		Kernel_Panic();
+	}
+	Ok_Log("Initializing modules\n", 21);
 
-	{
-		Ok_Log("Beginning initialization\n", 25);
-		EFI_STATUS Status = InitializeModules(BootInfo);
-		if (EFI_ERROR(Status)) {
-			Fail_Log("Initializing modules\n", 21);
-			Kernel_Panic();
-		}
-		Ok_Log("Initializing modules\n", 21);
+	Ok_Log("Boot successful\n", 16);
 
-		Ok_Log("Boot successful\n", 16);
-
-		while (1) {
-			__asm__ volatile("wfi");
-		}
+	while (1) {
+		__asm__ volatile("wfi");
 	}
 }
 
@@ -204,10 +197,16 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
 	BootInfo->memoryMapSize = MemoryMapRegionsCount;
 	BootInfo->memoryRegions = (MemoryRegion *)MemoryMap;
 
-	Begin_Kernel(VIRTUAL_MODULE_LOAD_START + (4096 * STACK_SIZE_PAGES));
+	Ok_Log("Setting stack pointer\n", 22);
+	asm volatile(
+		"mov sp, %0\n\t" // Switch the stack pointer
+		"mov x29, #0\n\t" // Reset frame pointer for the new stack
+		:
+		: "r"(VIRTUAL_MODULE_LOAD_START + (4096 * STACK_SIZE_PAGES))
+		: "sp", "x29", "memory");
 
-	while (1) {
-		__asm__ volatile("wfi");
+	{
+		Begin_Kernel();
 	}
 	return EFI_SUCCESS;
 }
