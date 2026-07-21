@@ -1,10 +1,14 @@
 #include "gic_v3.h"
+#include "api/gic_v3.h"
 #include "errno.h"
 #include "modules.h"
 #include <api/serial_debug.h>
 #include <constants.h>
 
 EXTERN_IMPORT_INTERFACE(serial, serial);
+
+static registered_isr_t s_isr_table[MAX_INTERRUPT_VECTORS];
+static gic_core_map_t s_core_topology[MAX_CORES_SUPPORTED];
 
 /* --------------------------------------------------------------------------
  * Global State Addresses
@@ -35,38 +39,57 @@ static inline uint64_t io_read64(uintptr_t addr)
 	return *(volatile uint64_t *)addr;
 }
 
-/* --------------------------------------------------------------------------
- * 2. REGISTERS AND BIT DEFINITIONS
- * -------------------------------------------------------------------------- */
-#define GICD_CTLR 0x0000
-#define GICD_ISENABLER(n) (0x0100 + ((n) * 4))
-#define GICD_ICENABLER(n) (0x0180 + ((n) * 4))
+/* ========================================================================== */
+/*                          GICD (Distributor) Macros                        */
+/* ========================================================================== */
+#define GICD_CTLR           0x0000
+#define GICD_ISENABLER(n)   (0x0100 + ((n) * 4))
+#define GICD_ICENABLER(n)   (0x0180 + ((n) * 4))
 
-#define GICR_CTLR 0x0000
-#define GICR_WAKER 0x0014
-#define GICR_SGI_OFFSET 0x10000
-#define GICR_IGROUPR0 (GICR_SGI_OFFSET + 0x0080)
-#define GICR_ISENABLER0 (GICR_SGI_OFFSET + 0x0100)
-#define GICR_ICENABLER0 (GICR_SGI_OFFSET + 0x0180)
-#define GICR_IPRIORITYR(n) (GICR_SGI_OFFSET + 0x0400 + ((n) * 4))
-#define GICR_ICFGR1 (GICR_SGI_OFFSET + 0x0C04)
-#define GICR_IGRPMODR0 (GICR_SGI_OFFSET + 0x0D00) // Added: Group Modifier Reg
+/* Dynamic Distributor Attribute Arrays (Added for SPIs >= 32) */
+#define GICD_IGROUPR(n)     (0x0080 + ((n) * 4))
+#define GICD_IPRIORITYR(n)  (0x0400 + ((n) * 4))
+#define GICD_ICFGR(n)       (0x0C00 + ((n) * 4))
+#define GICD_IGRPMODR(n)    (0x0D00 + ((n) * 4))
 
 // Non-Secure View Bit fields
-#define GICD_CTLR_NS_ARE_NS (1U << 4) // Affinity Routing Enable
-#define GICD_CTLR_NS_ENA_GRP1NS \
-	(1U << 1) // Enable Non-Secure Group 1 distribution
+#define GICD_CTLR_NS_ARE_NS     (1U << 4) // Affinity Routing Enable
+#define GICD_CTLR_NS_ENA_GRP1NS (1U << 1) // Enable Non-Secure Group 1 distribution
+
+/* ========================================================================== */
+/*                        GICR (Redistributor) Macros                        */
+/* ========================================================================== */
+#define GICR_CTLR           0x0000
+#define GICR_WAKER          0x0014
 
 #define GICR_WAKER_ProcessorSleep (1U << 1)
 #define GICR_WAKER_ChildrenAsleep (1U << 2)
 
-#define ICC_SRE_SRE (1U << 0)
-#define ICC_SRE_DFB (1U << 1)
-#define ICC_SRE_DIB (1U << 2)
+/* --- Redistributor SGI/PPI Frame Offset --- */
+#define GICR_SGI_OFFSET     0x10000
 
-#define ICC_IGRPEN1_ENABLE (1U << 0) // Enable Non-Secure Group 1 signaling
+/* Static Base Macros (Retained from your original codebase) */
+#define GICR_IGROUPR0       (GICR_SGI_OFFSET + 0x0080)
+#define GICR_ISENABLER0     (GICR_SGI_OFFSET + 0x0100)
+#define GICR_ICENABLER0     (GICR_SGI_OFFSET + 0x0180)
+#define GICR_IPRIORITYR(n)  (GICR_SGI_OFFSET + 0x0400 + ((n) * 4))
+#define GICR_ICFGR1         (GICR_SGI_OFFSET + 0x0C04)
+#define GICR_IGRPMODR0      (GICR_SGI_OFFSET + 0x0D00)
 
-#define TIMER_INTID 30 // Non-Secure Physical Timer PPI is ID 30
+/* Dynamic Redistributor SGI Base Arrays (Added for generic SGI/PPI math) */
+#define GICR_SGI_IGROUPR(n)    (GICR_SGI_OFFSET + 0x0080 + ((n) * 4))
+#define GICR_SGI_IPRIORITYR(n) (GICR_SGI_OFFSET + 0x0400 + ((n) * 4))
+#define GICR_SGI_ICFGR(n)      (GICR_SGI_OFFSET + 0x0C00 + ((n) * 4))
+#define GICR_SGI_IGRPMODR(n)   (GICR_SGI_OFFSET + 0x0D00 + ((n) * 4))
+
+/* ========================================================================== */
+/*                     CPU Interface System Registers                        */
+/* ========================================================================== */
+#define ICC_SRE_SRE         (1U << 0)
+#define ICC_SRE_DFB         (1U << 1)
+#define ICC_SRE_DIB         (1U << 2)
+
+#define ICC_IGRPEN1_ENABLE  (1U << 0) // Enable Non-Secure Group 1 signaling
 
 /* --------------------------------------------------------------------------
  * 3. CORE-AWARE REDISTRIBUTOR LOOKUP & WRAPPERS
@@ -158,23 +181,6 @@ int gicv3_init_base(const gicv3_mmo_t *mmo)
 	return 0;
 }
 
-int gicv3_init_global(void)
-{
-	uint64_t cbar;
-	__asm__ volatile("mrs %0, S3_1_C15_C3_0" : "=r"(cbar));
-	cbar += HHDM_OFFSET;
-
-	g_gicd = cbar;
-	g_gicr = cbar + 0xA0000;
-
-	// Set ONLY Non-Secure bits allowed in EL1 context
-	uint32_t ctlr = gicd_read_ctlr();
-	ctlr |= GICD_CTLR_NS_ARE_NS | GICD_CTLR_NS_ENA_GRP1NS;
-	gicd_write_ctlr(ctlr);
-	__asm__ volatile("dsb sy");
-	return 0;
-}
-
 int gicv3_init_redistributor(void)
 {
 	uint32_t waker = gicr_read_waker();
@@ -205,38 +211,6 @@ int gicv3_init_cpu_interface_ns(void)
 	return 0;
 }
 
-void gicv3_enable_timer_interrupt(void)
-{
-	uintptr_t core_gicr = get_current_gicr_base();
-	uint32_t prio_idx = TIMER_INTID / 4;
-	uint32_t prio_shift = (TIMER_INTID % 4) * 8;
-
-	// 1. Set priority
-	uint32_t uint32_val = io_read32(core_gicr + GICR_IPRIORITYR(prio_idx));
-	uint32_val &= ~(0xFFU << prio_shift);
-	uint32_val |= (0x00U << prio_shift);
-	io_write32(core_gicr + GICR_IPRIORITYR(prio_idx), uint32_val);
-
-	// 2. Set configuration as level-triggered
-	uint32_t icfgr = io_read32(core_gicr + GICR_ICFGR1);
-	icfgr &= ~(0x2U << 28);
-	io_write32(core_gicr + GICR_ICFGR1, icfgr);
-
-	// 3. Set Group 1 allocation
-	uint32_t igroupr = io_read32(core_gicr + GICR_IGROUPR0);
-	igroupr |= (1U << TIMER_INTID);
-	io_write32(core_gicr + GICR_IGROUPR0, igroupr);
-
-	// 4. Clear Group Modifier bit to lock into Non-Secure Group 1
-	uint32_t igrpmodr = io_read32(core_gicr + GICR_IGRPMODR0);
-	igrpmodr &= ~(1U << TIMER_INTID);
-	io_write32(core_gicr + GICR_IGRPMODR0, igrpmodr);
-
-	// 5. Enable the interrupt
-	io_write32(core_gicr + GICR_ISENABLER0, (1U << TIMER_INTID));
-	__asm__ volatile("dsb sy");
-}
-
 void arm64_core_timer_start(uint32_t ticks)
 {
 	__asm__ volatile("msr CNTP_TVAL_EL0, %0" : : "r"((uint64_t)ticks));
@@ -265,15 +239,18 @@ void c_interrupt_handler(void)
 {
 	uint64_t iar = icc_read_iar1_el1();
 	uint32_t interrupt_id = (uint32_t)(iar & 0xFFFFFFFF);
-	serial.printf("interrupt_id %lx\n", interrupt_id);
 
-	if (interrupt_id == TIMER_INTID) {
-		static int tick_count = 0;
-		serial.printf("Timer Tick: %d\n", ++tick_count);
+    if (interrupt_id == 1023) return;
 
-		// Reset countdown to 24M ticks
-		__asm__ volatile("msr CNTP_TVAL_EL0, %0" : : "r"(100000000ULL));
-	}
+    if (interrupt_id < MAX_INTERRUPT_VECTORS) {
+        if (s_isr_table[interrupt_id].handler != NULL) {
+            s_isr_table[interrupt_id].handler(s_isr_table[interrupt_id].arg);
+        } else {
+            serial.printf("Unhandled Interrupt ID: %u\n", interrupt_id);
+        }
+    } else {
+        serial.printf("Interrupt ID out of bounds: %u\n", interrupt_id);
+    }
 
 	icc_write_eoir1_el1(iar);
 }
@@ -281,7 +258,7 @@ void c_interrupt_handler(void)
 /* --------------------------------------------------------------------------
  * 6. EXTERNAL MODULE INTERFACE LIFECYCLE HOOKS
  * -------------------------------------------------------------------------- */
-int enable(u64 irq_vector)
+int enable(irq_vector_t irq_vector)
 {
 	if (irq_vector >= 32) {
 		uint32_t reg_idx = irq_vector / 32;
@@ -295,7 +272,7 @@ int enable(u64 irq_vector)
 	return 0;
 }
 
-int disable(u64 irq_vector)
+int disable(irq_vector_t irq_vector)
 {
 	if (irq_vector >= 32) {
 		uint32_t reg_idx = irq_vector / 32;
@@ -309,33 +286,244 @@ int disable(u64 irq_vector)
 	return 0;
 }
 
-int ack(u64 irq_vector)
+irq_vector_t ack(void)
 {
-	(void)irq_vector;
 	return (int)(icc_read_iar1_el1() & 0xFFFFFFFF);
 }
 
-int eoi(u64 irq_vector)
+int eoi(irq_vector_t irq_vector)
 {
 	icc_write_eoir1_el1(irq_vector);
 	return 0;
 }
 
-void driver_timer_start_sequence(void)
-{
-	serial.printf("starting init global\n");
-	gicv3_init_global();
-	serial.printf("starting init redistributor\n");
-	gicv3_init_redistributor();
-	serial.printf("starting init cpu interface\n");
-	gicv3_init_cpu_interface_ns();
-	serial.printf("starting init vectors\n");
-	arm64_init_vectors();
-	serial.printf("starting enable timer interrupt\n");
-	gicv3_enable_timer_interrupt();
+int register_handler(irq_vector_t vector, isr_handler_t handler, void *arg) {
+    if (vector >= MAX_INTERRUPT_VECTORS || handler == NULL) {
+        return EINVAL;
+    }
 
-	serial.printf("starting core timer\n");
-	arm64_core_timer_start(
-		1000000U); // Changed from 240 back to 24M for a clean 1-sec countdown
-	arm64_unmask_cpu_exceptions();
+    if (s_isr_table[vector].handler != NULL) {
+        return EBUSY;
+    }
+
+    s_isr_table[vector].handler = handler;
+    s_isr_table[vector].arg     = arg;
+
+
+    int status = enable(vector);
+    if (status != 0) {
+        s_isr_table[vector].handler = NULL;
+        s_isr_table[vector].arg     = NULL;
+        return status;
+    }
+
+    return 0;
 }
+
+int unregister_handler(irq_vector_t vector) {
+    if (vector >= MAX_INTERRUPT_VECTORS) {
+        return EINVAL;
+    }
+
+    int status = disable(vector);
+    if (status != 0) {
+        return status;
+    }
+
+    s_isr_table[vector].handler = NULL;
+    s_isr_table[vector].arg = NULL;
+
+    return 0;
+}
+
+int init_global() {
+
+	uint64_t cbar;
+	__asm__ volatile("mrs %0, S3_1_C15_C3_0" : "=r"(cbar));
+	cbar += HHDM_OFFSET;
+
+	g_gicd = cbar;
+	g_gicr = cbar + 0xA0000;
+
+	// Set ONLY Non-Secure bits allowed in EL1 context
+	uint32_t ctlr = gicd_read_ctlr();
+	ctlr |= GICD_CTLR_NS_ARE_NS | GICD_CTLR_NS_ENA_GRP1NS;
+	gicd_write_ctlr(ctlr);
+	__asm__ volatile("dsb sy");
+	return 0;
+}
+
+int init_core(uint32_t core_id)
+{
+    if (core_id >= MAX_CORES_SUPPORTED) {
+        return -1;
+    }
+
+    // 1. Read this core's hardware routing coordinate (Affinity levels)
+    uint64_t mpidr;
+    __asm__ volatile("mrs %0, mpidr_el1" : "=r"(mpidr));
+
+    // Strip out non-affinity tracking bits to isolate pure hardware coordinates
+    // Matches GICv3 format: Aff3 (bits 32-39), Aff2 (bits 16-23), Aff1 (bits 8-15), Aff0 (bits 0-7)
+    uint64_t routing_affinity = (mpidr & 0xFF00000000ULL) | (mpidr & 0xFFFFFFULL);
+
+    // Save mapping for future route_to_core calls
+    s_core_topology[core_id].mpidr = routing_affinity;
+    s_core_topology[core_id].allocated = true;
+
+    // 2. Initialize the local redistributor gateway for this core
+    int status = gicv3_init_redistributor();
+    if (status != 0) {
+        return status;
+    }
+
+    // 3. Configure this core's local CPU Interface engine 
+    status = gicv3_init_cpu_interface_ns();
+    if (status != 0) {
+        return status;
+    }
+
+    // 4. Initialize local exception vector mappings
+    arm64_init_vectors();
+
+    return 0; // Core is fully initialized and open for interrupt traffic!
+}
+
+int set_core_priority_mask(irq_prio_t mask)
+{
+    // Write to the Priority Mask Register (PMR) to filter lower priority interrupts
+    icc_write_pmr_el1((uint64_t)mask);
+    __asm__ volatile("isb" ::: "memory");
+    return 0;
+}
+
+int configure(irq_vector_t irq, irq_trigger_t trigger, irq_prio_t priority) {
+    uintptr_t base;
+    uint32_t prio_idx = irq / 4;
+    uint32_t prio_shift = (irq % 4) * 8;
+    
+    uint32_t cfg_idx = irq / 16;
+    uint32_t cfg_shift = (irq % 16) * 2;
+    uint32_t trigger_val = (trigger == IRQ_TRIGGER_EDGE) ? 0x2U : 0x0U;
+
+    uint32_t grp_idx = irq / 32;
+    uint32_t bit_shift = irq % 32;
+
+    if (irq < 32) {
+        base = get_current_gicr_base();
+
+        // 1. Set priority
+        uint32_t val = io_read32(base + GICR_SGI_IPRIORITYR(prio_idx));
+        val &= ~(0xFFU << prio_shift);
+        val |= ((uint32_t)priority << prio_shift);
+        io_write32(base + GICR_SGI_IPRIORITYR(prio_idx), val);
+
+        // 2. Set configuration (level vs edge)
+        uint32_t icfgr = io_read32(base + GICR_SGI_ICFGR(cfg_idx));
+        icfgr &= ~(0x3U << cfg_shift);
+        icfgr |= (trigger_val << cfg_shift);
+        io_write32(base + GICR_SGI_ICFGR(cfg_idx), icfgr);
+
+        // 3. Set Group 1 allocation
+        uint32_t igroupr = io_read32(base + GICR_SGI_IGROUPR(grp_idx));
+        igroupr |= (1U << bit_shift);
+        io_write32(base + GICR_SGI_IGROUPR(grp_idx), igroupr);
+
+        // 4. Clear Group Modifier bit
+        uint32_t igrpmodr = io_read32(base + GICR_SGI_IGRPMODR(grp_idx));
+        igrpmodr &= ~(1U << bit_shift);
+        io_write32(base + GICR_SGI_IGRPMODR(grp_idx), igrpmodr);
+    } 
+    else {
+        base = g_gicd;
+
+        // 1. Set priority
+        uint32_t val = io_read32(base + GICD_IPRIORITYR(prio_idx));
+        val &= ~(0xFFU << prio_shift);
+        val |= ((uint32_t)priority << prio_shift);
+        io_write32(base + GICD_IPRIORITYR(prio_idx), val);
+
+        // 2. Set configuration
+        uint32_t icfgr = io_read32(base + GICD_ICFGR(cfg_idx));
+        icfgr &= ~(0x3U << cfg_shift);
+        icfgr |= (trigger_val << cfg_shift);
+        io_write32(base + GICD_ICFGR(cfg_idx), icfgr);
+
+        // 3. Set Group 1 allocation
+        uint32_t igroupr = io_read32(base + GICD_IGROUPR(grp_idx));
+        igroupr |= (1U << bit_shift);
+        io_write32(base + GICD_IGROUPR(grp_idx), igroupr);
+
+        // 4. Clear Group Modifier bit
+        uint32_t igrpmodr = io_read32(base + GICD_IGRPMODR(grp_idx));
+        igrpmodr &= ~(1U << bit_shift);
+        io_write32(base + GICD_IGRPMODR(grp_idx), igrpmodr);
+    }
+
+    __asm__ volatile("dsb sy" : : : "memory");
+    return 0;
+}
+
+int set_group(irq_vector_t irq, irq_group_t group)
+{
+    if (irq >= MAX_INTERRUPT_VECTORS) {
+        return -1;
+    }
+
+    // GICD_IGROUPR registers hold 32 bits, with each bit representing one interrupt.
+    // Register index = irq / 32, Bit position = irq % 32
+    uint32_t reg_offset = (irq / 32) * 4;
+    uint32_t bit_shift  = irq % 32;
+
+    // Determine the base depending on if it's per-core (SGI/PPI) or global (SPI)
+    uintptr_t base_addr;
+    if (irq < 32) {
+        // SGIs and PPIs are managed inside the core's local Redistributor (SGI_base offset 0x10000)
+        base_addr = get_current_gicr_base() + 0x10000;
+    } else {
+        // SPIs are managed inside the global Distributor
+        base_addr = g_gicd;
+    }
+
+    // Read-modify-write the Group register (Base offset 0x0080 for IGROUPR)
+    uint32_t val = io_read32(base_addr + 0x0080 + reg_offset);
+    
+    if (group == IRQ_GROUP_NON_SECURE) {
+        val |= (1U << bit_shift);  // 1 = Non-Secure
+    } else {
+        val &= ~(1U << bit_shift); // 0 = Secure
+    }
+    
+    io_write32(base_addr + 0x0080 + reg_offset, val);
+
+    // Ensure the hardware registers sync up across the system pipeline
+    __asm__ volatile("dsb sy" ::: "memory");
+
+    return 0;
+}
+
+int route_to_core(irq_vector_t irq, uint32_t core_id)
+{
+    // Per-core interrupts (SGIs/PPIs < 32) are hardwired and cannot be cross-routed
+    if (irq < 32 || irq >= MAX_INTERRUPT_VECTORS) {
+        return -1; 
+    }
+    
+    // Verify the target core index actually exists in our registered topology
+    if (core_id >= MAX_CORES_SUPPORTED || !s_core_topology[core_id].allocated) {
+        return -1;
+    }
+
+    // Fetch the target physical hardware coordinate from our map
+    uint64_t routing_val = s_core_topology[core_id].mpidr;
+
+    // Clear bit 31 (Interrupt Routing Mode) to enforce targeted delivery 
+    // instead of broadcasting to any available core
+    routing_val &= ~(1ULL << 31);
+
+    // GICD_IROUTER base offset is 0x6000. Each SPI vector gets its own 64-bit routing register.
+    io_write64(g_gicd + 0x6000 + (irq * 8), routing_val);
+
+    return 0;
+}
+
