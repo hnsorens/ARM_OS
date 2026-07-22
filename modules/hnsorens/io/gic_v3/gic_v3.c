@@ -42,54 +42,55 @@ static inline uint64_t io_read64(uintptr_t addr)
 /* ========================================================================== */
 /*                          GICD (Distributor) Macros                        */
 /* ========================================================================== */
-#define GICD_CTLR           0x0000
-#define GICD_ISENABLER(n)   (0x0100 + ((n) * 4))
-#define GICD_ICENABLER(n)   (0x0180 + ((n) * 4))
+#define GICD_CTLR 0x0000
+#define GICD_ISENABLER(n) (0x0100 + ((n) * 4))
+#define GICD_ICENABLER(n) (0x0180 + ((n) * 4))
 
 /* Dynamic Distributor Attribute Arrays (Added for SPIs >= 32) */
-#define GICD_IGROUPR(n)     (0x0080 + ((n) * 4))
-#define GICD_IPRIORITYR(n)  (0x0400 + ((n) * 4))
-#define GICD_ICFGR(n)       (0x0C00 + ((n) * 4))
-#define GICD_IGRPMODR(n)    (0x0D00 + ((n) * 4))
+#define GICD_IGROUPR(n) (0x0080 + ((n) * 4))
+#define GICD_IPRIORITYR(n) (0x0400 + ((n) * 4))
+#define GICD_ICFGR(n) (0x0C00 + ((n) * 4))
+#define GICD_IGRPMODR(n) (0x0D00 + ((n) * 4))
 
 // Non-Secure View Bit fields
-#define GICD_CTLR_NS_ARE_NS     (1U << 4) // Affinity Routing Enable
-#define GICD_CTLR_NS_ENA_GRP1NS (1U << 1) // Enable Non-Secure Group 1 distribution
+#define GICD_CTLR_NS_ARE_NS (1U << 4) // Affinity Routing Enable
+#define GICD_CTLR_NS_ENA_GRP1NS \
+	(1U << 1) // Enable Non-Secure Group 1 distribution
 
 /* ========================================================================== */
 /*                        GICR (Redistributor) Macros                        */
 /* ========================================================================== */
-#define GICR_CTLR           0x0000
-#define GICR_WAKER          0x0014
+#define GICR_CTLR 0x0000
+#define GICR_WAKER 0x0014
 
 #define GICR_WAKER_ProcessorSleep (1U << 1)
 #define GICR_WAKER_ChildrenAsleep (1U << 2)
 
 /* --- Redistributor SGI/PPI Frame Offset --- */
-#define GICR_SGI_OFFSET     0x10000
+#define GICR_SGI_OFFSET 0x10000
 
 /* Static Base Macros (Retained from your original codebase) */
-#define GICR_IGROUPR0       (GICR_SGI_OFFSET + 0x0080)
-#define GICR_ISENABLER0     (GICR_SGI_OFFSET + 0x0100)
-#define GICR_ICENABLER0     (GICR_SGI_OFFSET + 0x0180)
-#define GICR_IPRIORITYR(n)  (GICR_SGI_OFFSET + 0x0400 + ((n) * 4))
-#define GICR_ICFGR1         (GICR_SGI_OFFSET + 0x0C04)
-#define GICR_IGRPMODR0      (GICR_SGI_OFFSET + 0x0D00)
+#define GICR_IGROUPR0 (GICR_SGI_OFFSET + 0x0080)
+#define GICR_ISENABLER0 (GICR_SGI_OFFSET + 0x0100)
+#define GICR_ICENABLER0 (GICR_SGI_OFFSET + 0x0180)
+#define GICR_IPRIORITYR(n) (GICR_SGI_OFFSET + 0x0400 + ((n) * 4))
+#define GICR_ICFGR1 (GICR_SGI_OFFSET + 0x0C04)
+#define GICR_IGRPMODR0 (GICR_SGI_OFFSET + 0x0D00)
 
 /* Dynamic Redistributor SGI Base Arrays (Added for generic SGI/PPI math) */
-#define GICR_SGI_IGROUPR(n)    (GICR_SGI_OFFSET + 0x0080 + ((n) * 4))
+#define GICR_SGI_IGROUPR(n) (GICR_SGI_OFFSET + 0x0080 + ((n) * 4))
 #define GICR_SGI_IPRIORITYR(n) (GICR_SGI_OFFSET + 0x0400 + ((n) * 4))
-#define GICR_SGI_ICFGR(n)      (GICR_SGI_OFFSET + 0x0C00 + ((n) * 4))
-#define GICR_SGI_IGRPMODR(n)   (GICR_SGI_OFFSET + 0x0D00 + ((n) * 4))
+#define GICR_SGI_ICFGR(n) (GICR_SGI_OFFSET + 0x0C00 + ((n) * 4))
+#define GICR_SGI_IGRPMODR(n) (GICR_SGI_OFFSET + 0x0D00 + ((n) * 4))
 
 /* ========================================================================== */
 /*                     CPU Interface System Registers                        */
 /* ========================================================================== */
-#define ICC_SRE_SRE         (1U << 0)
-#define ICC_SRE_DFB         (1U << 1)
-#define ICC_SRE_DIB         (1U << 2)
+#define ICC_SRE_SRE (1U << 0)
+#define ICC_SRE_DFB (1U << 1)
+#define ICC_SRE_DIB (1U << 2)
 
-#define ICC_IGRPEN1_ENABLE  (1U << 0) // Enable Non-Secure Group 1 signaling
+#define ICC_IGRPEN1_ENABLE (1U << 0) // Enable Non-Secure Group 1 signaling
 
 /* --------------------------------------------------------------------------
  * 3. CORE-AWARE REDISTRIBUTOR LOOKUP & WRAPPERS
@@ -240,17 +241,20 @@ void c_interrupt_handler(void)
 	uint64_t iar = icc_read_iar1_el1();
 	uint32_t interrupt_id = (uint32_t)(iar & 0xFFFFFFFF);
 
-    if (interrupt_id == 1023) return;
+	if (interrupt_id == 1023)
+		return;
 
-    if (interrupt_id < MAX_INTERRUPT_VECTORS) {
-        if (s_isr_table[interrupt_id].handler != NULL) {
-            s_isr_table[interrupt_id].handler(s_isr_table[interrupt_id].arg);
-        } else {
-            serial.printf("Unhandled Interrupt ID: %u\n", interrupt_id);
-        }
-    } else {
-        serial.printf("Interrupt ID out of bounds: %u\n", interrupt_id);
-    }
+	if (interrupt_id < MAX_INTERRUPT_VECTORS) {
+		if (s_isr_table[interrupt_id].handler != NULL) {
+			s_isr_table[interrupt_id].handler(
+				s_isr_table[interrupt_id].arg);
+		} else {
+			serial.printf("Unhandled Interrupt ID: %u\n",
+				      interrupt_id);
+		}
+	} else {
+		serial.printf("Interrupt ID out of bounds: %u\n", interrupt_id);
+	}
 
 	icc_write_eoir1_el1(iar);
 }
@@ -297,214 +301,218 @@ int eoi(irq_vector_t irq_vector)
 	return 0;
 }
 
-int register_handler(irq_vector_t vector, isr_handler_t handler, void *arg) {
-    if (vector >= MAX_INTERRUPT_VECTORS || handler == NULL) {
-        return EINVAL;
-    }
+int register_handler(irq_vector_t vector, isr_handler_t handler, void *arg)
+{
+	if (vector >= MAX_INTERRUPT_VECTORS || handler == NULL) {
+		return EINVAL;
+	}
 
-    if (s_isr_table[vector].handler != NULL) {
-        return EBUSY;
-    }
+	if (s_isr_table[vector].handler != NULL) {
+		return EBUSY;
+	}
 
-    s_isr_table[vector].handler = handler;
-    s_isr_table[vector].arg     = arg;
+	s_isr_table[vector].handler = handler;
+	s_isr_table[vector].arg = arg;
 
+	int status = enable(vector);
+	if (status != 0) {
+		s_isr_table[vector].handler = NULL;
+		s_isr_table[vector].arg = NULL;
+		return status;
+	}
 
-    int status = enable(vector);
-    if (status != 0) {
-        s_isr_table[vector].handler = NULL;
-        s_isr_table[vector].arg     = NULL;
-        return status;
-    }
-
-    return 0;
+	return 0;
 }
 
-int unregister_handler(irq_vector_t vector) {
-    if (vector >= MAX_INTERRUPT_VECTORS) {
-        return EINVAL;
-    }
+int unregister_handler(irq_vector_t vector)
+{
+	if (vector >= MAX_INTERRUPT_VECTORS) {
+		return EINVAL;
+	}
 
-    int status = disable(vector);
-    if (status != 0) {
-        return status;
-    }
+	int status = disable(vector);
+	if (status != 0) {
+		return status;
+	}
 
-    s_isr_table[vector].handler = NULL;
-    s_isr_table[vector].arg = NULL;
+	s_isr_table[vector].handler = NULL;
+	s_isr_table[vector].arg = NULL;
 
-    return 0;
+	return 0;
 }
 
 int init_global(uintptr_t d_base, uintptr_t r_base)
 {
-    if (!d_base || !r_base) {
-        return EIO;
-    }
-    g_gicd = d_base;
-    g_gicr = r_base;
+	if (!d_base || !r_base) {
+		return EIO;
+	}
+	g_gicd = d_base;
+	g_gicr = r_base;
 
-    // Enable Group 1 Non-Secure distribution
-    uint32_t ctlr = gicd_read_ctlr();
-    ctlr |= GICD_CTLR_NS_ARE_NS | GICD_CTLR_NS_ENA_GRP1NS;
-    gicd_write_ctlr(ctlr);
-    __asm__ volatile("dsb sy");
-    return 0;
+	// Enable Group 1 Non-Secure distribution
+	uint32_t ctlr = gicd_read_ctlr();
+	ctlr |= GICD_CTLR_NS_ARE_NS | GICD_CTLR_NS_ENA_GRP1NS;
+	gicd_write_ctlr(ctlr);
+	__asm__ volatile("dsb sy");
+	return 0;
 }
 
 int init_core(void)
 {
-    uint64_t mpidr;
-    __asm__ volatile("mrs %0, mpidr_el1" : "=r"(mpidr));
+	uint64_t mpidr;
+	__asm__ volatile("mrs %0, mpidr_el1" : "=r"(mpidr));
 
-    // Extract logical core index (Aff0 + Aff1*256 -> linear)
-    uint32_t aff0 = (mpidr >> 0) & 0xFF;
-    uint32_t aff1 = (mpidr >> 8) & 0xFF;
-    uint32_t core_id = aff0 + (aff1 * 1);  // assuming single cluster
+	// Extract logical core index (Aff0 + Aff1*256 -> linear)
+	uint32_t aff0 = (mpidr >> 0) & 0xFF;
+	uint32_t aff1 = (mpidr >> 8) & 0xFF;
+	uint32_t core_id = aff0 + (aff1 * 1); // assuming single cluster
 
-    if (core_id >= MAX_CORES_SUPPORTED) {
-        return EINVAL;
-    }
+	if (core_id >= MAX_CORES_SUPPORTED) {
+		return EINVAL;
+	}
 
-    // Save routing affinity (bits[39:32] Aff3, bits[23:16] Aff2, bits[15:8] Aff1, bits[7:0] Aff0)
-    s_core_topology[core_id].mpidr  = mpidr & 0xFF00000000ULL | mpidr & 0xFFFFFFULL;
-    s_core_topology[core_id].allocated = true;
+	// Save routing affinity (bits[39:32] Aff3, bits[23:16] Aff2, bits[15:8] Aff1, bits[7:0] Aff0)
+	s_core_topology[core_id].mpidr = mpidr & 0xFF00000000ULL |
+					 mpidr & 0xFFFFFFULL;
+	s_core_topology[core_id].allocated = true;
 
-    int status = gicv3_init_redistributor();
-    if (status != 0) return status;
+	int status = gicv3_init_redistributor();
+	if (status != 0)
+		return status;
 
-    status = gicv3_init_cpu_interface_ns();
-    if (status != 0) return status;
+	status = gicv3_init_cpu_interface_ns();
+	if (status != 0)
+		return status;
 
-    arm64_init_vectors();
-    return 0;
+	arm64_init_vectors();
+	return 0;
 }
 
 int set_core_priority_mask(irq_prio_t mask)
 {
-    // Write to the Priority Mask Register (PMR) to filter lower priority interrupts
-    icc_write_pmr_el1((uint64_t)mask);
-    __asm__ volatile("isb" ::: "memory");
-    return 0;
+	// Write to the Priority Mask Register (PMR) to filter lower priority interrupts
+	icc_write_pmr_el1((uint64_t)mask);
+	__asm__ volatile("isb" ::: "memory");
+	return 0;
 }
 
-int configure(irq_vector_t irq, irq_trigger_t trigger, irq_prio_t priority) {
-    uintptr_t base;
-    uint32_t prio_idx = irq / 4;
-    uint32_t prio_shift = (irq % 4) * 8;
-    
-    uint32_t cfg_idx = irq / 16;
-    uint32_t cfg_shift = (irq % 16) * 2;
-    uint32_t trigger_val = (trigger == IRQ_TRIGGER_EDGE) ? 0x2U : 0x0U;
+int configure(irq_vector_t irq, irq_trigger_t trigger, irq_prio_t priority)
+{
+	uintptr_t base;
+	uint32_t prio_idx = irq / 4;
+	uint32_t prio_shift = (irq % 4) * 8;
 
-    uint32_t grp_idx = irq / 32;
-    uint32_t bit_shift = irq % 32;
+	uint32_t cfg_idx = irq / 16;
+	uint32_t cfg_shift = (irq % 16) * 2;
+	uint32_t trigger_val = (trigger == IRQ_TRIGGER_EDGE) ? 0x2U : 0x0U;
 
-    if (irq < 32) {
-        base = get_current_gicr_base();
+	uint32_t grp_idx = irq / 32;
+	uint32_t bit_shift = irq % 32;
 
-        // 1. Set priority
-        uint32_t val = io_read32(base + GICR_SGI_IPRIORITYR(prio_idx));
-        val &= ~(0xFFU << prio_shift);
-        val |= ((uint32_t)priority << prio_shift);
-        io_write32(base + GICR_SGI_IPRIORITYR(prio_idx), val);
+	if (irq < 32) {
+		base = get_current_gicr_base();
 
-        // 2. Set configuration (level vs edge)
-        uint32_t icfgr = io_read32(base + GICR_SGI_ICFGR(cfg_idx));
-        icfgr &= ~(0x3U << cfg_shift);
-        icfgr |= (trigger_val << cfg_shift);
-        io_write32(base + GICR_SGI_ICFGR(cfg_idx), icfgr);
+		// 1. Set priority
+		uint32_t val = io_read32(base + GICR_SGI_IPRIORITYR(prio_idx));
+		val &= ~(0xFFU << prio_shift);
+		val |= ((uint32_t)priority << prio_shift);
+		io_write32(base + GICR_SGI_IPRIORITYR(prio_idx), val);
 
-        // 3. Set Group 1 allocation
-        uint32_t igroupr = io_read32(base + GICR_SGI_IGROUPR(grp_idx));
-        igroupr |= (1U << bit_shift);
-        io_write32(base + GICR_SGI_IGROUPR(grp_idx), igroupr);
+		// 2. Set configuration (level vs edge)
+		uint32_t icfgr = io_read32(base + GICR_SGI_ICFGR(cfg_idx));
+		icfgr &= ~(0x3U << cfg_shift);
+		icfgr |= (trigger_val << cfg_shift);
+		io_write32(base + GICR_SGI_ICFGR(cfg_idx), icfgr);
 
-        // 4. Clear Group Modifier bit
-        uint32_t igrpmodr = io_read32(base + GICR_SGI_IGRPMODR(grp_idx));
-        igrpmodr &= ~(1U << bit_shift);
-        io_write32(base + GICR_SGI_IGRPMODR(grp_idx), igrpmodr);
-    } 
-    else {
-        base = g_gicd;
+		// 3. Set Group 1 allocation
+		uint32_t igroupr = io_read32(base + GICR_SGI_IGROUPR(grp_idx));
+		igroupr |= (1U << bit_shift);
+		io_write32(base + GICR_SGI_IGROUPR(grp_idx), igroupr);
 
-        // 1. Set priority
-        uint32_t val = io_read32(base + GICD_IPRIORITYR(prio_idx));
-        val &= ~(0xFFU << prio_shift);
-        val |= ((uint32_t)priority << prio_shift);
-        io_write32(base + GICD_IPRIORITYR(prio_idx), val);
+		// 4. Clear Group Modifier bit
+		uint32_t igrpmodr =
+			io_read32(base + GICR_SGI_IGRPMODR(grp_idx));
+		igrpmodr &= ~(1U << bit_shift);
+		io_write32(base + GICR_SGI_IGRPMODR(grp_idx), igrpmodr);
+	} else {
+		base = g_gicd;
 
-        // 2. Set configuration
-        uint32_t icfgr = io_read32(base + GICD_ICFGR(cfg_idx));
-        icfgr &= ~(0x3U << cfg_shift);
-        icfgr |= (trigger_val << cfg_shift);
-        io_write32(base + GICD_ICFGR(cfg_idx), icfgr);
+		// 1. Set priority
+		uint32_t val = io_read32(base + GICD_IPRIORITYR(prio_idx));
+		val &= ~(0xFFU << prio_shift);
+		val |= ((uint32_t)priority << prio_shift);
+		io_write32(base + GICD_IPRIORITYR(prio_idx), val);
 
-        // 3. Set Group 1 allocation
-        uint32_t igroupr = io_read32(base + GICD_IGROUPR(grp_idx));
-        igroupr |= (1U << bit_shift);
-        io_write32(base + GICD_IGROUPR(grp_idx), igroupr);
+		// 2. Set configuration
+		uint32_t icfgr = io_read32(base + GICD_ICFGR(cfg_idx));
+		icfgr &= ~(0x3U << cfg_shift);
+		icfgr |= (trigger_val << cfg_shift);
+		io_write32(base + GICD_ICFGR(cfg_idx), icfgr);
 
-        // 4. Clear Group Modifier bit
-        uint32_t igrpmodr = io_read32(base + GICD_IGRPMODR(grp_idx));
-        igrpmodr &= ~(1U << bit_shift);
-        io_write32(base + GICD_IGRPMODR(grp_idx), igrpmodr);
-    }
+		// 3. Set Group 1 allocation
+		uint32_t igroupr = io_read32(base + GICD_IGROUPR(grp_idx));
+		igroupr |= (1U << bit_shift);
+		io_write32(base + GICD_IGROUPR(grp_idx), igroupr);
 
-    __asm__ volatile("dsb sy" : : : "memory");
-    return 0;
+		// 4. Clear Group Modifier bit
+		uint32_t igrpmodr = io_read32(base + GICD_IGRPMODR(grp_idx));
+		igrpmodr &= ~(1U << bit_shift);
+		io_write32(base + GICD_IGRPMODR(grp_idx), igrpmodr);
+	}
+
+	__asm__ volatile("dsb sy" : : : "memory");
+	return 0;
 }
 
 int set_group(irq_vector_t irq, irq_group_t group)
 {
-    if (irq >= MAX_INTERRUPT_VECTORS) {
-        return -1;
-    }
+	if (irq >= MAX_INTERRUPT_VECTORS) {
+		return -1;
+	}
 
-    // GICD_IGROUPR registers hold 32 bits, with each bit representing one interrupt.
-    // Register index = irq / 32, Bit position = irq % 32
-    uint32_t reg_offset = (irq / 32) * 4;
-    uint32_t bit_shift  = irq % 32;
+	// GICD_IGROUPR registers hold 32 bits, with each bit representing one interrupt.
+	// Register index = irq / 32, Bit position = irq % 32
+	uint32_t reg_offset = (irq / 32) * 4;
+	uint32_t bit_shift = irq % 32;
 
-    // Determine the base depending on if it's per-core (SGI/PPI) or global (SPI)
-    uintptr_t base_addr;
-    if (irq < 32) {
-        // SGIs and PPIs are managed inside the core's local Redistributor (SGI_base offset 0x10000)
-        base_addr = get_current_gicr_base() + 0x10000;
-    } else {
-        // SPIs are managed inside the global Distributor
-        base_addr = g_gicd;
-    }
+	// Determine the base depending on if it's per-core (SGI/PPI) or global (SPI)
+	uintptr_t base_addr;
+	if (irq < 32) {
+		// SGIs and PPIs are managed inside the core's local Redistributor (SGI_base offset 0x10000)
+		base_addr = get_current_gicr_base() + 0x10000;
+	} else {
+		// SPIs are managed inside the global Distributor
+		base_addr = g_gicd;
+	}
 
-    // Read-modify-write the Group register (Base offset 0x0080 for IGROUPR)
-    uint32_t val = io_read32(base_addr + 0x0080 + reg_offset);
-    
-    if (group == IRQ_GROUP_NON_SECURE) {
-        val |= (1U << bit_shift);  // 1 = Non-Secure
-    } else {
-        val &= ~(1U << bit_shift); // 0 = Secure
-    }
-    
-    io_write32(base_addr + 0x0080 + reg_offset, val);
+	// Read-modify-write the Group register (Base offset 0x0080 for IGROUPR)
+	uint32_t val = io_read32(base_addr + 0x0080 + reg_offset);
 
-    // Ensure the hardware registers sync up across the system pipeline
-    __asm__ volatile("dsb sy" ::: "memory");
+	if (group == IRQ_GROUP_NON_SECURE) {
+		val |= (1U << bit_shift); // 1 = Non-Secure
+	} else {
+		val &= ~(1U << bit_shift); // 0 = Secure
+	}
 
-    return 0;
+	io_write32(base_addr + 0x0080 + reg_offset, val);
+
+	// Ensure the hardware registers sync up across the system pipeline
+	__asm__ volatile("dsb sy" ::: "memory");
+
+	return 0;
 }
 
 int route_to_core(irq_vector_t irq, uint64_t mpidr)
 {
-    // Per-core interrupts (SGIs/PPIs < 32) are hardwired and cannot be cross-routed
-    if (irq < 32 || irq >= MAX_INTERRUPT_VECTORS) {
-        return EINVAL; 
-    }
+	// Per-core interrupts (SGIs/PPIs < 32) are hardwired and cannot be cross-routed
+	if (irq < 32 || irq >= MAX_INTERRUPT_VECTORS) {
+		return EINVAL;
+	}
 
-    // Clear bit 31 (Interrupt Routing Mode) to force unicast
-    uint64_t routing_val = mpidr & ~(1ULL << 31);
+	// Clear bit 31 (Interrupt Routing Mode) to force unicast
+	uint64_t routing_val = mpidr & ~(1ULL << 31);
 
-    // Each SPI has a 64-bit IROUTER register at offset 0x6000 + (irq * 8)
-    io_write64(g_gicd + 0x6000 + ((uint64_t)irq * 8), routing_val);
-    return 0;
+	// Each SPI has a 64-bit IROUTER register at offset 0x6000 + (irq * 8)
+	io_write64(g_gicd + 0x6000 + ((uint64_t)irq * 8), routing_val);
+	return 0;
 }
-
