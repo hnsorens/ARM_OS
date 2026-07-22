@@ -555,5 +555,8 @@ int route_to_core(irq_vector_t irq, uint64_t mpidr)
 
 	// Each SPI has a 64-bit IROUTER register at offset 0x6000 + (irq * 8)
 	io_write64(g_gicd + 0x6000 + ((uint64_t)irq * 8), routing_val);
+	/* Ensure the routing value is visible across all cores before any later
+	   enable() or any other MMIO operation on this interrupt. */
+	__asm__ volatile("dsb sy" ::: "memory");
 	return 0;
 }
