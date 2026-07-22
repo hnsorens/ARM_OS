@@ -13,35 +13,29 @@ static registered_isr_t s_isr_table[MAX_INTERRUPT_VECTORS];
  * Simple spinlock for protecting the shared ISR table.
  * -------------------------------------------------------------------------- */
 typedef struct {
-    volatile u32 lock;
+	volatile u32 lock;
 } spinlock_t;
 
 static inline void spin_lock(spinlock_t *s)
 {
-    u32 expected;
-    u32 val = 1;
-    __asm__ volatile(
-        "1: ldaxr %w0, [%1]\n"
-        "   cbnz %w0, 1b\n"
-        "   stlxr %w0, %w2, [%1]\n"
-        "   cbnz %w0, 1b\n"
-        : "=&r"(expected)
-        : "r"(&s->lock), "r"(val)
-        : "memory", "cc"
-    );
+	u32 expected;
+	u32 val = 1;
+	__asm__ volatile("1: ldaxr %w0, [%1]\n"
+			 "   cbnz %w0, 1b\n"
+			 "   stlxr %w0, %w2, [%1]\n"
+			 "   cbnz %w0, 1b\n"
+			 : "=&r"(expected)
+			 : "r"(&s->lock), "r"(val)
+			 : "memory", "cc");
 }
 
 static inline void spin_unlock(spinlock_t *s)
 {
-    __asm__ volatile(
-        "stlr %w0, [%1]\n"
-        :: "r"(0), "r"(&s->lock) : "memory"
-    );
+	__asm__ volatile("stlr %w0, [%1]\n" ::"r"(0), "r"(&s->lock) : "memory");
 }
 
 static spinlock_t s_isr_lock;
 static gic_core_map_t s_core_topology[MAX_CORES_SUPPORTED];
-
 
 /* --------------------------------------------------------------------------
  * Global State Addresses
@@ -282,7 +276,7 @@ void c_interrupt_handler(void)
 	if (interrupt_id < MAX_INTERRUPT_VECTORS) {
 		spin_lock(&s_isr_lock);
 		local.handler = s_isr_table[interrupt_id].handler;
-		local.arg     = s_isr_table[interrupt_id].arg;
+		local.arg = s_isr_table[interrupt_id].arg;
 		spin_unlock(&s_isr_lock);
 
 		if (local.handler != NULL) {
