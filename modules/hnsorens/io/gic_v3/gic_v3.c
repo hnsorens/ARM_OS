@@ -286,9 +286,9 @@ int disable(irq_vector_t irq_vector)
 	return 0;
 }
 
-irq_vector_t ack(void)
+irq_vector_t acknowledge(void)
 {
-	return (int)(icc_read_iar1_el1() & 0xFFFFFFFF);
+	return (irq_vector_t)(icc_read_iar1_el1() & 0xFFFFFFFF);
 }
 
 int eoi(irq_vector_t irq_vector)
@@ -336,57 +336,48 @@ int unregister_handler(irq_vector_t vector) {
     return 0;
 }
 
-int init_global() {
+int init_global(uintptr_t d_base, uintptr_t r_base)
+{
+    if (!d_base || !r_base) {
+        return EIO;
+    }
+    g_gicd = d_base;
+    g_gicr = r_base;
 
-	uint64_t cbar;
-	__asm__ volatile("mrs %0, S3_1_C15_C3_0" : "=r"(cbar));
-	cbar += HHDM_OFFSET;
-
-	g_gicd = cbar;
-	g_gicr = cbar + 0xA0000;
-
-	// Set ONLY Non-Secure bits allowed in EL1 context
-	uint32_t ctlr = gicd_read_ctlr();
-	ctlr |= GICD_CTLR_NS_ARE_NS | GICD_CTLR_NS_ENA_GRP1NS;
-	gicd_write_ctlr(ctlr);
-	__asm__ volatile("dsb sy");
-	return 0;
+    // Enable Group 1 Non-Secure distribution
+    uint32_t ctlr = gicd_read_ctlr();
+    ctlr |= GICD_CTLR_NS_ARE_NS | GICD_CTLR_NS_ENA_GRP1NS;
+    gicd_write_ctlr(ctlr);
+    __asm__ volatile("dsb sy");
+    return 0;
 }
 
-int init_core(uint32_t core_id)
+int init_core(void)
 {
-    if (core_id >= MAX_CORES_SUPPORTED) {
-        return -1;
-    }
-
-    // 1. Read this core's hardware routing coordinate (Affinity levels)
     uint64_t mpidr;
     __asm__ volatile("mrs %0, mpidr_el1" : "=r"(mpidr));
 
-    // Strip out non-affinity tracking bits to isolate pure hardware coordinates
-    // Matches GICv3 format: Aff3 (bits 32-39), Aff2 (bits 16-23), Aff1 (bits 8-15), Aff0 (bits 0-7)
-    uint64_t routing_affinity = (mpidr & 0xFF00000000ULL) | (mpidr & 0xFFFFFFULL);
+    // Extract logical core index (Aff0 + Aff1*256 -> linear)
+    uint32_t aff0 = (mpidr >> 0) & 0xFF;
+    uint32_t aff1 = (mpidr >> 8) & 0xFF;
+    uint32_t core_id = aff0 + (aff1 * 1);  // assuming single cluster
 
-    // Save mapping for future route_to_core calls
-    s_core_topology[core_id].mpidr = routing_affinity;
+    if (core_id >= MAX_CORES_SUPPORTED) {
+        return EINVAL;
+    }
+
+    // Save routing affinity (bits[39:32] Aff3, bits[23:16] Aff2, bits[15:8] Aff1, bits[7:0] Aff0)
+    s_core_topology[core_id].mpidr  = mpidr & 0xFF00000000ULL | mpidr & 0xFFFFFFULL;
     s_core_topology[core_id].allocated = true;
 
-    // 2. Initialize the local redistributor gateway for this core
     int status = gicv3_init_redistributor();
-    if (status != 0) {
-        return status;
-    }
+    if (status != 0) return status;
 
-    // 3. Configure this core's local CPU Interface engine 
     status = gicv3_init_cpu_interface_ns();
-    if (status != 0) {
-        return status;
-    }
+    if (status != 0) return status;
 
-    // 4. Initialize local exception vector mappings
     arm64_init_vectors();
-
-    return 0; // Core is fully initialized and open for interrupt traffic!
+    return 0;
 }
 
 int set_core_priority_mask(irq_prio_t mask)
@@ -502,28 +493,18 @@ int set_group(irq_vector_t irq, irq_group_t group)
     return 0;
 }
 
-int route_to_core(irq_vector_t irq, uint32_t core_id)
+int route_to_core(irq_vector_t irq, uint64_t mpidr)
 {
     // Per-core interrupts (SGIs/PPIs < 32) are hardwired and cannot be cross-routed
     if (irq < 32 || irq >= MAX_INTERRUPT_VECTORS) {
-        return -1; 
-    }
-    
-    // Verify the target core index actually exists in our registered topology
-    if (core_id >= MAX_CORES_SUPPORTED || !s_core_topology[core_id].allocated) {
-        return -1;
+        return EINVAL; 
     }
 
-    // Fetch the target physical hardware coordinate from our map
-    uint64_t routing_val = s_core_topology[core_id].mpidr;
+    // Clear bit 31 (Interrupt Routing Mode) to force unicast
+    uint64_t routing_val = mpidr & ~(1ULL << 31);
 
-    // Clear bit 31 (Interrupt Routing Mode) to enforce targeted delivery 
-    // instead of broadcasting to any available core
-    routing_val &= ~(1ULL << 31);
-
-    // GICD_IROUTER base offset is 0x6000. Each SPI vector gets its own 64-bit routing register.
-    io_write64(g_gicd + 0x6000 + (irq * 8), routing_val);
-
+    // Each SPI has a 64-bit IROUTER register at offset 0x6000 + (irq * 8)
+    io_write64(g_gicd + 0x6000 + ((uint64_t)irq * 8), routing_val);
     return 0;
 }
 
