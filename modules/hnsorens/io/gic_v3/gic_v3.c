@@ -42,38 +42,6 @@ static inline void spin_unlock(spinlock_t *s)
 static spinlock_t s_isr_lock;
 static gic_core_map_t s_core_topology[MAX_CORES_SUPPORTED];
 
-/* --------------------------------------------------------------------------
- * Simple spinlock for protecting the shared ISR table.
- * Uses ARMv8.0 ldaxr/stlxr acquire/release semantics.
- * -------------------------------------------------------------------------- */
-typedef struct {
-    volatile u32 lock;
-} spinlock_t;
-
-static inline void spin_lock(spinlock_t *s)
-{
-    u32 expected;
-    u32 val = 1;
-    __asm__ volatile(
-        "1: ldaxr %w0, [%1]\n"
-        "   cbnz %w0, 1b\n"
-        "   stlxr %w0, %w2, [%1]\n"
-        "   cbnz %w0, 1b\n"
-        : "=&r"(expected)
-        : "r"(&s->lock), "r"(val)
-        : "memory", "cc"
-    );
-}
-
-static inline void spin_unlock(spinlock_t *s)
-{
-    __asm__ volatile(
-        "stlr %w0, [%1]\n"
-        :: "r"(0), "r"(&s->lock) : "memory"
-    );
-}
-
-static spinlock_t s_isr_lock;
 
 /* --------------------------------------------------------------------------
  * Global State Addresses
