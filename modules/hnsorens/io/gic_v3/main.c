@@ -24,7 +24,6 @@ EXPORT_INTERFACE(interrupt_manager, gic_v3,
 		   .unregister_handler = unregister_handler });
 
 #ifdef TESTING
-#include "gic_v3.c"
 
 /**
  * @brief Test: Init global and per-core with realistic addresses.
