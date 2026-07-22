@@ -5,6 +5,7 @@
 #include <api/serial_debug.h>
 #include <errno.h>
 #include <test.h>
+#include <type.h>
 
 IMPORT_INTERFACE_ANY(serial, serial);
 
@@ -23,6 +24,7 @@ EXPORT_INTERFACE(interrupt_manager, gic_v3,
 		   .unregister_handler = unregister_handler });
 
 #ifdef TESTING
+#include "gic_v3.c"
 
 /**
  * @brief Test: Init global and per-core with realistic addresses.
