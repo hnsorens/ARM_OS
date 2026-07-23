@@ -196,6 +196,13 @@ static inline void icc_write_bpr1_el1(uint64_t val)
 	__asm__ volatile("isb");
 }
 
+uint64_t get_current_mpidr(void)
+{
+	uint64_t mpidr;
+	__asm__ volatile("mrs %0, mpidr_el1" : "=r"(mpidr));
+	return mpidr;
+}
+
 /* --------------------------------------------------------------------------
  * 4. SYSTEM INITIALIZATION API
  * -------------------------------------------------------------------------- */
@@ -545,18 +552,28 @@ int set_group(irq_vector_t irq, irq_group_t group)
 
 int route_to_core(irq_vector_t irq, uint64_t mpidr)
 {
-	// Per-core interrupts (SGIs/PPIs < 32) are hardwired and cannot be cross-routed
+	// Per-core interrupts (SGIs/PPIs < 32) cannot be cross-routed
 	if (irq < 32 || irq >= MAX_INTERRUPT_VECTORS) {
 		return EINVAL;
 	}
 
-	// Clear bit 31 (Interrupt Routing Mode) to force unicast
+	// Ensure the target core has been initialized
+	int found = 0;
+	for (int i = 0; i < MAX_CORES_SUPPORTED; i++) {
+		if (s_core_topology[i].allocated && s_core_topology[i].mpidr == mpidr) {
+			found = 1;
+			break;
+		}
+	}
+	if (!found) {
+		return EINVAL;   // Core not registered
+	}
+
+	// Clear IRM bit (bit 31) to force unicast delivery
 	uint64_t routing_val = mpidr & ~(1ULL << 31);
 
 	// Each SPI has a 64-bit IROUTER register at offset 0x6000 + (irq * 8)
-	io_write64(g_gicd + 0x6000 + ((uint64_t)irq * 8), routing_val);
-	/* Ensure the routing value is visible across all cores before any later
-	   enable() or any other MMIO operation on this interrupt. */
+	io_write64(g_gicd + 0x6000ULL + ((uint64_t)irq * 8), routing_val);
 	__asm__ volatile("dsb sy" ::: "memory");
 	return 0;
 }

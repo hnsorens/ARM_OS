@@ -48,4 +48,6 @@ int eoi(irq_vector_t vector);
 int register_handler(irq_vector_t vector, isr_handler_t handler, void* arg);
 int unregister_handler(irq_vector_t vector);
 
+uint64_t get_current_mpidr(void);
+
 #endif

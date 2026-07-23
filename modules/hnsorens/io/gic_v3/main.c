@@ -272,4 +272,112 @@ TEST(GIC_MagicCorruption)
 	TEST_RESULT();
 }
 
+/**
+ * @brief Test: Route SPI 50 to the current core and verify IROUTER content.
+ */
+TEST(GIC_RouteSPIToCore)
+{
+	TEST_INIT();
+
+	uintptr_t gicd_base = 0x8000000ULL;
+	uintptr_t gicr_base = 0x80A0000ULL;
+	init_global(gicd_base, gicr_base);
+	init_core();
+
+	irq_vector_t spi = 50;
+	uint64_t mpidr = get_current_mpidr();
+
+	// Clear IRM bit (bit 31) – matching what route_to_core does
+	uint64_t expected = mpidr & ~(1ULL << 31);
+
+	int ret = route_to_core(spi, mpidr);
+	EXPECT_EQ(ret, 0);
+
+	// Read IROUTER at offset 0x6000 + (spi * 8)
+	uint64_t router_val = *(volatile uint64_t *)(gicd_base + 0x6000ULL + (spi * 8));
+	EXPECT_EQ(router_val, expected);
+
+	TEST_RESULT();
+}
+
+/**
+ * @brief Test: Routing an SGI (<32) must fail with EINVAL.
+ */
+TEST(GIC_RouteSGI_Failure)
+{
+	TEST_INIT();
+
+	uintptr_t gicd_base = 0x8000000ULL;
+	uintptr_t gicr_base = 0x80A0000ULL;
+	init_global(gicd_base, gicr_base);
+	init_core();
+
+	irq_vector_t sgi = 0;  // SGI 0
+	uint64_t mpidr = get_current_mpidr();
+
+	int ret = route_to_core(sgi, mpidr);
+	EXPECT_EQ(ret, EINVAL);
+
+	TEST_RESULT();
+}
+
+/**
+ * @brief Test: Full SPI cycle – route, configure, enable, register handler.
+ */
+TEST(GIC_FullSPILifecycle)
+{
+	TEST_INIT();
+
+	uintptr_t gicd_base = 0x8000000ULL;
+	uintptr_t gicr_base = 0x80A0000ULL;
+	init_global(gicd_base, gicr_base);
+	init_core();
+
+	irq_vector_t spi = 51;
+	uint64_t mpidr = get_current_mpidr();
+	void *dummy_ctx = (void *)0xDEADBEEF;
+	void (*dummy_isr)(void *) = (void (*)(void *))0x1234;
+
+	// 1. Route to current core
+	int ret = route_to_core(spi, mpidr);
+	EXPECT_EQ(ret, 0);
+
+	// 2. Configure as edge-triggered, priority 0xA0
+	ret = configure(spi, IRQ_TRIGGER_EDGE, 0xA0);
+	EXPECT_EQ(ret, 0);
+
+	// 3. Enable the interrupt
+	ret = enable(spi);
+	EXPECT_EQ(ret, 0);
+
+	// 4. Register handler
+	ret = register_handler(spi, dummy_isr, dummy_ctx);
+	EXPECT_EQ(ret, 0);
+
+	// 5. Verify ISENABLER (distributor offset for SPIs)
+	uint32_t enabler = *(volatile uint32_t *)(gicd_base + 0x0100 + (spi / 32) * 4);
+	uint32_t bit = (enabler >> (spi % 32)) & 1;
+	EXPECT_EQ(bit, 1);
+
+	// 6. Verify IPRIORITYR
+	uint32_t prio_reg = *(volatile uint32_t *)(gicd_base + 0x0400 + (spi / 4) * 4);
+	uint32_t prio_shift = (spi % 4) * 8;
+	uint32_t prio_val = (prio_reg >> prio_shift) & 0xFF;
+	EXPECT_EQ(prio_val, 0xA0);
+
+	// 7. Verify ICFGR (edge = 0x2)
+	uint32_t cfg_reg = *(volatile uint32_t *)(gicd_base + 0x0C00 + (spi / 16) * 4);
+	uint32_t cfg_shift = (spi % 16) * 2;
+	uint32_t cfg_val = (cfg_reg >> cfg_shift) & 0x3;
+	EXPECT_EQ(cfg_val, 0x2);
+
+	// 8. Clean up: unregister and disable
+	ret = unregister_handler(spi);
+	EXPECT_EQ(ret, 0);
+	ret = disable(spi);
+	EXPECT_EQ(ret, 0);
+
+	TEST_RESULT();
+}
+
 #endif /* TESTING */
