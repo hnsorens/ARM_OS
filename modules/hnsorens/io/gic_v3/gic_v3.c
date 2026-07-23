@@ -419,9 +419,8 @@ int init_core(void)
 		return EINVAL;
 	}
 
-	// Save routing affinity (bits[39:32] Aff3, bits[23:16] Aff2, bits[15:8] Aff1, bits[7:0] Aff0)
-	s_core_topology[core_id].mpidr = mpidr & 0xFF00000000ULL |
-					 mpidr & 0xFFFFFFULL;
+	// Store the full MPIDR so that route_to_core can match it exactly
+	s_core_topology[core_id].mpidr = mpidr;
 	s_core_topology[core_id].allocated = true;
 
 	int status = gicv3_init_redistributor();
