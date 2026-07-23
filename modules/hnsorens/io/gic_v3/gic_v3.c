@@ -560,13 +560,14 @@ int route_to_core(irq_vector_t irq, uint64_t mpidr)
 	// Ensure the target core has been initialized
 	int found = 0;
 	for (int i = 0; i < MAX_CORES_SUPPORTED; i++) {
-		if (s_core_topology[i].allocated && s_core_topology[i].mpidr == mpidr) {
+		if (s_core_topology[i].allocated &&
+		    s_core_topology[i].mpidr == mpidr) {
 			found = 1;
 			break;
 		}
 	}
 	if (!found) {
-		return EINVAL;   // Core not registered
+		return EINVAL; // Core not registered
 	}
 
 	// Clear IRM bit (bit 31) to force unicast delivery
