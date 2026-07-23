@@ -9,13 +9,95 @@
 
 IMPORT_INTERFACE_ANY(serial, serial);
 
+static volatile int gic_demo_fired = 0;
+
+static void gic_demo_handler(void *arg)
+{
+	(void)arg;
+	serial.printf("[GIC Demo] SGI handler invoked – interrupt mechanism works!\n");
+	gic_demo_fired = 1;
+}
+
 /* ========================================================================== */
 /*                 Module init (optional, not required by vtable)             */
 /* ========================================================================== */
 int main(boot_info_t *boot_info)
 {
 	(void)boot_info;
-	return 0; // GIC is initialized via vtable calls
+
+	uintptr_t gicd_base = 0x8000000ULL;
+	uintptr_t gicr_base = 0x80A0000ULL;
+
+	int ret = init_global(gicd_base, gicr_base);
+	if (ret) {
+		serial.printf("init_global failed: %d\n", ret);
+		return ret;
+	}
+
+	ret = init_core();
+	if (ret) {
+		serial.printf("init_core failed: %d\n", ret);
+		return ret;
+	}
+
+	ret = register_handler(0, gic_demo_handler, NULL);
+	if (ret) {
+		serial.printf("register_handler failed: %d\n", ret);
+		return ret;
+	}
+
+	ret = configure(0, IRQ_TRIGGER_EDGE, 0x80);
+	if (ret) {
+		serial.printf("configure failed: %d\n", ret);
+		return ret;
+	}
+
+	ret = set_group(0, IRQ_GROUP_NON_SECURE);
+	if (ret) {
+		serial.printf("set_group failed: %d\n", ret);
+		return ret;
+	}
+
+	ret = enable(0);
+	if (ret) {
+		serial.printf("enable failed: %d\n", ret);
+		return ret;
+	}
+
+	set_core_priority_mask(0xFF);
+
+	__asm__ volatile("msr daifclr, #2" ::: "memory");
+
+	uint64_t mpidr;
+	__asm__ volatile("mrs %0, mpidr_el1" : "=r"(mpidr));
+	uint64_t aff0 = mpidr & 0xFF;
+	uint64_t aff1 = (mpidr >> 8) & 0xFF;
+	uint64_t aff2 = (mpidr >> 16) & 0xFF;
+	uint64_t aff3 = (mpidr >> 32) & 0xFF;
+
+	uint64_t sgi_reg = (aff3 << 48) | (aff2 << 32) |
+			   (aff1 << 24) |
+			   ((uint64_t)(0 & 0x0F) << 24) |
+			   ((aff0 & 0xF0) << 16) |
+			   (1ULL << (aff0 & 0x0F));
+	__asm__ volatile("msr ICC_SGI1R_EL1, %0" : : "r"(sgi_reg));
+	__asm__ volatile("dsb sy\n isb");
+
+	for (volatile int spin = 0; spin < 10000000 && !gic_demo_fired; spin++)
+		__asm__ volatile("nop");
+
+	__asm__ volatile("msr daifset, #2" ::: "memory");
+
+	if (gic_demo_fired)
+		serial.printf("[GIC Demo] SUCCESS: handler was called!\n");
+	else
+		serial.printf("[GIC Demo] FAILURE: handler NOT called within wait time.\n");
+
+	ret = unregister_handler(0);
+	if (ret) {
+		serial.printf("unregister_handler failed: %d\n", ret);
+	}
+	return ret;
 }
 
 /* ========================================================================== */
