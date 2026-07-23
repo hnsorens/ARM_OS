@@ -9,16 +9,6 @@
 
 IMPORT_INTERFACE_ANY(serial, serial);
 
-static volatile int gic_demo_fired = 0;
-
-static void gic_demo_handler(void *arg)
-{
-	(void)arg;
-	serial.printf(
-		"[GIC Demo] SGI handler invoked – interrupt mechanism works!\n");
-	gic_demo_fired = 1;
-}
-
 /* ========================================================================== */
 /*                 Module init (optional, not required by vtable)             */
 /* ========================================================================== */
@@ -41,25 +31,23 @@ int main(boot_info_t *boot_info)
 		return ret;
 	}
 
-	ret = register_handler(0, gic_demo_handler, NULL);
-	if (ret) {
-		serial.printf("register_handler failed: %d\n", ret);
-		return ret;
-	}
+	/* Use the EL1 Physical Timer (PPI 30) */
+	const irq_vector_t timer_irq = 30;
 
-	ret = configure(0, IRQ_TRIGGER_EDGE, 0x80);
+	/* Configure and enable the timer interrupt */
+	ret = configure(timer_irq, IRQ_TRIGGER_LEVEL, 0x80);
 	if (ret) {
 		serial.printf("configure failed: %d\n", ret);
 		return ret;
 	}
 
-	ret = set_group(0, IRQ_GROUP_NON_SECURE);
+	ret = set_group(timer_irq, IRQ_GROUP_NON_SECURE);
 	if (ret) {
 		serial.printf("set_group failed: %d\n", ret);
 		return ret;
 	}
 
-	ret = enable(0);
+	ret = enable(timer_irq);
 	if (ret) {
 		serial.printf("enable failed: %d\n", ret);
 		return ret;
@@ -67,56 +55,49 @@ int main(boot_info_t *boot_info)
 
 	set_core_priority_mask(0xFF);
 
-	/* Instead of waiting for an exception, we directly poll the GIC.
-	 * Fire a SGI and then read the acknowledge register (ICC_IAR1_EL1).
-	 * If it returns the SGI ID (0) we know the interrupt was delivered. */
-	uint64_t mpidr;
-	__asm__ volatile("mrs %0, mpidr_el1" : "=r"(mpidr));
-	uint64_t aff0 = mpidr & 0xFF;
-	uint64_t aff1 = (mpidr >> 8) & 0xFF;
-	uint64_t aff2 = (mpidr >> 16) & 0xFF;
-	uint64_t aff3 = (mpidr >> 32) & 0xFF;
+	/* Program the EL1 physical timer to fire after ~10 ms */
+	uint64_t cntfrq;
+	__asm__ volatile("mrs %0, cntfrq_el0" : "=r"(cntfrq));
+	uint64_t cval;
+	__asm__ volatile("mrs %0, cntpct_el0" : "=r"(cval));
+	cval += cntfrq / 100; /* ~10 ms */
 
-	/* Set IRM bit (23) to 1 => broadcast to all cores in this affinity level.
-	 * For a single‑core system this targets the current core.
-	 * Bits[15:0] hold the SGI ID (0 in our case). */
-	uint64_t sgi_reg = (aff3 << 48) | (aff2 << 32) | (aff1 << 24) |
-			   (aff0 << 16) | (1ULL << 23) | 0ULL;
-	__asm__ volatile("msr ICC_SGI1R_EL1, %0" : : "r"(sgi_reg));
-	__asm__ volatile("dsb sy\n isb");
+	__asm__ volatile("msr cntp_cval_el0, %0" : : "r"(cval));
 
-	/* Poll the acknowledge register until we get the SGI (or a timeout) */
+	/* Enable timer (bit 0) */
+	__asm__ volatile("msr cntp_ctl_el0, %0" : : "r"(1UL));
+	__asm__ volatile("isb");
+
+	/* Poll the acknowledge register until we get the timer interrupt */
 	irq_vector_t ack = 1023;
-	for (int spin = 0; spin < 1000000; spin++) {
+	for (int spin = 0; spin < 10000000; spin++) {
 		__asm__ volatile("nop");
 		ack = acknowledge();
 		if (ack != 1023)
 			break;
 	}
-	if (ack == 0) {
-		gic_demo_fired = 1;
-	} else {
-		serial.printf(
-			"[GIC Demo] acknowledge() returned %u (expected 0)\n",
-			ack);
-	}
 
-	/* If we got the SGI, signal end‑of‑interrupt */
-	if (ack != 1023) {
+	if (ack == timer_irq) {
+		serial.printf("[GIC Demo] Timer interrupt acknowledged (ID %u). Success!\n",
+			      ack);
+		/* Signal end‑of‑interrupt */
 		eoi(ack);
+	} else {
+		serial.printf("[GIC Demo] acknowledge() returned %u (expected %u). FAILURE.\n",
+			      ack, timer_irq);
 	}
 
-	if (gic_demo_fired)
-		serial.printf(
-			"[GIC Demo] SUCCESS: SGI 0 was delivered and acknowledged!\n");
-	else
-		serial.printf("[GIC Demo] FAILURE: SGI 0 was NOT delivered.\n");
+	/* Disable timer */
+	__asm__ volatile("msr cntp_ctl_el0, %0" : : "r"(0UL));
 
-	ret = unregister_handler(0);
+	/* Disable the interrupt */
+	ret = disable(timer_irq);
 	if (ret) {
-		serial.printf("unregister_handler failed: %d\n", ret);
+		serial.printf("disable failed: %d\n", ret);
+		return ret;
 	}
-	return ret;
+
+	return 0;
 }
 
 /* ========================================================================== */
