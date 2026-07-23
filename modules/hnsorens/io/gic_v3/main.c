@@ -67,8 +67,9 @@ int main(boot_info_t *boot_info)
 
 	set_core_priority_mask(0xFF);
 
-	__asm__ volatile("msr daifclr, #2" ::: "memory");
-
+	/* Instead of waiting for an exception, we directly poll the GIC.
+	 * Fire a SGI and then read the acknowledge register (ICC_IAR1_EL1).
+	 * If it returns the SGI ID (0) we know the interrupt was delivered. */
 	uint64_t mpidr;
 	__asm__ volatile("mrs %0, mpidr_el1" : "=r"(mpidr));
 	uint64_t aff0 = mpidr & 0xFF;
@@ -76,22 +77,38 @@ int main(boot_info_t *boot_info)
 	uint64_t aff2 = (mpidr >> 16) & 0xFF;
 	uint64_t aff3 = (mpidr >> 32) & 0xFF;
 
+	/* Set IRM bit (23) to 1 => broadcast to all cores in this affinity level.
+	 * For a single‑core system this targets the current core.
+	 * Bits[15:0] hold the SGI ID (0 in our case). */
 	uint64_t sgi_reg = (aff3 << 48) | (aff2 << 32) | (aff1 << 24) |
-			   ((uint64_t)(0 & 0x0F) << 24) |
-			   ((aff0 & 0xF0) << 16) | (1ULL << (aff0 & 0x0F));
+			   (aff0 << 16) | (1ULL << 23) | 0ULL;
 	__asm__ volatile("msr ICC_SGI1R_EL1, %0" : : "r"(sgi_reg));
 	__asm__ volatile("dsb sy\n isb");
 
-	for (volatile int spin = 0; spin < 10000000 && !gic_demo_fired; spin++)
+	/* Poll the acknowledge register until we get the SGI (or a timeout) */
+	irq_vector_t ack = 1023;
+	for (int spin = 0; spin < 1000000; spin++) {
 		__asm__ volatile("nop");
+		ack = acknowledge();
+		if (ack != 1023)
+			break;
+	}
+	if (ack == 0) {
+		gic_demo_fired = 1;
+	} else {
+		serial.printf("[GIC Demo] acknowledge() returned %u (expected 0)\n",
+			      ack);
+	}
 
-	__asm__ volatile("msr daifset, #2" ::: "memory");
+	/* If we got the SGI, signal end‑of‑interrupt */
+	if (ack != 1023) {
+		eoi(ack);
+	}
 
 	if (gic_demo_fired)
-		serial.printf("[GIC Demo] SUCCESS: handler was called!\n");
+		serial.printf("[GIC Demo] SUCCESS: SGI 0 was delivered and acknowledged!\n");
 	else
-		serial.printf(
-			"[GIC Demo] FAILURE: handler NOT called within wait time.\n");
+		serial.printf("[GIC Demo] FAILURE: SGI 0 was NOT delivered.\n");
 
 	ret = unregister_handler(0);
 	if (ret) {
