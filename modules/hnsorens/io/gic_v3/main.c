@@ -9,6 +9,18 @@
 
 IMPORT_INTERFACE_ANY(serial, serial);
 
+static volatile bool timer_fired = false;
+
+static void timer_handler(void *arg)
+{
+    (void)arg;
+    /* Disable timer to avoid repeated fires */
+    __asm__ volatile("msr cntp_ctl_el0, %0" : : "r"(0UL));
+    __asm__ volatile("isb");
+    serial.printf("[GIC Demo] Timer interrupt handler called!\n");
+    timer_fired = true;
+}
+
 /* ========================================================================== */
 /*                 Module init (optional, not required by vtable)             */
 /* ========================================================================== */
@@ -31,10 +43,9 @@ int main(boot_info_t *boot_info)
 		return ret;
 	}
 
-	/* Use the EL1 Physical Timer (PPI 30) */
 	const irq_vector_t timer_irq = 30;
 
-	/* Configure and enable the timer interrupt */
+	/* Configure interrupt properties */
 	ret = configure(timer_irq, IRQ_TRIGGER_LEVEL, 0x80);
 	if (ret) {
 		serial.printf("configure failed: %d\n", ret);
@@ -47,9 +58,10 @@ int main(boot_info_t *boot_info)
 		return ret;
 	}
 
-	ret = enable(timer_irq);
+	/* Register handler (this also enables the interrupt) */
+	ret = register_handler(timer_irq, timer_handler, NULL);
 	if (ret) {
-		serial.printf("enable failed: %d\n", ret);
+		serial.printf("register_handler failed: %d\n", ret);
 		return ret;
 	}
 
@@ -68,34 +80,24 @@ int main(boot_info_t *boot_info)
 	__asm__ volatile("msr cntp_ctl_el0, %0" : : "r"(1UL));
 	__asm__ volatile("isb");
 
-	/* Poll the acknowledge register until we get the timer interrupt */
-	irq_vector_t ack = 1023;
-	for (int spin = 0; spin < 10000000; spin++) {
-		__asm__ volatile("nop");
-		ack = acknowledge();
-		if (ack != 1023)
-			break;
+	/* Unmask interrupts on this core (clear PSTATE.I) */
+	__asm__ volatile("msr daifclr, #2" ::: "memory");
+
+	/* Wait for the handler to set the flag */
+	while (!timer_fired) {
+		__asm__ volatile("wfe" ::: "memory");
 	}
 
-	if (ack == timer_irq) {
-		serial.printf(
-			"[GIC Demo] Timer interrupt acknowledged (ID %u). Success!\n",
-			ack);
-		/* Signal end‑of‑interrupt */
-		eoi(ack);
-	} else {
-		serial.printf(
-			"[GIC Demo] acknowledge() returned %u (expected %u). FAILURE.\n",
-			ack, timer_irq);
-	}
+	/* Re‑mask interrupts */
+	__asm__ volatile("msr daifset, #2" ::: "memory");
 
-	/* Disable timer */
+	/* Disable timer just in case */
 	__asm__ volatile("msr cntp_ctl_el0, %0" : : "r"(0UL));
 
-	/* Disable the interrupt */
-	ret = disable(timer_irq);
+	/* Cleanup: unregister handler (disables interrupt) */
+	ret = unregister_handler(timer_irq);
 	if (ret) {
-		serial.printf("disable failed: %d\n", ret);
+		serial.printf("unregister_handler failed: %d\n", ret);
 		return ret;
 	}
 
