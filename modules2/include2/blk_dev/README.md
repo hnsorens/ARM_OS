@@ -1,5 +1,0 @@
-Description
-
-Required Functions
-
-Types

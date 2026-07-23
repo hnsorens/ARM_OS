@@ -294,7 +294,8 @@ TEST(GIC_RouteSPIToCore)
 	EXPECT_EQ(ret, 0);
 
 	// Read IROUTER at offset 0x6000 + (spi * 8)
-	uint64_t router_val = *(volatile uint64_t *)(gicd_base + 0x6000ULL + (spi * 8));
+	uint64_t router_val =
+		*(volatile uint64_t *)(gicd_base + 0x6000ULL + (spi * 8));
 	EXPECT_EQ(router_val, expected);
 
 	TEST_RESULT();
@@ -312,7 +313,7 @@ TEST(GIC_RouteSGI_Failure)
 	init_global(gicd_base, gicr_base);
 	init_core();
 
-	irq_vector_t sgi = 0;  // SGI 0
+	irq_vector_t sgi = 0; // SGI 0
 	uint64_t mpidr = get_current_mpidr();
 
 	int ret = route_to_core(sgi, mpidr);
@@ -355,18 +356,21 @@ TEST(GIC_FullSPILifecycle)
 	EXPECT_EQ(ret, 0);
 
 	// 5. Verify ISENABLER (distributor offset for SPIs)
-	uint32_t enabler = *(volatile uint32_t *)(gicd_base + 0x0100 + (spi / 32) * 4);
+	uint32_t enabler =
+		*(volatile uint32_t *)(gicd_base + 0x0100 + (spi / 32) * 4);
 	uint32_t bit = (enabler >> (spi % 32)) & 1;
 	EXPECT_EQ(bit, 1);
 
 	// 6. Verify IPRIORITYR
-	uint32_t prio_reg = *(volatile uint32_t *)(gicd_base + 0x0400 + (spi / 4) * 4);
+	uint32_t prio_reg =
+		*(volatile uint32_t *)(gicd_base + 0x0400 + (spi / 4) * 4);
 	uint32_t prio_shift = (spi % 4) * 8;
 	uint32_t prio_val = (prio_reg >> prio_shift) & 0xFF;
 	EXPECT_EQ(prio_val, 0xA0);
 
 	// 7. Verify ICFGR (edge = 0x2)
-	uint32_t cfg_reg = *(volatile uint32_t *)(gicd_base + 0x0C00 + (spi / 16) * 4);
+	uint32_t cfg_reg =
+		*(volatile uint32_t *)(gicd_base + 0x0C00 + (spi / 16) * 4);
 	uint32_t cfg_shift = (spi % 16) * 2;
 	uint32_t cfg_val = (cfg_reg >> cfg_shift) & 0x3;
 	EXPECT_EQ(cfg_val, 0x2);
