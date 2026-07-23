@@ -9,98 +9,13 @@
 
 IMPORT_INTERFACE_ANY(serial, serial);
 
-static volatile bool timer_fired = false;
-
-static void timer_handler(void *arg)
-{
-	(void)arg;
-	/* Disable timer to avoid repeated fires */
-	//__asm__ volatile("msr cntp_ctl_el0, %0" : : "r"(0UL));
-	//__asm__ volatile("isb");
-	serial.printf("[GIC Demo] Timer interrupt handler called!\n");
-	timer_fired = true;
-}
-
 /* ========================================================================== */
 /*                 Module init (optional, not required by vtable)             */
 /* ========================================================================== */
 int main(boot_info_t *boot_info)
 {
 	(void)boot_info;
-
-	uintptr_t gicd_base = 0x8000000ULL;
-	uintptr_t gicr_base = 0x80A0000ULL;
-
-	int ret = init_global(gicd_base, gicr_base);
-	if (ret) {
-		serial.printf("init_global failed: %d\n", ret);
-		return ret;
-	}
-
-	ret = init_core();
-	if (ret) {
-		serial.printf("init_core failed: %d\n", ret);
-		return ret;
-	}
-
-	const irq_vector_t timer_irq = 30;
-
-	/* Configure interrupt properties */
-	ret = configure(timer_irq, IRQ_TRIGGER_LEVEL, 0x80);
-	if (ret) {
-		serial.printf("configure failed: %d\n", ret);
-		return ret;
-	}
-
-	ret = set_group(timer_irq, IRQ_GROUP_NON_SECURE);
-	if (ret) {
-		serial.printf("set_group failed: %d\n", ret);
-		return ret;
-	}
-
-	/* Register handler (this also enables the interrupt) */
-	ret = register_handler(timer_irq, timer_handler, NULL);
-	if (ret) {
-		serial.printf("register_handler failed: %d\n", ret);
-		return ret;
-	}
-
-	set_core_priority_mask(0xFF);
-
-	/* Program the EL1 physical timer to fire after ~10 ms */
-	uint64_t cntfrq;
-	__asm__ volatile("mrs %0, cntfrq_el0" : "=r"(cntfrq));
-	uint64_t cval;
-	__asm__ volatile("mrs %0, cntpct_el0" : "=r"(cval));
-	cval += cntfrq / 100; /* ~10 ms */
-
-	__asm__ volatile("msr cntp_cval_el0, %0" : : "r"(cval));
-
-	/* Enable timer (bit 0) */
-	__asm__ volatile("msr cntp_ctl_el0, %0" : : "r"(1UL));
-	__asm__ volatile("isb");
-
-	/* Unmask interrupts on this core (clear PSTATE.I) */
-	__asm__ volatile("msr daifclr, #2" ::: "memory");
-
-	/* Wait for the handler to set the flag */
-	while (!timer_fired) {
-		__asm__ volatile("nop");
-	}
-
-	/* Re‑mask interrupts */
-	__asm__ volatile("msr daifset, #2" ::: "memory");
-
-	/* Disable timer just in case */
-	__asm__ volatile("msr cntp_ctl_el0, %0" : : "r"(0UL));
-
-	/* Cleanup: unregister handler (disables interrupt) */
-	ret = unregister_handler(timer_irq);
-	if (ret) {
-		serial.printf("unregister_handler failed: %d\n", ret);
-		return ret;
-	}
-
+	/* Interrupt handling is now tested via unit tests. */
 	return 0;
 }
 
@@ -125,6 +40,15 @@ EXPORT_INTERFACE(interrupt_manager, gic_v3,
 /*                              Unit Tests                                    */
 /* ========================================================================== */
 #ifdef TESTING
+
+static volatile bool timer_fired = false;
+
+static void timer_handler(void *arg)
+{
+	(void)arg;
+	serial.printf("[GIC Demo] Timer interrupt handler called!\n");
+	timer_fired = true;
+}
 
 TEST(GIC_InitLifecycle)
 {
@@ -353,6 +277,65 @@ TEST(GIC_FullSPILifecycle)
 	EXPECT_EQ(ret, 0);
 	ret = disable(spi);
 	EXPECT_EQ(ret, 0);
+	TEST_RESULT();
+}
+
+TEST(GIC_TimerInterrupt)
+{
+	TEST_INIT();
+
+	uintptr_t gicd_base = 0x8000000ULL;
+	uintptr_t gicr_base = 0x80A0000ULL;
+
+	int ret = init_global(gicd_base, gicr_base);
+	EXPECT_EQ(ret, 0);
+
+	ret = init_core();
+	EXPECT_EQ(ret, 0);
+
+	const irq_vector_t timer_irq = 30;
+
+	ret = configure(timer_irq, IRQ_TRIGGER_LEVEL, 0x80);
+	EXPECT_EQ(ret, 0);
+
+	ret = set_group(timer_irq, IRQ_GROUP_NON_SECURE);
+	EXPECT_EQ(ret, 0);
+
+	ret = register_handler(timer_irq, timer_handler, NULL);
+	EXPECT_EQ(ret, 0);
+
+	set_core_priority_mask(0xFF);
+
+	/* Program the EL1 physical timer to fire after ~10 ms */
+	uint64_t cntfrq;
+	__asm__ volatile("mrs %0, cntfrq_el0" : "=r"(cntfrq));
+	uint64_t cval;
+	__asm__ volatile("mrs %0, cntpct_el0" : "=r"(cval));
+	cval += cntfrq / 100; /* ~10 ms */
+
+	__asm__ volatile("msr cntp_cval_el0, %0" : : "r"(cval));
+
+	__asm__ volatile("msr cntp_ctl_el0, %0" : : "r"(1UL));
+	__asm__ volatile("isb");
+
+	__asm__ volatile("msr daifclr, #2" ::: "memory");
+
+	/* Wait with timeout (approx 10 million NOP cycles) */
+	int timeout = 10000000;
+	while (!timer_fired && timeout-- > 0) {
+		__asm__ volatile("nop");
+	}
+
+	__asm__ volatile("msr daifset, #2" ::: "memory");
+
+	__asm__ volatile("msr cntp_ctl_el0, %0" : : "r"(0UL));
+
+	/* Unregister handler (also disables interrupt) */
+	ret = unregister_handler(timer_irq);
+	EXPECT_EQ(ret, 0);
+
+	EXPECT_TRUE(timer_fired);
+
 	TEST_RESULT();
 }
 
