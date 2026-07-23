@@ -9,6 +9,15 @@
 
 IMPORT_INTERFACE_ANY(serial, serial);
 
+int main()
+{
+	// Use typical QEMU virt addresses for now
+	uintptr_t gicd_base = 0x8000000ULL; // QEMU virt platform GICD
+	uintptr_t gicr_base = 0x80A0000ULL; // GICR base (first redistributor)
+
+	//init_global(gicd_base, gicr_base);
+}
+
 EXPORT_INTERFACE(interrupt_manager, gic_v3,
 		 { .init_global = init_global,
 		   .init_core = init_core,
