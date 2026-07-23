@@ -14,7 +14,8 @@ static volatile int gic_demo_fired = 0;
 static void gic_demo_handler(void *arg)
 {
 	(void)arg;
-	serial.printf("[GIC Demo] SGI handler invoked – interrupt mechanism works!\n");
+	serial.printf(
+		"[GIC Demo] SGI handler invoked – interrupt mechanism works!\n");
 	gic_demo_fired = 1;
 }
 
@@ -75,11 +76,9 @@ int main(boot_info_t *boot_info)
 	uint64_t aff2 = (mpidr >> 16) & 0xFF;
 	uint64_t aff3 = (mpidr >> 32) & 0xFF;
 
-	uint64_t sgi_reg = (aff3 << 48) | (aff2 << 32) |
-			   (aff1 << 24) |
+	uint64_t sgi_reg = (aff3 << 48) | (aff2 << 32) | (aff1 << 24) |
 			   ((uint64_t)(0 & 0x0F) << 24) |
-			   ((aff0 & 0xF0) << 16) |
-			   (1ULL << (aff0 & 0x0F));
+			   ((aff0 & 0xF0) << 16) | (1ULL << (aff0 & 0x0F));
 	__asm__ volatile("msr ICC_SGI1R_EL1, %0" : : "r"(sgi_reg));
 	__asm__ volatile("dsb sy\n isb");
 
@@ -91,7 +90,8 @@ int main(boot_info_t *boot_info)
 	if (gic_demo_fired)
 		serial.printf("[GIC Demo] SUCCESS: handler was called!\n");
 	else
-		serial.printf("[GIC Demo] FAILURE: handler NOT called within wait time.\n");
+		serial.printf(
+			"[GIC Demo] FAILURE: handler NOT called within wait time.\n");
 
 	ret = unregister_handler(0);
 	if (ret) {
