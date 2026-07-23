@@ -13,12 +13,12 @@ static volatile bool timer_fired = false;
 
 static void timer_handler(void *arg)
 {
-    (void)arg;
-    /* Disable timer to avoid repeated fires */
-    __asm__ volatile("msr cntp_ctl_el0, %0" : : "r"(0UL));
-    __asm__ volatile("isb");
-    serial.printf("[GIC Demo] Timer interrupt handler called!\n");
-    timer_fired = true;
+	(void)arg;
+	/* Disable timer to avoid repeated fires */
+	__asm__ volatile("msr cntp_ctl_el0, %0" : : "r"(0UL));
+	__asm__ volatile("isb");
+	serial.printf("[GIC Demo] Timer interrupt handler called!\n");
+	timer_fired = true;
 }
 
 /* ========================================================================== */
