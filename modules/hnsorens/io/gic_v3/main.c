@@ -85,7 +85,7 @@ int main(boot_info_t *boot_info)
 
 	/* Wait for the handler to set the flag */
 	while (!timer_fired) {
-		__asm__ volatile("wfe" ::: "memory");
+		__asm__ volatile("nop");
 	}
 
 	/* Re‑mask interrupts */

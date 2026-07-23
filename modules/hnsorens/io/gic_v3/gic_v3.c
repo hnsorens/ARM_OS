@@ -45,6 +45,11 @@ static inline void spin_unlock(spinlock_t *s)
 }
 
 /* ========================================================================== */
+/*                     External vector table symbol                           */
+/* ========================================================================== */
+extern char exception_vector_table[];
+
+/* ========================================================================== */
 /*                    MMIO accessors                                          */
 /* ========================================================================== */
 static inline void mmio_write32(uintptr_t addr, uint32_t val)
@@ -232,8 +237,10 @@ int init_core(void)
 	if (ret)
 		return ret;
 
-	/* Optionally install the vector table (should be done once globally) */
-	/* The caller should call arm64_init_vectors() once before enabling IRQs */
+	/* Install the exception vector table for this core */
+	__asm__ volatile("msr vbar_el1, %0" : : "r"((uint64_t)exception_vector_table));
+	__asm__ volatile("isb");
+
 	return 0;
 }
 
