@@ -238,7 +238,9 @@ int init_core(void)
 		return ret;
 
 	/* Install the exception vector table for this core */
-	__asm__ volatile("msr vbar_el1, %0" : : "r"((uint64_t)exception_vector_table));
+	__asm__ volatile("msr vbar_el1, %0"
+			 :
+			 : "r"((uint64_t)exception_vector_table));
 	__asm__ volatile("isb");
 
 	return 0;
