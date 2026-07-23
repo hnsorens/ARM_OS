@@ -78,13 +78,15 @@ int main(boot_info_t *boot_info)
 	}
 
 	if (ack == timer_irq) {
-		serial.printf("[GIC Demo] Timer interrupt acknowledged (ID %u). Success!\n",
-			      ack);
+		serial.printf(
+			"[GIC Demo] Timer interrupt acknowledged (ID %u). Success!\n",
+			ack);
 		/* Signal end‑of‑interrupt */
 		eoi(ack);
 	} else {
-		serial.printf("[GIC Demo] acknowledge() returned %u (expected %u). FAILURE.\n",
-			      ack, timer_irq);
+		serial.printf(
+			"[GIC Demo] acknowledge() returned %u (expected %u). FAILURE.\n",
+			ack, timer_irq);
 	}
 
 	/* Disable timer */
