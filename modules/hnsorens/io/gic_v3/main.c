@@ -96,8 +96,9 @@ int main(boot_info_t *boot_info)
 	if (ack == 0) {
 		gic_demo_fired = 1;
 	} else {
-		serial.printf("[GIC Demo] acknowledge() returned %u (expected 0)\n",
-			      ack);
+		serial.printf(
+			"[GIC Demo] acknowledge() returned %u (expected 0)\n",
+			ack);
 	}
 
 	/* If we got the SGI, signal end‑of‑interrupt */
@@ -106,7 +107,8 @@ int main(boot_info_t *boot_info)
 	}
 
 	if (gic_demo_fired)
-		serial.printf("[GIC Demo] SUCCESS: SGI 0 was delivered and acknowledged!\n");
+		serial.printf(
+			"[GIC Demo] SUCCESS: SGI 0 was delivered and acknowledged!\n");
 	else
 		serial.printf("[GIC Demo] FAILURE: SGI 0 was NOT delivered.\n");
 
