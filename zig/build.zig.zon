@@ -1,0 +1,17 @@
+.{
+    .name = .arm_os,
+    .version = "0.1.0",
+    .fingerprint = 0x74bddf4e48d3cbb9,
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+    },
+    .dependencies = .{
+        .bootloader = .{
+            .path = "bootloader",
+        },
+        .modules = .{
+            .path = "modules",
+        },
+    },
+}
