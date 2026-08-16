@@ -3,87 +3,79 @@ const uefi = std.os.uefi;
 
 const serial = @import("../logging/serial.zig");
 
-// Note: Using uefi.protocol.File instead of protocols.FileProtocol
-pub fn open_root() !*uefi.protocol.File {
+/// Locates the first handle exposing SimpleFileSystem (the boot disk under
+/// QEMU/OVMF) and opens its root directory.
+pub fn openRoot() !*uefi.protocol.File {
     const bs = uefi.system_table.boot_services.?;
 
-    const handles_maybe = bs.locateHandleBuffer(
-        .{ .by_protocol = &uefi.protocol.SimpleFileSystem.guid }
-    ) catch |err| {
-        _ = serial.fail_log("Found Fat32 volume\n", 19);
+    const handles = (bs.locateHandleBuffer(.{ .by_protocol = &uefi.protocol.SimpleFileSystem.guid }) catch |err| {
+        serial.failLog("Found Fat32 volume");
         return err;
-    };
-
-    const handles = handles_maybe orelse {
-        _ = serial.fail_log("Found Fat32 volume\n", 19);
+    }) orelse {
+        serial.failLog("Found Fat32 volume");
         return error.HandlesNotFound;
     };
+    defer bs.freePool(@ptrCast(handles.ptr)) catch {};
 
-    defer _ = bs.freePool(@ptrCast(handles.ptr)) catch {};
-
-    const fs_maybe = bs.handleProtocol(
-        uefi.protocol.SimpleFileSystem,
-        handles[0]
-    ) catch |err| {
-        _ = serial.fail_log("Found Filesystem\n", 17);
+    const fs = (bs.handleProtocol(uefi.protocol.SimpleFileSystem, handles[0]) catch |err| {
+        serial.failLog("Found Filesystem");
         return err;
-    };
-
-    const fs = fs_maybe orelse {
-        _ = serial.fail_log("Found Filesystem\n", 17);
+    }) orelse {
+        serial.failLog("Found Filesystem");
         return error.FilesystemNotFound;
     };
 
     return fs.openVolume() catch |err| {
-        _ = serial.fail_log("Opening Volume\n", 15);
+        serial.failLog("Opening Volume");
         return err;
     };
 }
 
-pub fn read_file(file_name: [*:0]const u16, root: *uefi.protocol.File) ![]align(8) u8 {
+/// Reads an entire file into a freshly pool-allocated, NUL-terminated buffer.
+/// The buffer is never freed by the bootloader (matches the C original:
+/// boot-services pool memory is simply leaked for the lifetime of the boot).
+pub fn readFile(file_name: [*:0]const u16, root: *uefi.protocol.File) ![]align(8) u8 {
     const bs = uefi.system_table.boot_services.?;
 
-    const File = uefi.protocol.File;
+    const file = root.open(file_name, .read, .{}) catch |err| {
+        serial.failLog("Opened file");
+        return err;
+    };
+    defer file.close() catch {};
 
-    const file_maybe = root.open(
-        file_name,
-        File.OpenMode.read,
-        .{}
-    ) catch |err| {
-        _ = serial.fail_log("Opened File\n", 12);
+    const info_size = file.getInfoSize(.file) catch |err| {
+        serial.failLog("Found file info");
         return err;
     };
 
-    const file: File = file_maybe orelse {
-        _ = serial.fail_log("Opened File\n", 12);
-        return error.FileNotFound;
-    };
-
-    const size_bytes  = @sizeOf(uefi.protocol.File.Info) + 256;
-
-    const raw_info_buffer = bs.allocatePool(.loader_data, size_bytes) catch {};
-    const info_buffer: *File.Info.File = @ptrCast(@alignCast(raw_info_buffer.ptr));
-    defer _ = bs.freePool(info_buffer) catch {};
-
-    const file_info: File.Info.File = file.getInfo(.file, info_buffer) catch |err| {
-        _ = serial.fail_log("Get File Info\n", 14);
+    const info_buf = bs.allocatePool(.loader_data, info_size) catch |err| {
+        serial.failLog("Allocated file info");
         return err;
     };
+    defer bs.freePool(info_buf.ptr) catch {};
 
-    const file_size: usize = file_info.file_size;
-
-    const raw_file_buffer = bs.allocatePool(.loader_data, file_size + 1) catch {};
-
-    _ = file.read(raw_info_buffer) catch |err| {
-        _ = serial.fail_log("Reading File\n", 13);
-        _ = bs.freePool(raw_info_buffer) catch {};
-        _ = bs.freePool(raw_file_buffer) catch {};
+    const info = file.getInfo(.file, info_buf) catch |err| {
+        serial.failLog("Got file info");
         return err;
     };
+    const file_size: usize = info.file_size;
 
-    raw_file_buffer[file_size] = 0;
+    const file_buf = bs.allocatePool(.loader_data, file_size + 1) catch |err| {
+        serial.failLog("Allocated file buffer");
+        return err;
+    };
+    errdefer bs.freePool(file_buf.ptr) catch {};
 
-    file.close();
+    const read_len = file.read(file_buf[0..file_size]) catch |err| {
+        serial.failLog("Read file");
+        return err;
+    };
+    if (read_len != file_size) {
+        serial.failLog("Read file (short read)");
+        return error.ShortRead;
+    }
 
-    return raw_file_buffer;
+    file_buf[file_size] = 0;
+
+    return file_buf;
 }

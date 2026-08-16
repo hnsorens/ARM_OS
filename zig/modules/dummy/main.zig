@@ -18,3 +18,12 @@ comptime {
         .ioctl = dummyIoctl,
     });
 }
+
+fn testIoctlReturnsZero() callconv(.c) i32 {
+    if (dummyIoctl(1, 0) == 0) return abi.TEST_PASS;
+    return abi.TEST_FAIL;
+}
+
+comptime {
+    abi.kernelTest("ioctl_returns_zero", &testIoctlReturnsZero);
+}
