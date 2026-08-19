@@ -1,0 +1,262 @@
+:root {
+  --bg: #1b1e24;
+  --panel: #21252c;
+  --panel-2: #262b33;
+  --border: #333944;
+  --text: #e4e7ec;
+  --text-dim: #9aa2b1;
+  --accent: #5b9dff;
+  --accent-2: #8f6bff;
+  --ok: #4fbf7a;
+  --danger: #e2645a;
+  --pin: #d8dce3;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+}
+
+#toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+#toolbar h1 {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0;
+  white-space: nowrap;
+}
+
+#search {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 6px 10px;
+  border-radius: 6px;
+  width: 220px;
+  font-size: 13px;
+}
+
+.spacer { flex: 1; }
+
+.status {
+  font-size: 12px;
+  color: var(--text-dim);
+  min-height: 1em;
+}
+.status.ok { color: var(--ok); }
+.status.err { color: var(--danger); }
+
+.btn {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 7px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.btn:hover { border-color: var(--accent); }
+.btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #0c1420;
+  font-weight: 600;
+}
+.btn.primary:hover { filter: brightness(1.08); }
+
+#layout {
+  display: grid;
+  grid-template-columns: 260px 1fr 300px;
+  height: calc(100% - 49px);
+}
+
+#sidebar, #inspector {
+  background: var(--panel);
+  overflow-y: auto;
+  padding: 12px;
+}
+#sidebar { border-right: 1px solid var(--border); }
+#inspector { border-left: 1px solid var(--border); }
+
+#sidebar h2, #inspector h3 {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  margin: 4px 0 10px;
+}
+
+#module-list { list-style: none; margin: 0; padding: 0; }
+
+.module-item {
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  border-radius: 6px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  cursor: grab;
+}
+.module-item:hover { border-color: var(--accent); }
+.module-item .name { font-weight: 600; font-size: 13px; display: block; }
+.module-item .meta { font-size: 11px; color: var(--text-dim); }
+
+#canvas-wrap {
+  position: relative;
+  /* Panning/zooming is done ourselves (a transform on the SVG's .viewport
+     group), not via native scrolling -- overflow stays hidden so there's
+     no separate, conflicting scrollbar-driven pan happening underneath. */
+  overflow: hidden;
+  background:
+    radial-gradient(circle, #2a2f38 1px, transparent 1px) 0 0 / 22px 22px,
+    var(--bg);
+  cursor: grab;
+}
+#canvas-wrap.panning { cursor: grabbing; }
+
+#canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  /* Without this, browsers (esp. on trackpads) treat a pointerdown+move
+     here as a native pan/scroll gesture and never deliver the pointermove
+     stream our own drag-to-pan/drag-to-move logic needs. Also lets us
+     call preventDefault() on wheel to zoom instead of scrolling the page. */
+  touch-action: none;
+  user-select: none;
+}
+
+#canvas-hint {
+  position: absolute;
+  top: 16px; left: 16px;
+  font-size: 12px;
+  color: var(--text-dim);
+  pointer-events: none;
+}
+#canvas-hint.hidden { display: none; }
+
+.node-box {
+  fill: var(--panel-2);
+  stroke: var(--border);
+  stroke-width: 1.5;
+  rx: 8;
+  cursor: move;
+}
+.node-box.selected { stroke: var(--accent); stroke-width: 2; }
+.node-box.disabled { opacity: 0.55; }
+
+.node-header {
+  fill: #2c3240;
+}
+
+.node-title {
+  fill: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  dominant-baseline: middle;
+}
+
+.pin-label {
+  fill: var(--text-dim);
+  font-size: 10.5px;
+  dominant-baseline: middle;
+}
+
+/* Status readout only (not interactive) -- dependencies are wired via the
+   dropdowns in the inspector panel, see renderDependencyField in app.js. */
+.pin-dot {
+  stroke: var(--panel);
+  stroke-width: 1.5;
+}
+.pin-dot.require { fill: var(--accent-2); }
+.pin-dot.provide { fill: var(--accent); }
+.pin-dot.wired { fill: var(--ok); }
+
+/* Dependency line drawn between a wired pair, set via the inspector
+   dropdown -- not draggable. .edge-hit is an invisible wide stroke layered
+   over the thin visible line so a click to disconnect is easy to land. */
+.edge-path {
+  fill: none;
+  stroke: var(--text-dim);
+  stroke-width: 1.75;
+  pointer-events: none;
+}
+.edge-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 14;
+  pointer-events: stroke;
+  cursor: pointer;
+}
+.edge:hover .edge-path { stroke: var(--danger); }
+
+#inspector-empty {
+  color: var(--text-dim);
+  font-size: 13px;
+  padding-top: 8px;
+}
+
+.field {
+  margin-bottom: 14px;
+}
+.field label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.field .desc {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 3px;
+}
+.field input[type="text"],
+.field input[type="number"],
+.field select {
+  width: 100%;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 6px 8px;
+  border-radius: 5px;
+  font-size: 13px;
+}
+.field input[type="checkbox"] { transform: scale(1.1); margin-right: 6px; }
+.field.checkbox-row { display: flex; align-items: center; }
+.field.checkbox-row label { margin: 0; }
+
+.inspector-title {
+  font-size: 15px;
+  font-weight: 700;
+  margin-bottom: 2px;
+}
+.inspector-sub {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-bottom: 14px;
+}
+
+.remove-node-btn {
+  width: 100%;
+  margin-top: 8px;
+  background: transparent;
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  padding: 7px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12.5px;
+}
+.remove-node-btn:hover { background: rgba(226, 100, 90, 0.12); }

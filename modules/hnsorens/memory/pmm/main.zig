@@ -1,0 +1,388 @@
+//! Binary-buddy physical page-frame allocator, exporting `Pmm` (category
+//! "pmm"). Order-indexed free lists are threaded directly through free
+//! physical pages themselves (via their HHDM alias), so freeing a page
+//! costs no separate bookkeeping allocation. A parallel `PageMeta` array
+//! (one entry per physical page) tracks order/free/refcount state and is
+//! bootstrapped by carving space directly out of the first sufficiently
+//! large free region of the boot memory map.
+const std = @import("std");
+const abi = @import("abi");
+const kernel_test = @import("kernel_test");
+
+pub const serial_if = abi.importInterface(abi.Serial);
+
+const PAGE_SIZE: u64 = 4096;
+const MAX_ORDER: u8 = 64;
+/// Highest order `pmm_init`'s block-splitting scan may start at without
+/// `(1 << order) * PAGE_SIZE` overflowing u64 (order 52 already wraps,
+/// since PAGE_SIZE is 2^12) -- see the comment at its use site.
+const MAX_SAFE_SPLIT_ORDER: u8 = 51;
+
+const PageMeta = struct {
+    ref_count: u32 = 0,
+    order: u8 = 0,
+    is_free: bool = false,
+    flags: u16 = 0,
+};
+
+const BlockNode = struct {
+    next: ?*BlockNode = null,
+    prev: ?*BlockNode = null,
+};
+
+const OrderList = struct {
+    head: ?*BlockNode = null,
+    block_count: u64 = 0,
+};
+
+const Allocator = struct {
+    orders: [MAX_ORDER]OrderList = [_]OrderList{.{}} ** MAX_ORDER,
+    total_memory_bytes: u64 = 0,
+    free_memory_bytes: u64 = 0,
+};
+
+var g_allocator: Allocator = .{};
+var g_meta_array: []PageMeta = &.{};
+var g_total_pages: u64 = 0;
+var g_hhdm_offset: u64 = 0;
+
+fn physToKv(phys: u64) *anyopaque {
+    return @ptrFromInt(phys + g_hhdm_offset);
+}
+
+fn kvToPhys(virt: *anyopaque) u64 {
+    return @intFromPtr(virt) - g_hhdm_offset;
+}
+
+fn shiftOf(order: u8) u6 {
+    return @intCast(order);
+}
+
+fn listAdd(order: u8, node: *BlockNode) void {
+    const list = &g_allocator.orders[order];
+    node.next = list.head;
+    node.prev = null;
+    if (list.head) |h| h.prev = node;
+    list.head = node;
+    list.block_count += 1;
+}
+
+fn listRemove(order: u8, node: *BlockNode) void {
+    const list = &g_allocator.orders[order];
+    if (node.prev) |p| p.next = node.next else list.head = node.next;
+    if (node.next) |n| n.prev = node.prev;
+    list.block_count -= 1;
+}
+
+fn markPagesUsed(base_idx: u64, count: u64) void {
+    var p: u64 = 0;
+    while (p < count) : (p += 1) g_meta_array[base_idx + p].is_free = false;
+}
+
+/// Splits a block of `start_order` at `phys` down to `target_order`,
+/// threading each freed buddy half back onto its own order's free list.
+fn splitDownTo(start_order: u8, phys: u64, target_order: u8) void {
+    var order = start_order;
+    while (order > target_order) {
+        order -= 1;
+        const split_block_size = (@as(u64, 1) << shiftOf(order)) * PAGE_SIZE;
+        const buddy_phys = phys + split_block_size;
+        const buddy_index = buddy_phys / PAGE_SIZE;
+        const buddy_pages = @as(u64, 1) << shiftOf(order);
+
+        var p: u64 = 0;
+        while (p < buddy_pages) : (p += 1) {
+            g_meta_array[buddy_index + p] = .{ .is_free = true, .order = order, .ref_count = 0 };
+        }
+
+        const buddy_node: *BlockNode = @ptrCast(@alignCast(physToKv(buddy_phys)));
+        listAdd(order, buddy_node);
+    }
+}
+
+fn computeTargetOrder(count: u64) ?u8 {
+    var order: u8 = 0;
+    while ((@as(u64, 1) << shiftOf(order)) < count) {
+        order += 1;
+        if (order >= MAX_ORDER) return null;
+    }
+    return order;
+}
+
+// --- Initialization ------------------------------------------------------
+
+pub fn init(memory_regions: []abi.MemoryRegion, hhdm_offset: u64) void {
+    g_hhdm_offset = hhdm_offset;
+
+    var highest_address: u64 = 0;
+    for (memory_regions) |r| {
+        const end = r.start + r.page_count * PAGE_SIZE;
+        if (end > highest_address) highest_address = end;
+    }
+
+    g_total_pages = highest_address / PAGE_SIZE;
+    const meta_array_size = g_total_pages * @sizeOf(PageMeta);
+    const meta_pages_needed = (meta_array_size + PAGE_SIZE - 1) / PAGE_SIZE;
+
+    var meta_phys_alloc_start: u64 = 0;
+    for (memory_regions) |*r| {
+        if (r.memory_type == .free and r.page_count >= meta_pages_needed) {
+            meta_phys_alloc_start = r.start;
+            r.start += meta_pages_needed * PAGE_SIZE;
+            r.page_count -= meta_pages_needed;
+            break;
+        }
+    }
+
+    const meta_ptr: [*]PageMeta = @ptrCast(@alignCast(physToKv(meta_phys_alloc_start)));
+    g_meta_array = meta_ptr[0..g_total_pages];
+    @memset(g_meta_array, PageMeta{});
+
+    g_allocator = .{};
+
+    for (memory_regions) |r| {
+        if (r.memory_type != .free) continue;
+
+        var chunk_cursor = r.start;
+        const chunk_end = chunk_cursor + r.page_count * PAGE_SIZE;
+
+        while (chunk_cursor < chunk_end) {
+            const remaining_bytes = chunk_end - chunk_cursor;
+            // Scanning from MAX_ORDER-1 (63) downward would compute
+            // `(1 << 63) * PAGE_SIZE` on the first iteration, overflowing
+            // u64 (order 52 is already the first overflowing value, since
+            // PAGE_SIZE is 2^12). No real region is anywhere near that
+            // large, so start at the highest order that can't overflow.
+            var target_order: u8 = MAX_SAFE_SPLIT_ORDER;
+            while (target_order > 0) {
+                const block_bytes = (@as(u64, 1) << shiftOf(target_order)) * PAGE_SIZE;
+                if (block_bytes <= remaining_bytes and (chunk_cursor % block_bytes) == 0) break;
+                target_order -= 1;
+            }
+
+            const allocated_bytes = (@as(u64, 1) << shiftOf(target_order)) * PAGE_SIZE;
+            const base_page_idx = chunk_cursor / PAGE_SIZE;
+            const block_pages = @as(u64, 1) << shiftOf(target_order);
+
+            var p: u64 = 0;
+            while (p < block_pages) : (p += 1) {
+                g_meta_array[base_page_idx + p] = .{ .is_free = true, .order = target_order, .ref_count = 0 };
+            }
+
+            const node: *BlockNode = @ptrCast(@alignCast(physToKv(chunk_cursor)));
+            listAdd(target_order, node);
+
+            g_allocator.total_memory_bytes += allocated_bytes;
+            g_allocator.free_memory_bytes += allocated_bytes;
+
+            chunk_cursor += allocated_bytes;
+        }
+    }
+}
+
+// --- Allocation ------------------------------------------------------------
+
+pub fn allocPage(page_order: u8, out_frame: *u64) callconv(.c) c_int {
+    if (page_order >= MAX_ORDER) return abi.EINVAL;
+
+    var current_order = page_order;
+    while (current_order < MAX_ORDER) : (current_order += 1) {
+        const chosen_node = g_allocator.orders[current_order].head orelse continue;
+        const found_block_phys = kvToPhys(chosen_node);
+        listRemove(current_order, chosen_node);
+
+        markPagesUsed(found_block_phys / PAGE_SIZE, @as(u64, 1) << shiftOf(current_order));
+        splitDownTo(current_order, found_block_phys, page_order);
+
+        const idx = found_block_phys / PAGE_SIZE;
+        g_meta_array[idx].order = page_order;
+        g_meta_array[idx].ref_count = 1;
+        g_allocator.free_memory_bytes -= (@as(u64, 1) << shiftOf(page_order)) * PAGE_SIZE;
+
+        out_frame.* = found_block_phys;
+        return 0;
+    }
+    return abi.ENOMEM;
+}
+
+fn freePage(page_order: u8, frame: u64) c_int {
+    if (page_order >= MAX_ORDER or (frame % PAGE_SIZE) != 0) return abi.EINVAL;
+
+    var current_order = page_order;
+    var current_frame = frame;
+    const initial_block_bytes = (@as(u64, 1) << shiftOf(page_order)) * PAGE_SIZE;
+
+    while (current_order < MAX_ORDER - 1) {
+        const block_bytes = (@as(u64, 1) << shiftOf(current_order)) * PAGE_SIZE;
+        const buddy_frame = current_frame ^ block_bytes;
+        const buddy_index = buddy_frame / PAGE_SIZE;
+
+        if (buddy_index >= g_total_pages) break;
+        if (!g_meta_array[buddy_index].is_free or g_meta_array[buddy_index].order != current_order) break;
+
+        const buddy_node: *BlockNode = @ptrCast(@alignCast(physToKv(buddy_frame)));
+        listRemove(current_order, buddy_node);
+
+        markPagesUsed(buddy_index, @as(u64, 1) << shiftOf(current_order));
+
+        current_frame = @min(current_frame, buddy_frame);
+        current_order += 1;
+    }
+
+    const final_index = current_frame / PAGE_SIZE;
+    const final_pages = @as(u64, 1) << shiftOf(current_order);
+    var p: u64 = 0;
+    while (p < final_pages) : (p += 1) {
+        g_meta_array[final_index + p] = .{ .is_free = true, .order = current_order, .ref_count = 0 };
+    }
+
+    const final_node: *BlockNode = @ptrCast(@alignCast(physToKv(current_frame)));
+    listAdd(current_order, final_node);
+
+    g_allocator.free_memory_bytes += initial_block_bytes;
+    return 0;
+}
+
+pub fn allocAligned(count: u64, alignment: u64, out: *u64) callconv(.c) c_int {
+    if (count == 0 or alignment < PAGE_SIZE or (alignment & (alignment - 1)) != 0) return abi.EINVAL;
+    const target_order = computeTargetOrder(count) orelse return abi.EINVAL;
+
+    var o: u8 = target_order;
+    while (o < MAX_ORDER) : (o += 1) {
+        var curr = g_allocator.orders[o].head;
+        while (curr) |node| : (curr = node.next) {
+            const phys = kvToPhys(node);
+            if (phys % alignment != 0) continue;
+
+            listRemove(o, node);
+            markPagesUsed(phys / PAGE_SIZE, @as(u64, 1) << shiftOf(o));
+            splitDownTo(o, phys, target_order);
+
+            const idx = phys / PAGE_SIZE;
+            g_meta_array[idx].order = target_order;
+            g_meta_array[idx].ref_count = 1;
+            g_allocator.free_memory_bytes -= (@as(u64, 1) << shiftOf(target_order)) * PAGE_SIZE;
+
+            out.* = phys;
+            return 0;
+        }
+    }
+    return abi.ENOMEM;
+}
+
+pub fn allocInRange(count: u64, max_addr: u64, out: *u64) callconv(.c) c_int {
+    if (count == 0) return abi.EINVAL;
+    const target_order = computeTargetOrder(count) orelse return abi.EINVAL;
+
+    var o: u8 = target_order;
+    while (o < MAX_ORDER) : (o += 1) {
+        var curr = g_allocator.orders[o].head;
+        while (curr) |node| : (curr = node.next) {
+            const phys = kvToPhys(node);
+            const allocation_bytes = (@as(u64, 1) << shiftOf(target_order)) * PAGE_SIZE;
+            if (phys + allocation_bytes > max_addr) continue;
+
+            listRemove(o, node);
+            markPagesUsed(phys / PAGE_SIZE, @as(u64, 1) << shiftOf(o));
+            splitDownTo(o, phys, target_order);
+
+            const idx = phys / PAGE_SIZE;
+            g_meta_array[idx].order = target_order;
+            g_meta_array[idx].ref_count = 1;
+            g_allocator.free_memory_bytes -= allocation_bytes;
+
+            out.* = phys;
+            return 0;
+        }
+    }
+    return abi.ENOMEM;
+}
+
+// --- Reference management ---------------------------------------------------
+
+pub fn retain(frame: u64) callconv(.c) c_int {
+    const idx = frame / PAGE_SIZE;
+    if (idx >= g_total_pages or g_meta_array[idx].is_free) return abi.EFAULT;
+    g_meta_array[idx].ref_count += 1;
+    return 0;
+}
+
+pub fn release(frame: u64) callconv(.c) c_int {
+    const idx = frame / PAGE_SIZE;
+    if (idx >= g_total_pages or g_meta_array[idx].is_free) return abi.EFAULT;
+
+    if (g_meta_array[idx].ref_count > 0) {
+        g_meta_array[idx].ref_count -= 1;
+        if (g_meta_array[idx].ref_count == 0) {
+            return freePage(g_meta_array[idx].order, frame);
+        }
+        return 0;
+    }
+    return abi.EFAULT;
+}
+
+// --- Diagnostics & reservation -----------------------------------------------
+
+pub fn getTotalMemory() callconv(.c) u64 {
+    return g_allocator.total_memory_bytes;
+}
+
+pub fn getFreeMemory() callconv(.c) u64 {
+    return g_allocator.free_memory_bytes;
+}
+
+pub fn reserveRange(start: u64, sz: u64) callconv(.c) c_int {
+    if (start % PAGE_SIZE != 0 or sz == 0) return 0;
+
+    const start_idx = start / PAGE_SIZE;
+    const pages_to_reserve = (sz + PAGE_SIZE - 1) / PAGE_SIZE;
+    const end_idx = start_idx + pages_to_reserve;
+    if (end_idx > g_total_pages) return abi.EINVAL;
+
+    var idx = start_idx;
+    while (idx < end_idx) : (idx += 1) {
+        if (!g_meta_array[idx].is_free) continue;
+
+        const order = g_meta_array[idx].order;
+        const block_base_idx = idx & ~((@as(u64, 1) << shiftOf(order)) - 1);
+        const block_base_phys = block_base_idx * PAGE_SIZE;
+        const node: *BlockNode = @ptrCast(@alignCast(physToKv(block_base_phys)));
+
+        listRemove(order, node);
+
+        const block_pages = @as(u64, 1) << shiftOf(order);
+        var p: u64 = 0;
+        while (p < block_pages) : (p += 1) {
+            g_meta_array[block_base_idx + p] = .{ .is_free = false, .ref_count = 1, .order = 0 };
+        }
+
+        g_allocator.free_memory_bytes -= (@as(u64, 1) << shiftOf(order)) * PAGE_SIZE;
+        // Skip past the whole block just processed; the loop's own
+        // increment then lands one past it.
+        idx = block_base_idx + block_pages - 1;
+    }
+    return 0;
+}
+
+pub fn main(boot_info_ptr: *anyopaque) void {
+    const boot_info: *abi.BootInfo = @ptrCast(@alignCast(boot_info_ptr));
+    const regions = boot_info.memory_regions[0..boot_info.memory_map_size];
+    init(regions, abi.HHDM_OFFSET);
+}
+
+comptime {
+    abi.exportInterface("buddy", abi.Pmm, .{
+        .alloc_page = allocPage,
+        .alloc_aligned = allocAligned,
+        .alloc_in_range = allocInRange,
+        .retain = retain,
+        .release = release,
+        .get_total_memory = getTotalMemory,
+        .get_free_memory = getFreeMemory,
+        .reserve_range = reserveRange,
+    });
+}
+
+comptime {
+    _ = @import("test.zig");
+}

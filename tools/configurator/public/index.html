@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>ARM_OS Kernel Configurator</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<header id="toolbar">
+  <h1>Kernel Configurator</h1>
+  <input id="search" type="search" placeholder="Search modules&hellip;" autocomplete="off" />
+  <div class="spacer"></div>
+  <span id="status" class="status"></span>
+  <button id="clear-btn" class="btn">Clear</button>
+  <button id="load-btn" class="btn">Load current kernel.ini</button>
+  <button id="generate-btn" class="btn primary">Generate kernel.ini</button>
+</header>
+
+<div id="layout">
+  <aside id="sidebar">
+    <h2>Modules</h2>
+    <ul id="module-list"></ul>
+  </aside>
+
+  <main id="canvas-wrap">
+    <svg id="canvas" xmlns="http://www.w3.org/2000/svg"></svg>
+    <div id="canvas-hint">Click or drag a module from the left to add it here.</div>
+  </main>
+
+  <aside id="inspector">
+    <div id="inspector-empty">Select a node to edit its configuration.</div>
+    <div id="inspector-body" hidden></div>
+  </aside>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
