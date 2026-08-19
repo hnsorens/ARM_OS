@@ -81,19 +81,18 @@ pub fn build(b: *std.Build) void {
     image_step.dependOn(last_step);
 
     // 3. QEMU Target
-    const run_cmd = b.addSystemCommand(&.{ "qemu-system-aarch64" });
+    const run_cmd = b.addSystemCommand(&.{"qemu-system-aarch64"});
     run_cmd.addArgs(&.{
-        "-m", "16G",
-        "-cpu", "cortex-a72",
-        "-smp", "4",
-        "-M", "virt,gic-version=3",
-        "-accel", "tcg,thread=multi",
-        "-bios", "/usr/share/edk2/aarch64/QEMU_EFI.fd",
-        "-drive", "file=disk.img,format=raw,if=none,id=d0",
-        "-device", "virtio-blk-device,drive=d0",
-        "-mem-prealloc",
-        "-gdb", "tcp::1234",
-        "-nographic",
+        "-m",            "16G",
+        "-cpu",          "cortex-a72",
+        "-smp",          "4",
+        "-M",            "virt,gic-version=3",
+        "-accel",        "tcg,thread=multi",
+        "-bios",         "/usr/share/edk2/aarch64/QEMU_EFI.fd",
+        "-drive",        "file=disk.img,format=raw,if=none,id=d0",
+        "-device",       "virtio-blk-device,drive=d0",
+        "-mem-prealloc", "-gdb",
+        "tcp::1234",     "-nographic",
     });
 
     run_cmd.step.dependOn(image_step);
@@ -143,11 +142,16 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("shared/abi_types.zig"),
     });
 
+    const mmio_native_mod = b.createModule(.{
+        .root_source_file = b.path("shared/mmio.zig"),
+    });
+
     const unit_test_mod = b.createModule(.{
         .root_source_file = b.path("bootloader/unit_tests.zig"),
         .target = b.graph.host,
     });
     unit_test_mod.addImport("shared_types", shared_types_native_mod);
+    unit_test_mod.addImport("mmio", mmio_native_mod);
 
     const unit_tests = b.addTest(.{ .root_module = unit_test_mod });
     const run_unit_tests = b.addRunArtifact(unit_tests);

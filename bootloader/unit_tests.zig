@@ -10,4 +10,5 @@ test {
     _ = @import("modules/module_loader.zig");
     _ = @import("modules/module_registry.zig");
     _ = @import("uefi/boot_services.zig");
+    _ = @import("mmio");
 }

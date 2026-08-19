@@ -5,6 +5,7 @@ const std = @import("std");
 const abi = @import("abi");
 const kernel_fmt = @import("kernel_fmt");
 const kernel_test = @import("kernel_test");
+const mmio = @import("mmio");
 
 pub const serial_if = abi.importInterface(abi.Serial);
 
@@ -44,8 +45,7 @@ fn spinLock(s: *volatile u64) void {
         : [ret] "=&r" (-> u64),
         : [addr] "r" (s),
           [one] "r" (@as(u64, 1)),
-        : .{ .memory = true, .x9 = true }
-    );
+        : .{ .memory = true, .x9 = true });
 }
 
 fn spinUnlock(s: *volatile u64) void {
@@ -53,8 +53,7 @@ fn spinUnlock(s: *volatile u64) void {
         :
         : [zero] "r" (@as(u64, 0)),
           [addr] "r" (s),
-        : .{ .memory = true }
-    );
+        : .{ .memory = true });
 }
 
 // --- Exception vector table -------------------------------------------
@@ -141,64 +140,61 @@ comptime {
 
 extern var exception_vector_table: u8;
 
-// --- MMIO accessors -----------------------------------------------------
+// --- GICD (Distributor) register map -------------------------------------
+//
+// Each interrupt-indexed register below is defined once via
+// `mmio.IndexedField`, which owns the "N elements packed per register"
+// arithmetic (e.g. 4 one-byte priorities per 32-bit IPRIORITYR word) that
+// every accessor used to redo by hand. `Isenabler`/`Icenabler` are
+// write-1-to-set/write-1-to-clear registers -- a 0 bit there means "leave
+// alone", not "clear" -- so they're driven through `writeOneHot` (a raw
+// one-hot write) rather than `write` (a read-modify-write), matching their
+// hardware semantics.
 
-inline fn mmioWrite32(addr: u64, val: u32) void {
-    const ptr: *volatile u32 = @ptrFromInt(addr);
-    ptr.* = val;
-}
-inline fn mmioRead32(addr: u64) u32 {
-    const ptr: *volatile u32 = @ptrFromInt(addr);
-    return ptr.*;
-}
-inline fn mmioWrite64(addr: u64, val: u64) void {
-    const ptr: *volatile u64 = @ptrFromInt(addr);
-    ptr.* = val;
-}
+const GicdCtlr = packed struct(u32) {
+    _reserved0: u1 = 0,
+    /// GICD_CTLR.EnableGrp1NS (bit 1): enable Group 1 Non-secure interrupts.
+    ns_ena_grp1ns: bool = false,
+    _reserved1: u2 = 0,
+    /// GICD_CTLR.ARE_NS (bit 4): enable affinity-routed (GICv3-style) SPIs.
+    ns_are_ns: bool = false,
+    _reserved2: u27 = 0,
+};
 
-// --- GICD (Distributor) register offsets --------------------------------
-
-const GICD_CTLR: u64 = 0x0000;
-fn gicdIsenabler(n: u32) u64 {
-    return 0x0100 + @as(u64, n) * 4;
-}
-fn gicdIcenabler(n: u32) u64 {
-    return 0x0180 + @as(u64, n) * 4;
-}
-fn gicdIgroupr(n: u32) u64 {
-    return 0x0080 + @as(u64, n) * 4;
-}
-fn gicdIpriorityr(n: u32) u64 {
-    return 0x0400 + @as(u64, n) * 4;
-}
-fn gicdIcfgr(n: u32) u64 {
-    return 0x0C00 + @as(u64, n) * 4;
-}
-fn gicdIgrpmodr(n: u32) u64 {
-    return 0x0D00 + @as(u64, n) * 4;
-}
-fn gicdIrouter(n: u32) u64 {
-    return 0x6000 + @as(u64, n) * 8;
-}
-
-const GICD_CTLR_NS_ARE_NS: u32 = 1 << 4;
-const GICD_CTLR_NS_ENA_GRP1NS: u32 = 1 << 1;
+const Gicd = struct {
+    const Ctlr = mmio.Reg(GicdCtlr, 0x0000);
+    const Igroupr = mmio.IndexedField(bool, 0x0080, u32);
+    const Isenabler = mmio.IndexedField(bool, 0x0100, u32);
+    const Icenabler = mmio.IndexedField(bool, 0x0180, u32);
+    const Ipriorityr = mmio.IndexedField(u8, 0x0400, u32);
+    const Icfgr = mmio.IndexedField(u2, 0x0C00, u32);
+    const Igrpmodr = mmio.IndexedField(bool, 0x0D00, u32);
+    const Irouter = mmio.RegArray(u64, 0x6000, 8);
+};
 
 // --- GICR (Redistributor) -- per-core frame offsets ---------------------
 
-const GICR_WAKER: u64 = 0x0014;
-const GICR_WAKER_PROCESSOR_SLEEP: u32 = 1 << 1;
-const GICR_WAKER_CHILDREN_ASLEEP: u32 = 1 << 2;
+const GicrWaker = packed struct(u32) {
+    _reserved0: u1 = 0,
+    processor_sleep: bool = false,
+    children_asleep: bool = false,
+    _reserved1: u29 = 0,
+};
 
+// SGI/PPI-indexed registers (Isenabler..Igrpmodr) live in the
+// redistributor's second 64KB frame -- GICR_SGI_OFFSET is folded into
+// their offsets here so callers pass the same per-core base as `Waker`.
 const GICR_SGI_OFFSET: u64 = 0x10000;
-const GICR_ISENABLER0: u64 = GICR_SGI_OFFSET + 0x0100;
-const GICR_ICENABLER0: u64 = GICR_SGI_OFFSET + 0x0180;
-fn gicrIpriorityr(n: u32) u64 {
-    return GICR_SGI_OFFSET + 0x0400 + @as(u64, n) * 4;
-}
-fn gicrIcfgr(n: u32) u64 {
-    return GICR_SGI_OFFSET + 0x0C00 + @as(u64, n) * 4;
-}
+
+const Gicr = struct {
+    const Waker = mmio.Reg(GicrWaker, 0x0014);
+    const Igroupr = mmio.IndexedField(bool, GICR_SGI_OFFSET + 0x0080, u32);
+    const Isenabler = mmio.IndexedField(bool, GICR_SGI_OFFSET + 0x0100, u32);
+    const Icenabler = mmio.IndexedField(bool, GICR_SGI_OFFSET + 0x0180, u32);
+    const Ipriorityr = mmio.IndexedField(u8, GICR_SGI_OFFSET + 0x0400, u32);
+    const Icfgr = mmio.IndexedField(u2, GICR_SGI_OFFSET + 0x0C00, u32);
+    const Igrpmodr = mmio.IndexedField(bool, GICR_SGI_OFFSET + 0x0D00, u32);
+};
 
 // --- CPU interface system registers -------------------------------------
 
@@ -226,15 +222,12 @@ fn getCurrentGicrBase() u64 {
 
 fn gicv3InitRedistributor() c_int {
     const base = getCurrentGicrBase();
-    var waker = mmioRead32(base + GICR_WAKER);
-    waker &= ~GICR_WAKER_PROCESSOR_SLEEP;
-    mmioWrite32(base + GICR_WAKER, waker);
+    Gicr.Waker.modify(base, .{ .processor_sleep = false });
     asm volatile ("dsb sy");
 
     var i: u32 = 0;
     while (i < 1000) : (i += 1) {
-        waker = mmioRead32(base + GICR_WAKER);
-        if ((waker & GICR_WAKER_CHILDREN_ASLEEP) == 0) return 0;
+        if (!Gicr.Waker.read(base).children_asleep) return 0;
     }
     return abi.EIO;
 }
@@ -302,9 +295,7 @@ pub fn initGlobal(d_base: u64, r_base: u64) callconv(.c) c_int {
     g_gicd = d_base;
     g_gicr = r_base;
 
-    var ctlr = mmioRead32(g_gicd + GICD_CTLR);
-    ctlr |= GICD_CTLR_NS_ARE_NS | GICD_CTLR_NS_ENA_GRP1NS;
-    mmioWrite32(g_gicd + GICD_CTLR, ctlr);
+    Gicd.Ctlr.modify(g_gicd, .{ .ns_are_ns = true, .ns_ena_grp1ns = true });
     asm volatile ("dsb sy");
 
     g_initialized = true;
@@ -350,11 +341,9 @@ pub fn enable(vector: u32) callconv(.c) c_int {
     if (vector >= MAX_INTERRUPT_VECTORS) return abi.EINVAL;
 
     if (vector < 32) {
-        mmioWrite32(getCurrentGicrBase() + GICR_ISENABLER0, @as(u32, 1) << @truncate(vector));
+        Gicr.Isenabler.writeOneHot(getCurrentGicrBase(), vector);
     } else {
-        const reg_idx = vector / 32;
-        const bit: u32 = @as(u32, 1) << @truncate(vector % 32);
-        mmioWrite32(g_gicd + gicdIsenabler(reg_idx), bit);
+        Gicd.Isenabler.writeOneHot(g_gicd, vector);
     }
     asm volatile ("dsb sy");
     return 0;
@@ -364,11 +353,9 @@ pub fn disable(vector: u32) callconv(.c) c_int {
     if (vector >= MAX_INTERRUPT_VECTORS) return abi.EINVAL;
 
     if (vector < 32) {
-        mmioWrite32(getCurrentGicrBase() + GICR_ICENABLER0, @as(u32, 1) << @truncate(vector));
+        Gicr.Icenabler.writeOneHot(getCurrentGicrBase(), vector);
     } else {
-        const reg_idx = vector / 32;
-        const bit: u32 = @as(u32, 1) << @truncate(vector % 32);
-        mmioWrite32(g_gicd + gicdIcenabler(reg_idx), bit);
+        Gicd.Icenabler.writeOneHot(g_gicd, vector);
     }
     asm volatile ("dsb sy");
     return 0;
@@ -379,38 +366,21 @@ pub fn disable(vector: u32) callconv(.c) c_int {
 pub fn configure(vector: u32, trigger: abi.IrqTrigger, priority: u32) callconv(.c) c_int {
     if (vector >= MAX_INTERRUPT_VECTORS) return abi.EINVAL;
 
-    const prio_idx = vector / 4;
-    const prio_shift: u5 = @truncate((vector % 4) * 8);
-    const cfg_idx = vector / 16;
-    const cfg_shift: u5 = @truncate((vector % 16) * 2);
-    const trigger_val: u32 = if (trigger == .edge) 0x2 else 0x0;
-    const grp_idx = vector / 32;
-    const bit_shift: u5 = @truncate(vector % 32);
+    const trigger_val: u2 = if (trigger == .edge) 0b10 else 0b00;
+    const prio: u8 = @truncate(priority);
 
-    const base: u64 = if (vector < 32) getCurrentGicrBase() else g_gicd;
-    const priorityr = if (vector < 32) gicrIpriorityr(prio_idx) else gicdIpriorityr(prio_idx);
-    const icfgr = if (vector < 32) gicrIcfgr(cfg_idx) else gicdIcfgr(cfg_idx);
-    const igroupr = if (vector < 32) GICR_SGI_OFFSET + 0x0080 + @as(u64, grp_idx) * 4 else gicdIgroupr(grp_idx);
-    const igrpmodr = if (vector < 32) GICR_SGI_OFFSET + 0x0D00 + @as(u64, grp_idx) * 4 else gicdIgrpmodr(grp_idx);
-
-    var val = mmioRead32(base + priorityr);
-    val &= ~(@as(u32, 0xFF) << prio_shift);
-    val |= priority << prio_shift;
-    mmioWrite32(base + priorityr, val);
-
-    var icfgr_val = mmioRead32(base + icfgr);
-    icfgr_val &= ~(@as(u32, 0x3) << cfg_shift);
-    icfgr_val |= trigger_val << cfg_shift;
-    mmioWrite32(base + icfgr, icfgr_val);
-
-    var igroupr_val = mmioRead32(base + igroupr);
-    igroupr_val |= @as(u32, 1) << bit_shift;
-    mmioWrite32(base + igroupr, igroupr_val);
-
-    // IGRPMODR -- clear for Non-Secure.
-    var igrpmodr_val = mmioRead32(base + igrpmodr);
-    igrpmodr_val &= ~(@as(u32, 1) << bit_shift);
-    mmioWrite32(base + igrpmodr, igrpmodr_val);
+    if (vector < 32) {
+        const base = getCurrentGicrBase();
+        Gicr.Ipriorityr.write(base, vector, prio);
+        Gicr.Icfgr.write(base, vector, trigger_val);
+        Gicr.Igroupr.write(base, vector, true);
+        Gicr.Igrpmodr.write(base, vector, false); // Non-Secure.
+    } else {
+        Gicd.Ipriorityr.write(g_gicd, vector, prio);
+        Gicd.Icfgr.write(g_gicd, vector, trigger_val);
+        Gicd.Igroupr.write(g_gicd, vector, true);
+        Gicd.Igrpmodr.write(g_gicd, vector, false); // Non-Secure.
+    }
 
     asm volatile ("dsb sy" ::: .{ .memory = true });
     return 0;
@@ -421,17 +391,12 @@ pub fn configure(vector: u32, trigger: abi.IrqTrigger, priority: u32) callconv(.
 pub fn setGroup(vector: u32, group: abi.IrqGroup) callconv(.c) c_int {
     if (vector >= MAX_INTERRUPT_VECTORS) return abi.EINVAL;
 
-    const reg_offset = (vector / 32) * 4;
-    const bit_shift: u5 = @truncate(vector % 32);
-    const base: u64 = if (vector < 32) getCurrentGicrBase() + GICR_SGI_OFFSET else g_gicd;
-
-    var val = mmioRead32(base + 0x0080 + reg_offset);
-    if (group == .non_secure) {
-        val |= @as(u32, 1) << bit_shift;
+    const non_secure = group == .non_secure;
+    if (vector < 32) {
+        Gicr.Igroupr.write(getCurrentGicrBase(), vector, non_secure);
     } else {
-        val &= ~(@as(u32, 1) << bit_shift);
+        Gicd.Igroupr.write(g_gicd, vector, non_secure);
     }
-    mmioWrite32(base + 0x0080 + reg_offset, val);
     asm volatile ("dsb sy" ::: .{ .memory = true });
     return 0;
 }
@@ -452,7 +417,7 @@ pub fn routeToCore(vector: u32, mpidr: u64) callconv(.c) c_int {
 
     // Clear IRM bit (bit 31) to force unicast delivery.
     const routing_val = mpidr & ~(@as(u64, 1) << 31);
-    mmioWrite64(g_gicd + gicdIrouter(vector), routing_val);
+    Gicd.Irouter.write(g_gicd, vector, routing_val);
     asm volatile ("dsb sy" ::: .{ .memory = true });
     return 0;
 }

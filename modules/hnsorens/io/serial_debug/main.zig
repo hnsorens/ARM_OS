@@ -8,29 +8,29 @@
 //! formatting half, used by any module holding a `Serial` import.
 const abi = @import("abi");
 const kernel_test = @import("kernel_test");
+const mmio = @import("mmio");
 
 // PL011 registers (ARM Versatile Express base, matches QEMU virt machine).
 // Same physical address the bootloader's own UART driver uses -- reachable
 // from module code too, since the bootloader's low-half identity map
 // (TTBR0) covers it regardless of which half a module's own code runs in.
 const UART0_BASE: u64 = 0x09000000;
-const UARTDR = 0x00;
-const UARTFR = 0x18;
-const UARTFR_TXFF: u32 = 1 << 5;
 
-inline fn mmioWrite(reg: u64, data: u32) void {
-    const ptr: *volatile u32 = @ptrFromInt(reg);
-    ptr.* = data;
-}
+const UartFr = packed struct(u32) {
+    _reserved0: u5 = 0,
+    /// UARTFR.TXFF (bit 5): transmit FIFO full.
+    tx_full: bool = false,
+    _reserved1: u26 = 0,
+};
 
-inline fn mmioRead(reg: u64) u32 {
-    const ptr: *volatile u32 = @ptrFromInt(reg);
-    return ptr.*;
-}
+const Uart = struct {
+    const Dr = mmio.Reg(u32, 0x00);
+    const Fr = mmio.Reg(UartFr, 0x18);
+};
 
 fn uartPutc(c: u8) void {
-    while ((mmioRead(UART0_BASE + UARTFR) & UARTFR_TXFF) != 0) {}
-    mmioWrite(UART0_BASE + UARTDR, c);
+    while (Uart.Fr.read(UART0_BASE).tx_full) {}
+    Uart.Dr.write(UART0_BASE, c);
 }
 
 /// Translates '\n' to "\r\n" to preserve terminal line-tracking, matching
