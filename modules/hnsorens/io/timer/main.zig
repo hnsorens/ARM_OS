@@ -11,6 +11,8 @@
 const std = @import("std");
 const abi = @import("abi");
 const kernel_test = @import("kernel_test");
+const sysreg = @import("sysreg");
+const spinlock = @import("spinlock");
 
 pub const gic_if = abi.importInterface(abi.InterruptManager);
 pub const serial_if = abi.importInterface(abi.Serial);
@@ -31,44 +33,32 @@ const TimerEntry = struct {
 };
 
 var s_timers: [MAX_TIMERS]TimerEntry = [_]TimerEntry{.{}} ** MAX_TIMERS;
-var s_lock: u64 = 0;
+var s_lock: spinlock.SpinLock = .{};
 var s_irq_registered: bool = false;
 
-// Same physical-register workaround as gic_v3's spinLock/spinUnlock: no
-// `%w[name]` sub-register modifier in this toolchain's inline asm, so the
-// exclusive-store status is bound to a hardcoded w9 with x9 clobbered.
-fn spinLock(s: *volatile u64) void {
-    _ = asm volatile (
-        \\1: ldaxr %[ret], [%[addr]]
-        \\   cbnz %[ret], 1b
-        \\   stlxr w9, %[one], [%[addr]]
-        \\   cbnz w9, 1b
-        : [ret] "=&r" (-> u64),
-        : [addr] "r" (s),
-          [one] "r" (@as(u64, 1)),
-        : .{ .memory = true, .x9 = true }
-    );
-}
+const CntpCtl = packed struct(u64) {
+    /// CNTP_CTL_EL0.ENABLE (bit 0): timer enabled.
+    enable: bool = false,
+    /// CNTP_CTL_EL0.IMASK (bit 1): mask the timer's interrupt output.
+    imask: bool = false,
+    /// CNTP_CTL_EL0.ISTATUS (bit 2, read-only): condition met.
+    istatus: bool = false,
+    _reserved: u61 = 0,
+};
 
-fn spinUnlock(s: *volatile u64) void {
-    asm volatile ("stlr %[zero], [%[addr]]"
-        :
-        : [zero] "r" (@as(u64, 0)),
-          [addr] "r" (s),
-        : .{ .memory = true }
-    );
-}
+const Cnt = struct {
+    const Pct = sysreg.Reg(u64, "cntpct_el0");
+    const Frq = sysreg.Reg(u64, "cntfrq_el0");
+    const PCval = sysreg.Reg(u64, "cntp_cval_el0");
+    const PCtl = sysreg.Reg(CntpCtl, "cntp_ctl_el0");
+};
 
 fn readCntpct() u64 {
-    return asm volatile ("mrs %[out], cntpct_el0"
-        : [out] "=r" (-> u64),
-    );
+    return Cnt.Pct.read();
 }
 
 pub fn readCntfrq() u64 {
-    return asm volatile ("mrs %[out], cntfrq_el0"
-        : [out] "=r" (-> u64),
-    );
+    return Cnt.Frq.read();
 }
 
 fn idxFromId(id: u32) ?usize {
@@ -86,19 +76,10 @@ fn reprogramHardwareTimer() void {
         }
     }
     if (earliest) |expire_at| {
-        asm volatile ("msr cntp_cval_el0, %[v]"
-            :
-            : [v] "r" (expire_at),
-        );
-        asm volatile ("msr cntp_ctl_el0, %[v]"
-            :
-            : [v] "r" (@as(u64, 1)),
-        );
+        Cnt.PCval.write(expire_at);
+        Cnt.PCtl.write(.{ .enable = true });
     } else {
-        asm volatile ("msr cntp_ctl_el0, %[v]"
-            :
-            : [v] "r" (@as(u64, 0)),
-        );
+        Cnt.PCtl.write(.{ .enable = false });
     }
     asm volatile ("isb");
 }
@@ -125,16 +106,13 @@ fn timerIrqHandler(arg: ?*anyopaque) callconv(.c) void {
     _ = arg;
     // Mask immediately so the comparator doesn't keep re-firing on the
     // stale CVAL while we recompute the next deadline.
-    asm volatile ("msr cntp_ctl_el0, %[v]"
-        :
-        : [v] "r" (@as(u64, 0)),
-    );
+    Cnt.PCtl.write(.{ .enable = false });
     asm volatile ("isb");
 
     var due: [MAX_TIMERS]DueEntry = undefined;
     var due_count: usize = 0;
 
-    spinLock(&s_lock);
+    s_lock.lock();
     const now = readCntpct();
     for (&s_timers, 0..) |*e, i| {
         if (e.active and !e.paused and e.expire_at <= now) {
@@ -150,7 +128,7 @@ fn timerIrqHandler(arg: ?*anyopaque) callconv(.c) void {
         }
     }
     reprogramHardwareTimer();
-    spinUnlock(&s_lock);
+    s_lock.unlock();
 
     // Run callbacks outside the lock, same as gic_v3's dispatcher, so a
     // callback that itself calls back into this module (pause/modify/
@@ -167,7 +145,7 @@ pub fn registerCallback(ticks_period: u32, periodic: u8, callback: abi.TimerCall
     const init_status = ensureInitialized();
     if (init_status != 0) return init_status;
 
-    spinLock(&s_lock);
+    s_lock.lock();
     var slot: ?usize = null;
     for (s_timers, 0..) |e, i| {
         if (!e.active) {
@@ -176,7 +154,7 @@ pub fn registerCallback(ticks_period: u32, periodic: u8, callback: abi.TimerCall
         }
     }
     if (slot == null) {
-        spinUnlock(&s_lock);
+        s_lock.unlock();
         return abi.ENOMEM;
     }
 
@@ -193,44 +171,44 @@ pub fn registerCallback(ticks_period: u32, periodic: u8, callback: abi.TimerCall
     };
     out_id.* = @intCast(idx + 1);
     reprogramHardwareTimer();
-    spinUnlock(&s_lock);
+    s_lock.unlock();
     return 0;
 }
 
 pub fn unregisterCallback(id: u32) callconv(.c) c_int {
     const idx = idxFromId(id) orelse return abi.EINVAL;
 
-    spinLock(&s_lock);
+    s_lock.lock();
     if (!s_timers[idx].active) {
-        spinUnlock(&s_lock);
+        s_lock.unlock();
         return abi.EINVAL;
     }
     s_timers[idx] = .{};
     reprogramHardwareTimer();
-    spinUnlock(&s_lock);
+    s_lock.unlock();
     return 0;
 }
 
 pub fn pause(id: u32) callconv(.c) c_int {
     const idx = idxFromId(id) orelse return abi.EINVAL;
 
-    spinLock(&s_lock);
+    s_lock.lock();
     if (!s_timers[idx].active) {
-        spinUnlock(&s_lock);
+        s_lock.unlock();
         return abi.EINVAL;
     }
     s_timers[idx].paused = true;
     reprogramHardwareTimer();
-    spinUnlock(&s_lock);
+    s_lock.unlock();
     return 0;
 }
 
 pub fn unpause(id: u32) callconv(.c) c_int {
     const idx = idxFromId(id) orelse return abi.EINVAL;
 
-    spinLock(&s_lock);
+    s_lock.lock();
     if (!s_timers[idx].active) {
-        spinUnlock(&s_lock);
+        s_lock.unlock();
         return abi.EINVAL;
     }
     if (s_timers[idx].paused) {
@@ -241,7 +219,7 @@ pub fn unpause(id: u32) callconv(.c) c_int {
         s_timers[idx].expire_at = readCntpct() + s_timers[idx].period_ticks;
     }
     reprogramHardwareTimer();
-    spinUnlock(&s_lock);
+    s_lock.unlock();
     return 0;
 }
 
@@ -249,9 +227,9 @@ pub fn modify(id: u32, new_period: u32) callconv(.c) c_int {
     if (new_period == 0) return abi.EINVAL;
     const idx = idxFromId(id) orelse return abi.EINVAL;
 
-    spinLock(&s_lock);
+    s_lock.lock();
     if (!s_timers[idx].active) {
-        spinUnlock(&s_lock);
+        s_lock.unlock();
         return abi.EINVAL;
     }
     s_timers[idx].period_ticks = new_period;
@@ -259,7 +237,7 @@ pub fn modify(id: u32, new_period: u32) callconv(.c) c_int {
         s_timers[idx].expire_at = readCntpct() + new_period;
     }
     reprogramHardwareTimer();
-    spinUnlock(&s_lock);
+    s_lock.unlock();
     return 0;
 }
 

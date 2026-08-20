@@ -27,6 +27,14 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("../shared/mmio.zig"),
     });
 
+    const sysreg_mod = b.createModule(.{
+        .root_source_file = b.path("../shared/sysreg.zig"),
+    });
+
+    const spinlock_mod = b.createModule(.{
+        .root_source_file = b.path("../shared/spinlock.zig"),
+    });
+
     var dir = b.build_root.handle.openDir(b.graph.io, ".", .{ .iterate = true }) catch return;
     defer dir.close(b.graph.io);
 
@@ -60,6 +68,8 @@ pub fn build(b: *std.Build) void {
         mod.addImport("kernel_fmt", kernel_fmt_mod);
         mod.addImport("kernel_test", kernel_test_mod);
         mod.addImport("mmio", mmio_mod);
+        mod.addImport("sysreg", sysreg_mod);
+        mod.addImport("spinlock", spinlock_mod);
 
         // Build executable from the configured module. PIE so the linker
         // emits R_AARCH64_RELATIVE relocations instead of baking in

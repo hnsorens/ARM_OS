@@ -6,6 +6,8 @@ const abi = @import("abi");
 const kernel_fmt = @import("kernel_fmt");
 const kernel_test = @import("kernel_test");
 const mmio = @import("mmio");
+const sysreg = @import("sysreg");
+const spinlock = @import("spinlock");
 
 pub const serial_if = abi.importInterface(abi.Serial);
 
@@ -28,33 +30,7 @@ var g_initialized: bool = false;
 
 var s_isr_table: [MAX_INTERRUPT_VECTORS]RegisteredIsr = [_]RegisteredIsr{.{}} ** MAX_INTERRUPT_VECTORS;
 var s_core_topology: [MAX_CORES_SUPPORTED]CoreMap = [_]CoreMap{.{}} ** MAX_CORES_SUPPORTED;
-var s_isr_lock: u64 = 0;
-
-// The exclusive-store status result of `stlxr` must be a 32-bit (W)
-// register no matter the data size, but Zig's inline asm has no template
-// modifier to request a sub-register view of a named operand (`%w[name]`
-// doesn't parse, and `"r"` constraints always allocate a full X register
-// here) -- so the status is bound to a hardcoded physical register (w9)
-// instead, with x9 declared clobbered.
-fn spinLock(s: *volatile u64) void {
-    _ = asm volatile (
-        \\1: ldaxr %[ret], [%[addr]]
-        \\   cbnz %[ret], 1b
-        \\   stlxr w9, %[one], [%[addr]]
-        \\   cbnz w9, 1b
-        : [ret] "=&r" (-> u64),
-        : [addr] "r" (s),
-          [one] "r" (@as(u64, 1)),
-        : .{ .memory = true, .x9 = true });
-}
-
-fn spinUnlock(s: *volatile u64) void {
-    asm volatile ("stlr %[zero], [%[addr]]"
-        :
-        : [zero] "r" (@as(u64, 0)),
-          [addr] "r" (s),
-        : .{ .memory = true });
-}
+var s_isr_lock: spinlock.SpinLock = .{};
 
 // --- Exception vector table -------------------------------------------
 //
@@ -198,10 +174,34 @@ const Gicr = struct {
 
 // --- CPU interface system registers -------------------------------------
 
-const ICC_SRE_SRE: u64 = 1 << 0;
-const ICC_SRE_DFB: u64 = 1 << 1;
-const ICC_SRE_DIB: u64 = 1 << 2;
-const ICC_IGRPEN1_ENABLE: u64 = 1 << 0;
+const IccSre = packed struct(u64) {
+    /// ICC_SRE_EL1.SRE (bit 0): system register interface enabled.
+    sre: bool = false,
+    /// ICC_SRE_EL1.DFB (bit 1): disable IRQ/FIQ bypass.
+    dfb: bool = false,
+    /// ICC_SRE_EL1.DIB (bit 2): disable IRQ/FIQ bypass (the other one).
+    dib: bool = false,
+    _reserved: u61 = 0,
+};
+
+const IccIgrpen1 = packed struct(u64) {
+    /// ICC_IGRPEN1_EL1.Enable (bit 0): enable Group 1 interrupts.
+    enable: bool = false,
+    _reserved: u63 = 0,
+};
+
+const Icc = struct {
+    const Sre = sysreg.Reg(IccSre, "ICC_SRE_EL1");
+    const Pmr = sysreg.Reg(u64, "ICC_PMR_EL1");
+    const Bpr1 = sysreg.Reg(u64, "ICC_BPR1_EL1");
+    const Ctlr = sysreg.Reg(u64, "ICC_CTLR_EL1");
+    const Igrpen1 = sysreg.Reg(IccIgrpen1, "ICC_IGRPEN1_EL1");
+    const Iar1 = sysreg.Reg(u64, "ICC_IAR1_EL1");
+    const Eoir1 = sysreg.Reg(u64, "ICC_EOIR1_EL1");
+};
+
+const Mpidr = sysreg.Reg(u64, "mpidr_el1");
+const Vbar = sysreg.Reg(u64, "vbar_el1");
 
 fn mpidrToCoreId(mpidr: u64) u32 {
     const aff0: u32 = @truncate(mpidr & 0xFF);
@@ -210,9 +210,7 @@ fn mpidrToCoreId(mpidr: u64) u32 {
 }
 
 pub fn readMpidr() u64 {
-    return asm volatile ("mrs %[out], mpidr_el1"
-        : [out] "=r" (-> u64),
-    );
+    return Mpidr.read();
 }
 
 fn getCurrentGicrBase() u64 {
@@ -233,56 +231,29 @@ fn gicv3InitRedistributor() c_int {
 }
 
 fn gicv3InitCpuInterfaceNs() c_int {
-    var sre = asm volatile ("mrs %[out], ICC_SRE_EL1"
-        : [out] "=r" (-> u64),
-    );
-    sre |= ICC_SRE_SRE | ICC_SRE_DFB | ICC_SRE_DIB;
-    asm volatile ("msr ICC_SRE_EL1, %[v]"
-        :
-        : [v] "r" (sre),
-    );
+    Icc.Sre.modify(.{ .sre = true, .dfb = true, .dib = true });
     asm volatile ("isb");
 
-    asm volatile ("msr ICC_PMR_EL1, %[v]"
-        :
-        : [v] "r" (@as(u64, 0xFF)),
-    );
-    asm volatile ("msr ICC_BPR1_EL1, %[v]"
-        :
-        : [v] "r" (@as(u64, 0)),
-    );
-    asm volatile ("msr ICC_CTLR_EL1, %[v]"
-        :
-        : [v] "r" (@as(u64, 0)),
-    );
-    asm volatile ("msr ICC_IGRPEN1_EL1, %[v]"
-        :
-        : [v] "r" (ICC_IGRPEN1_ENABLE),
-    );
+    Icc.Pmr.write(0xFF);
+    Icc.Bpr1.write(0);
+    Icc.Ctlr.write(0);
+    Icc.Igrpen1.write(.{ .enable = true });
     asm volatile ("dsb sy");
     asm volatile ("isb");
     return 0;
 }
 
 fn iccWritePmrEl1(val: u64) void {
-    asm volatile ("msr ICC_PMR_EL1, %[v]"
-        :
-        : [v] "r" (val),
-    );
+    Icc.Pmr.write(val);
     asm volatile ("isb");
 }
 
 fn iccReadIar1El1() u64 {
-    return asm volatile ("mrs %[out], ICC_IAR1_EL1"
-        : [out] "=r" (-> u64),
-    );
+    return Icc.Iar1.read();
 }
 
 fn iccWriteEoir1El1(val: u64) void {
-    asm volatile ("msr ICC_EOIR1_EL1, %[v]"
-        :
-        : [v] "r" (val),
-    );
+    Icc.Eoir1.write(val);
     asm volatile ("isb");
 }
 
@@ -319,10 +290,7 @@ pub fn initCore() callconv(.c) c_int {
     ret = gicv3InitCpuInterfaceNs();
     if (ret != 0) return ret;
 
-    asm volatile ("msr vbar_el1, %[v]"
-        :
-        : [v] "r" (@intFromPtr(&exception_vector_table)),
-    );
+    Vbar.write(@intFromPtr(&exception_vector_table));
     asm volatile ("isb");
 
     return 0;
@@ -438,21 +406,21 @@ pub fn eoi(vector: u32) callconv(.c) c_int {
 pub fn registerHandler(vector: u32, handler: ?abi.IsrHandler, arg: ?*anyopaque) callconv(.c) c_int {
     if (vector >= MAX_INTERRUPT_VECTORS or handler == null) return abi.EINVAL;
 
-    spinLock(&s_isr_lock);
+    s_isr_lock.lock();
     if (s_isr_table[vector].handler != null) {
-        spinUnlock(&s_isr_lock);
+        s_isr_lock.unlock();
         return abi.EBUSY;
     }
     s_isr_table[vector].handler = handler;
     s_isr_table[vector].arg = arg;
-    spinUnlock(&s_isr_lock);
+    s_isr_lock.unlock();
 
     const ret = enable(vector);
     if (ret != 0) {
-        spinLock(&s_isr_lock);
+        s_isr_lock.lock();
         s_isr_table[vector].handler = null;
         s_isr_table[vector].arg = null;
-        spinUnlock(&s_isr_lock);
+        s_isr_lock.unlock();
     }
     return ret;
 }
@@ -463,10 +431,10 @@ pub fn unregisterHandler(vector: u32) callconv(.c) c_int {
     const ret = disable(vector);
     if (ret != 0) return ret;
 
-    spinLock(&s_isr_lock);
+    s_isr_lock.lock();
     s_isr_table[vector].handler = null;
     s_isr_table[vector].arg = null;
-    spinUnlock(&s_isr_lock);
+    s_isr_lock.unlock();
     return 0;
 }
 
@@ -479,10 +447,10 @@ export fn c_interrupt_handler() callconv(.c) void {
     if (id == 1023) return; // spurious
 
     if (id < MAX_INTERRUPT_VECTORS) {
-        spinLock(&s_isr_lock);
+        s_isr_lock.lock();
         const handler = s_isr_table[id].handler;
         const arg = s_isr_table[id].arg;
-        spinUnlock(&s_isr_lock);
+        s_isr_lock.unlock();
 
         if (handler) |h| {
             h(arg);
