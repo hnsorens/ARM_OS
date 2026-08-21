@@ -260,6 +260,11 @@ pub fn submitRequest(
     data_len: u64,
     status: ?*u8,
 ) callconv(.c) c_int {
+    // `req`/`status` are unconditionally dereferenced below (every request
+    // has a header and a status byte, unlike `data`, which is genuinely
+    // optional) -- reject a null one here instead of trapping on `.?`.
+    if (req == null or status == null) return abi.EINVAL;
+
     const table = descTable(queue);
     const has_data = data != null and data_len != 0;
 

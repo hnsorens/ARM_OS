@@ -59,8 +59,8 @@ fn isZeroGuid(guid: [16]u8) bool {
 }
 
 pub fn readPartitions(dev: ?*anyopaque, out_partitions: [*]abi.GptPartition, max_partitions: u32, count_out: *u32) callconv(.c) c_int {
-    if (dev == null or max_partitions == 0) return abi.EINVAL;
     count_out.* = 0;
+    if (dev == null or max_partitions == 0) return abi.EINVAL;
 
     var header_virt: u64 = undefined;
     var header_phys: u64 = undefined;

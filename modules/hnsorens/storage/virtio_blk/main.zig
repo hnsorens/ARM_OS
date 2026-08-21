@@ -166,10 +166,21 @@ fn doRequest(dev: *Device, req_type: u32, lba: u64, buf: ?*anyopaque, data_len: 
     return 0;
 }
 
+/// True if `[lba, lba+sector_count)` is out of bounds for `capacity`.
+/// `lba + sector_count` can't be computed directly first -- a caller-
+/// controlled `lba` near `u64`'s max would overflow that addition (a
+/// safety-checked panic in Debug/ReleaseSafe, silent wraparound that
+/// bypasses the bounds check entirely in ReleaseFast) before the
+/// comparison ever ran.
+fn rangeOutOfBounds(lba: u64, sector_count: u64, capacity: u64) bool {
+    if (lba >= capacity) return true;
+    return sector_count > capacity - lba;
+}
+
 pub fn readSectors(dev_opaque: ?*anyopaque, lba: u64, buf: ?*anyopaque, sector_count: u64) callconv(.c) c_int {
     const dev = asDev(dev_opaque) orelse return abi.EINVAL;
     if (buf == null or sector_count == 0) return abi.EINVAL;
-    if (lba + sector_count > dev.capacity_sectors) return abi.EINVAL;
+    if (rangeOutOfBounds(lba, sector_count, dev.capacity_sectors)) return abi.EINVAL;
 
     return doRequest(dev, VIRTIO_BLK_T_IN, lba, buf, sector_count * SECTOR_SIZE);
 }
@@ -177,7 +188,7 @@ pub fn readSectors(dev_opaque: ?*anyopaque, lba: u64, buf: ?*anyopaque, sector_c
 pub fn writeSectors(dev_opaque: ?*anyopaque, lba: u64, buf: ?*const anyopaque, sector_count: u64) callconv(.c) c_int {
     const dev = asDev(dev_opaque) orelse return abi.EINVAL;
     if (buf == null or sector_count == 0) return abi.EINVAL;
-    if (lba + sector_count > dev.capacity_sectors) return abi.EINVAL;
+    if (rangeOutOfBounds(lba, sector_count, dev.capacity_sectors)) return abi.EINVAL;
     if (dev.read_only) return abi.EIO;
 
     return doRequest(dev, VIRTIO_BLK_T_OUT, lba, @constCast(buf), sector_count * SECTOR_SIZE);
