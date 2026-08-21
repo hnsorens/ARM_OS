@@ -30,6 +30,36 @@ pub const Timer = shared.Timer;
 pub const TimerCallback = shared.TimerCallback;
 pub const TestEntry = shared.TestEntry;
 
+pub const VirtioQueue = shared.VirtioQueue;
+pub const VirtioBus = shared.VirtioBus;
+pub const BlkDevice = shared.BlkDevice;
+pub const GptPartition = shared.GptPartition;
+pub const Gpt = shared.Gpt;
+pub const Ext2DirEntry = shared.Ext2DirEntry;
+pub const Ext2Stat = shared.Ext2Stat;
+pub const Ext2 = shared.Ext2;
+pub const Vfs = shared.Vfs;
+
+pub const EXT2_FT_UNKNOWN = shared.EXT2_FT_UNKNOWN;
+pub const EXT2_FT_REG_FILE = shared.EXT2_FT_REG_FILE;
+pub const EXT2_FT_DIR = shared.EXT2_FT_DIR;
+pub const EXT2_FT_CHRDEV = shared.EXT2_FT_CHRDEV;
+pub const EXT2_FT_BLKDEV = shared.EXT2_FT_BLKDEV;
+pub const EXT2_FT_FIFO = shared.EXT2_FT_FIFO;
+pub const EXT2_FT_SOCK = shared.EXT2_FT_SOCK;
+pub const EXT2_FT_SYMLINK = shared.EXT2_FT_SYMLINK;
+pub const EXT2_ROOT_INO = shared.EXT2_ROOT_INO;
+pub const EXT2_NAME_LEN = shared.EXT2_NAME_LEN;
+
+pub const EXT2_S_IFSOCK = shared.EXT2_S_IFSOCK;
+pub const EXT2_S_IFLNK = shared.EXT2_S_IFLNK;
+pub const EXT2_S_IFREG = shared.EXT2_S_IFREG;
+pub const EXT2_S_IFBLK = shared.EXT2_S_IFBLK;
+pub const EXT2_S_IFDIR = shared.EXT2_S_IFDIR;
+pub const EXT2_S_IFCHR = shared.EXT2_S_IFCHR;
+pub const EXT2_S_IFIFO = shared.EXT2_S_IFIFO;
+pub const EXT2_S_IFMT = shared.EXT2_S_IFMT;
+
 pub const TEST_PASS = shared.TEST_PASS;
 pub const TEST_FAIL = shared.TEST_FAIL;
 pub const TEST_SKIP = shared.TEST_SKIP;
@@ -43,6 +73,13 @@ pub const EBUSY = shared.EBUSY;
 pub const EEXIST = shared.EEXIST;
 pub const EOVERFLOW = shared.EOVERFLOW;
 pub const EIO = shared.EIO;
+pub const ENOENT = shared.ENOENT;
+pub const ENOTDIR = shared.ENOTDIR;
+pub const EISDIR = shared.EISDIR;
+pub const ENOSPC = shared.ENOSPC;
+pub const ENOTEMPTY = shared.ENOTEMPTY;
+pub const ELOOP = shared.ELOOP;
+pub const ENAMETOOLONG = shared.ENAMETOOLONG;
 
 pub const MMU_RO = shared.MMU_RO;
 pub const MMU_USER = shared.MMU_USER;

@@ -17,7 +17,19 @@ pub fn build(b: *std.Build) void {
     const sgdisk_init = b.addSystemCommand(&.{ "sgdisk", "-o", img_name });
     sgdisk_init.step.dependOn(&truncate_cmd.step);
 
-    const sgdisk_part = b.addSystemCommand(&.{ "sgdisk", "-n", "1:2048:262110", "-t", "1:ef00", img_name });
+    // Two partitions: 1 is the EFI System Partition (bootloader + modules
+    // + kernel.ini, FAT-formatted below), 2 is an ext2 root filesystem
+    // (built separately below and `dd`'d in at the end) that the
+    // gpt/ext2/vfs modules' tests mount and read from.
+    const sgdisk_part = b.addSystemCommand(&.{
+        "sgdisk",
+        "-n", "1:2048:133119",
+        "-t", "1:ef00",
+        "-n", "2:133120:262110",
+        "-t", "2:8300",
+        "-c", "2:rootfs",
+        img_name,
+    });
     sgdisk_part.step.dependOn(&sgdisk_init.step);
 
     const mformat_cmd = b.addSystemCommand(&.{ "mformat", "-i", img_name ++ "@@1M", "-F", "-H", "2048", "-c", "1", "-v", "ESP", "::" });
@@ -77,6 +89,40 @@ pub fn build(b: *std.Build) void {
         last_step = &mcopy_ini.step;
     }
 
+    // Build a small ext2 filesystem in a standalone file and `dd` it into
+    // partition 2 (see sgdisk_part above -- starts at sector 133120).
+    // e2fsprogs' `mke2fs`/`debugfs` operate on a plain regular file same
+    // as a block device, no loop mount (and so no root) required. Feature
+    // flags are pared down to what this OS's `hnsorens.fs.ext2` module
+    // actually understands (128-byte inodes, no 64bit/extents/checksums).
+    const rootfs_name = "rootfs.img";
+    const rootfs_sectors = 262110 - 133120 + 1;
+    const rootfs_bytes = rootfs_sectors * 512;
+
+    const truncate_rootfs = b.addSystemCommand(&.{ "truncate", "-s", b.fmt("{d}", .{rootfs_bytes}), rootfs_name });
+
+    const mke2fs_rootfs = b.addSystemCommand(&.{
+        "mke2fs", "-F", "-q", "-t", "ext2", "-b", "1024", "-I", "128",
+        "-O", "^resize_inode,^dir_index,^large_file,^huge_file,^uninit_bg,^extent,^64bit,^metadata_csum,^flex_bg,^ext_attr",
+        rootfs_name,
+    });
+    mke2fs_rootfs.step.dependOn(&truncate_rootfs.step);
+
+    const debugfs_write_hello = b.addSystemCommand(&.{
+        "debugfs", "-w", "-R",
+        b.fmt("write {s} hello.txt", .{b.pathFromRoot("tools/fixtures/hello.txt")}),
+        rootfs_name,
+    });
+    debugfs_write_hello.step.dependOn(&mke2fs_rootfs.step);
+
+    const dd_rootfs = b.addSystemCommand(&.{
+        "dd", b.fmt("if={s}", .{rootfs_name}), b.fmt("of={s}", .{img_name}),
+        "bs=512", "seek=133120", "conv=notrunc", "status=none",
+    });
+    dd_rootfs.step.dependOn(&debugfs_write_hello.step);
+    dd_rootfs.step.dependOn(last_step);
+    last_step = &dd_rootfs.step;
+
     const image_step = b.step("image", "Assemble raw disk.img with bootloader and modules");
     image_step.dependOn(last_step);
 
@@ -90,6 +136,11 @@ pub fn build(b: *std.Build) void {
         "-accel",        "tcg,thread=multi",
         "-bios",         "/usr/share/edk2/aarch64/QEMU_EFI.fd",
         "-drive",        "file=disk.img,format=raw,if=none,id=d0",
+        // QEMU's virtio-mmio transport defaults to force-legacy=on (VirtIO
+        // MMIO version 1); hnsorens.io.virtio_bus only speaks modern
+        // (version 2), matching things_to_add/bus_controller.c's own
+        // `version != 2` check, so legacy mode is forced off here.
+        "-global",       "virtio-mmio.force-legacy=false",
         "-device",       "virtio-blk-device,drive=d0",
         "-mem-prealloc", "-gdb",
         "tcp::1234",     "-nographic",
@@ -107,12 +158,16 @@ pub fn build(b: *std.Build) void {
     // `timeout` bounds the run, and `|| true` keeps that expected non-zero
     // exit from failing this step. Whether the run actually passed is
     // decided by the checker tool below, which inspects what got printed
-    // to serial before the timeout hit.
+    // to serial before the timeout hit. 300s (rather than the original
+    // 30s) because the storage/filesystem stack's tests alone number in
+    // the hundreds and each one round-trips real VirtIO-MMIO I/O through
+    // QEMU's TCG interpreter -- legitimately slow, not stuck.
     const qemu_log_path = "qemu-test-output.log";
     const qemu_test_script = b.fmt(
-        "timeout 30 qemu-system-aarch64 -m 16G -cpu cortex-a72 -smp 4 -M virt,gic-version=3 " ++
+        "timeout 300 qemu-system-aarch64 -m 16G -cpu cortex-a72 -smp 4 -M virt,gic-version=3 " ++
             "-accel tcg,thread=multi -bios /usr/share/edk2/aarch64/QEMU_EFI.fd " ++
-            "-drive file={s},format=raw,if=none,id=d0 -device virtio-blk-device,drive=d0 " ++
+            "-drive file={s},format=raw,if=none,id=d0 " ++
+            "-global virtio-mmio.force-legacy=false -device virtio-blk-device,drive=d0 " ++
             "-mem-prealloc -nographic -serial mon:stdio -display none > {s} 2>&1 || true",
         .{ img_name, qemu_log_path },
     );

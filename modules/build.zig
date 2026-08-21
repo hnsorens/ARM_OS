@@ -35,6 +35,11 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("../shared/spinlock.zig"),
     });
 
+    const phys_mem_mod = b.createModule(.{
+        .root_source_file = b.path("../shared/phys_mem.zig"),
+    });
+    phys_mem_mod.addImport("abi", abi_mod);
+
     var dir = b.build_root.handle.openDir(b.graph.io, ".", .{ .iterate = true }) catch return;
     defer dir.close(b.graph.io);
 
@@ -70,6 +75,7 @@ pub fn build(b: *std.Build) void {
         mod.addImport("mmio", mmio_mod);
         mod.addImport("sysreg", sysreg_mod);
         mod.addImport("spinlock", spinlock_mod);
+        mod.addImport("phys_mem", phys_mem_mod);
 
         // Build executable from the configured module. PIE so the linker
         // emits R_AARCH64_RELATIVE relocations instead of baking in

@@ -4,3 +4,4 @@ zig-cache/
 qemu-test-output.log
 tools/configurator/layout.json
 disk.img
+rootfs.img

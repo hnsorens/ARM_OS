@@ -32,6 +32,13 @@ pub const EBUSY: c_int = 16;
 pub const EEXIST: c_int = 17;
 pub const EOVERFLOW: c_int = 139;
 pub const EIO: c_int = 5;
+pub const ENOENT: c_int = 2;
+pub const ENOTDIR: c_int = 20;
+pub const EISDIR: c_int = 21;
+pub const ENOSPC: c_int = 28;
+pub const ENOTEMPTY: c_int = 39;
+pub const ELOOP: c_int = 40;
+pub const ENAMETOOLONG: c_int = 36;
 
 // --- Boot info passed to every module entry ---
 pub const MemoryType = enum(u32) {
@@ -194,6 +201,231 @@ pub const Timer = extern struct {
     modify: *const fn (id: u32, new_period: u32) callconv(.c) c_int,
     get_system_ticks: *const fn (ticks: *u64) callconv(.c) c_int,
     delay_ticks: *const fn (ticks: u32) callconv(.c) c_int,
+};
+
+// --- VirtIO-MMIO bus, block device, GPT, ext2, VFS ---
+//
+// A storage stack ported from a previous C OS's `things_to_add/*.c`
+// (bus_controller.c, blk_device.c, gpt.c, ext2.c, vfs.c). Each stage below
+// is its own module talking to the previous one purely through an
+// exported/imported vtable, same as every other driver in this codebase --
+// the C reference had gpt/ext2 call blk_dev_* and bus_controller_*
+// directly as linked functions, which this ABI has no equivalent of.
+
+/// One virtqueue's live state (descriptor table + avail/used rings),
+/// shared between whichever module owns the queue's memory (a block
+/// device) and the module that actually drives the VirtIO-MMIO transport
+/// (the bus controller) -- mirrors the C reference's `virtio_queue_t`
+/// being reinterpreted in place across `bus_controller.c` and
+/// `blk_device.c`. `desc`/`avail`/`used` are HHDM-mapped virtual addresses
+/// (usable as pointers by the owning code); `*_phys` are the matching
+/// physical addresses the device is programmed with. Only the bus
+/// controller module interprets the pointed-to memory's layout.
+pub const VirtioQueue = extern struct {
+    size: u16 = 0,
+    free_head: u16 = 0,
+    last_used_idx: u16 = 0,
+    desc: u64 = 0,
+    avail: u64 = 0,
+    used: u64 = 0,
+    desc_phys: u64 = 0,
+    avail_phys: u64 = 0,
+    used_phys: u64 = 0,
+};
+
+/// Generic VirtIO-MMIO transport, exported by the bus controller
+/// (category "virtiobus"). `mmio_base` throughout is the identity-mapped
+/// physical address of a device's MMIO window (as returned by
+/// `find_device`), not a handle -- matches the C reference treating the
+/// device base as a plain pointer under its flat `virt_to_phys(x) = x`
+/// assumption, which holds here too (TTBR0's flat identity map covers the
+/// low physical range MMIO devices live in).
+pub const VirtioBus = extern struct {
+    find_device: *const fn (device_id: u32) callconv(.c) u64,
+    init_device: *const fn (mmio_base: u64) callconv(.c) c_int,
+    setup_queue: *const fn (mmio_base: u64, queue_idx: u32, queue: *VirtioQueue) callconv(.c) c_int,
+    submit_request: *const fn (mmio_base: u64, req_type: u32, queue: *VirtioQueue, req: ?*const anyopaque, req_len: u64, data: ?*anyopaque, data_len: u64, status: ?*u8) callconv(.c) c_int,
+};
+
+/// Block device, exported by the virtio-blk driver (category
+/// "blkdevice"). All addressing is in fixed 512-byte sectors (the VirtIO
+/// block spec's unit, independent of the device's reported optimal
+/// `blk_size`), matching GPT LBA units.
+///
+/// `read_sectors`/`write_sectors`' `buf` must be a physically-contiguous,
+/// HHDM-mapped buffer (e.g. from a `phys_mem.alloc` call, or anything
+/// else obtained as `phys + HHDM_OFFSET`) -- it ends up as a VirtIO
+/// virtqueue data descriptor's address, computed by subtracting
+/// `HHDM_OFFSET` back out (see `phys_mem.virtToPhys`). A plain stack or
+/// heap buffer is *not* HHDM-mapped, so that subtraction yields a
+/// physical address unrelated to the buffer -- the device will read from
+/// or write to the wrong memory instead of erroring, since it has no way
+/// to know the address is bogus.
+pub const BlkDevice = extern struct {
+    create: *const fn (mmio_base: u64, out_dev: *?*anyopaque) callconv(.c) c_int,
+    read_sectors: *const fn (dev: ?*anyopaque, lba: u64, buf: ?*anyopaque, sector_count: u64) callconv(.c) c_int,
+    write_sectors: *const fn (dev: ?*anyopaque, lba: u64, buf: ?*const anyopaque, sector_count: u64) callconv(.c) c_int,
+    flush: *const fn (dev: ?*anyopaque) callconv(.c) c_int,
+    get_capacity_sectors: *const fn (dev: ?*anyopaque, sectors_out: *u64) callconv(.c) c_int,
+};
+
+/// One parsed GPT partition table entry (category "gpt"'s `read_partitions`
+/// output). `name` is the UTF-16LE on-disk name narrowed to ASCII/Latin-1
+/// and NUL-terminated -- adequate for the plain-ASCII labels this OS uses.
+pub const GptPartition = extern struct {
+    type_guid: [16]u8 = [_]u8{0} ** 16,
+    unique_guid: [16]u8 = [_]u8{0} ** 16,
+    first_lba: u64 = 0,
+    last_lba: u64 = 0,
+    attributes: u64 = 0,
+    name: [37]u8 = [_]u8{0} ** 37,
+};
+
+/// GPT partition table reader, exported by the gpt module (category
+/// "gpt"). `read_partitions` fills up to `max_partitions` entries of
+/// `out_partitions` (caller-owned -- no allocation crosses the ABI
+/// boundary) and writes the number actually found to `count_out`.
+pub const Gpt = extern struct {
+    read_partitions: *const fn (dev: ?*anyopaque, out_partitions: [*]GptPartition, max_partitions: u32, count_out: *u32) callconv(.c) c_int,
+};
+
+pub const EXT2_FT_UNKNOWN: u8 = 0;
+pub const EXT2_FT_REG_FILE: u8 = 1;
+pub const EXT2_FT_DIR: u8 = 2;
+pub const EXT2_FT_CHRDEV: u8 = 3;
+pub const EXT2_FT_BLKDEV: u8 = 4;
+pub const EXT2_FT_FIFO: u8 = 5;
+pub const EXT2_FT_SOCK: u8 = 6;
+pub const EXT2_FT_SYMLINK: u8 = 7;
+
+/// The well-known inode number of an ext2 filesystem's root directory.
+pub const EXT2_ROOT_INO: u32 = 2;
+
+/// Maximum bytes in one path component (`EXT2_NAME_LEN`).
+pub const EXT2_NAME_LEN: u32 = 255;
+
+// --- `Ext2Stat.mode`'s file-type bits (the high nibble of `st_mode`,
+// POSIX `S_IFMT` values) -- distinct from `EXT2_FT_*` above, which is the
+// smaller, separate encoding directory entries use. ---
+pub const EXT2_S_IFSOCK: u16 = 0xC000;
+pub const EXT2_S_IFLNK: u16 = 0xA000;
+pub const EXT2_S_IFREG: u16 = 0x8000;
+pub const EXT2_S_IFBLK: u16 = 0x6000;
+pub const EXT2_S_IFDIR: u16 = 0x4000;
+pub const EXT2_S_IFCHR: u16 = 0x2000;
+pub const EXT2_S_IFIFO: u16 = 0x1000;
+pub const EXT2_S_IFMT: u16 = 0xF000;
+
+/// One directory entry as returned by `Ext2.dir_read` / `Vfs.list_dir`.
+/// `name` is NUL-terminated; `name_len` gives its length without walking
+/// it. Iteration is by flat integer `index` rather than an opaque cursor
+/// so no per-listing state has to be allocated and owned across the ABI
+/// boundary -- see `Ext2.dir_read`'s doc comment.
+pub const Ext2DirEntry = extern struct {
+    inode: u32 = 0,
+    file_type: u8 = 0,
+    name_len: u8 = 0,
+    name: [256]u8 = [_]u8{0} ** 256,
+};
+
+pub const Ext2Stat = extern struct {
+    inode_num: u32 = 0,
+    mode: u16 = 0,
+    size: u64 = 0,
+    links_count: u16 = 0,
+    atime: u32 = 0,
+    mtime: u32 = 0,
+    ctime: u32 = 0,
+    /// Device number for `EXT2_FT_CHRDEV`/`EXT2_FT_BLKDEV` inodes (encoded
+    /// `major`/`minor`, caller-defined); 0 for every other file type.
+    rdev: u32 = 0,
+};
+
+/// ext2 filesystem driver, exported by the ext2 module (category "ext2").
+/// `fs` is an opaque mount handle from `mount`. Every path-shaped
+/// operation here works in terms of `(dir_inode, name)` rather than a
+/// path string -- multi-component path walking is the VFS module's job,
+/// same layering as the C reference's `ext2.c` (inode-number based) vs.
+/// `vfs.c` (path-string based).
+pub const Ext2 = extern struct {
+    mount: *const fn (dev: ?*anyopaque, partition_start_lba: u64, partition_end_lba: u64, out_fs: *?*anyopaque) callconv(.c) c_int,
+    unmount: *const fn (fs: ?*anyopaque) callconv(.c) c_int,
+    root_inode: *const fn (fs: ?*anyopaque) callconv(.c) u32,
+
+    lookup: *const fn (fs: ?*anyopaque, dir_inode: u32, name: [*:0]const u8, inode_out: *u32, file_type_out: *u8) callconv(.c) c_int,
+    stat: *const fn (fs: ?*anyopaque, inode_num: u32, out: *Ext2Stat) callconv(.c) c_int,
+
+    file_create: *const fn (fs: ?*anyopaque, dir_inode: u32, name: [*:0]const u8, mode: u16, inode_out: *u32) callconv(.c) c_int,
+    file_delete: *const fn (fs: ?*anyopaque, dir_inode: u32, name: [*:0]const u8) callconv(.c) c_int,
+    file_read: *const fn (fs: ?*anyopaque, inode_num: u32, offset: u64, buf: ?*anyopaque, count: u64, bytes_read_out: *u64) callconv(.c) c_int,
+    file_write: *const fn (fs: ?*anyopaque, inode_num: u32, offset: u64, buf: ?*const anyopaque, count: u64, bytes_written_out: *u64) callconv(.c) c_int,
+    file_truncate: *const fn (fs: ?*anyopaque, inode_num: u32, length: u64) callconv(.c) c_int,
+
+    dir_create: *const fn (fs: ?*anyopaque, parent_inode: u32, name: [*:0]const u8, mode: u16, inode_out: *u32) callconv(.c) c_int,
+    dir_delete: *const fn (fs: ?*anyopaque, parent_inode: u32, name: [*:0]const u8) callconv(.c) c_int,
+    /// Lists the `index`-th valid entry of `dir_inode` (0-based, in on-disk
+    /// order). Returns `ENOENT` once `index` runs past the last entry --
+    /// the caller's iteration loop just counts up until it sees that.
+    dir_read: *const fn (fs: ?*anyopaque, dir_inode: u32, index: u32, entry_out: *Ext2DirEntry) callconv(.c) c_int,
+
+    rename: *const fn (fs: ?*anyopaque, old_dir_inode: u32, old_name: [*:0]const u8, new_dir_inode: u32, new_name: [*:0]const u8) callconv(.c) c_int,
+
+    /// Creates a symlink at `(dir_inode, name)` pointing at `target`
+    /// (stored verbatim, not validated or resolved -- a dangling or
+    /// relative target is legal, same as POSIX `symlink()`). A "fast"
+    /// symlink (`target` fits in the inode's own block pointers, <= 60
+    /// bytes) allocates no data block; longer targets fall back to a
+    /// "slow" symlink using one, same as the on-disk format itself.
+    symlink_create: *const fn (fs: ?*anyopaque, dir_inode: u32, name: [*:0]const u8, target: [*:0]const u8, inode_out: *u32) callconv(.c) c_int,
+    /// Reads `inode_num`'s symlink target into `buf` (up to `buf_len`
+    /// bytes, NOT NUL-terminated) and writes its length to `len_out`.
+    /// Returns `EINVAL` if `inode_num` is not a symlink.
+    symlink_read: *const fn (fs: ?*anyopaque, inode_num: u32, buf: [*]u8, buf_len: u64, len_out: *u64) callconv(.c) c_int,
+
+    /// Creates a character device, block device, FIFO, or socket special
+    /// file (`file_type` one of `EXT2_FT_CHRDEV`/`BLKDEV`/`FIFO`/`SOCK`).
+    /// `dev` is the encoded device number, meaningful only for
+    /// CHRDEV/BLKDEV (ignored otherwise, but still recorded) -- read back
+    /// via `Ext2Stat.rdev`. Zero data blocks are ever allocated for any
+    /// of these; content lives entirely in the inode.
+    mknod: *const fn (fs: ?*anyopaque, dir_inode: u32, name: [*:0]const u8, mode: u16, file_type: u8, dev: u32, inode_out: *u32) callconv(.c) c_int,
+};
+
+/// Whole-tree path resolver over `Ext2`, exported by the vfs module
+/// (category "vfs"). Mounts the ext2 partition itself (see the vfs
+/// module's `main`) rather than requiring a caller to drive
+/// find-device/init/gpt/mount first, since there is exactly one root
+/// filesystem in this design -- a future multi-mount VFS would need a
+/// mount-table argument here, but nothing in this OS needs that yet.
+///
+/// `resolve`/`read`/`write`/`create`/`mkdir`/`stat`/`list_dir` all follow
+/// symlinks at every path component, including a trailing one (matching
+/// POSIX `open`/`stat`); `remove`, `lstat`, and `readlink` act on the
+/// final component itself without following it (matching POSIX
+/// `unlink`/`lstat`/`readlink`) -- otherwise you could never remove a
+/// symlink, only what it points at, and `readlink` would just recurse
+/// into whatever the link resolves to instead of reporting it. A path
+/// with more than `MAX_SYMLINK_DEPTH` (see the vfs module) symlink hops
+/// anywhere in it fails with `ELOOP`.
+pub const Vfs = extern struct {
+    resolve: *const fn (path: [*:0]const u8, inode_out: *u32, file_type_out: *u8) callconv(.c) c_int,
+    read: *const fn (path: [*:0]const u8, offset: u64, buf: ?*anyopaque, count: u64, bytes_read_out: *u64) callconv(.c) c_int,
+    write: *const fn (path: [*:0]const u8, offset: u64, buf: ?*const anyopaque, count: u64, bytes_written_out: *u64) callconv(.c) c_int,
+    create: *const fn (path: [*:0]const u8, mode: u16) callconv(.c) c_int,
+    mkdir: *const fn (path: [*:0]const u8, mode: u16) callconv(.c) c_int,
+    remove: *const fn (path: [*:0]const u8) callconv(.c) c_int,
+    list_dir: *const fn (path: [*:0]const u8, index: u32, entry_out: *Ext2DirEntry) callconv(.c) c_int,
+    rename: *const fn (old_path: [*:0]const u8, new_path: [*:0]const u8) callconv(.c) c_int,
+
+    stat: *const fn (path: [*:0]const u8, out: *Ext2Stat) callconv(.c) c_int,
+    lstat: *const fn (path: [*:0]const u8, out: *Ext2Stat) callconv(.c) c_int,
+
+    symlink: *const fn (target: [*:0]const u8, link_path: [*:0]const u8) callconv(.c) c_int,
+    /// Reads the target of the symlink at `path` itself (not followed)
+    /// into `buf` (up to `buf_len` bytes, NOT NUL-terminated), writing its
+    /// length to `len_out`. `EINVAL` if `path` isn't a symlink.
+    readlink: *const fn (path: [*:0]const u8, buf: ?*anyopaque, buf_len: u64, len_out: *u64) callconv(.c) c_int,
+    mknod: *const fn (path: [*:0]const u8, mode: u16, file_type: u8, dev: u32) callconv(.c) c_int,
 };
 
 // --- Module metadata linking ---
