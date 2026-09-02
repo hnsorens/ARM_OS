@@ -23,6 +23,7 @@ real in QEMU via `zig build test`.
 | `scheduler` | sched | `Scheduler` | Cooperative round-robin over a ready-pid ring buffer. `admit`/`remove`/`yield`/`block`/`wake`/`exit_current`; `run` switches into the first task and returns to its caller once the queue drains. No tick preemption yet (needs a reschedule-after-EOIR hook in the exception path). Mirrors HendOS `scheduler.c` semantics, queue-based. |
 | `syscall` | sys | `Syscalls` | Fixed 512-slot dispatch table. `register(nr, handler)` / `unregister` / `invoke` (direct kernel call) / `is_registered` / `count`. Registers one `.sync_svc` callback with `exceptions`; reads nr from x8, args x0..x5, writes result to x0 (AArch64 Linux convention). Numbers spec'd centrally in `abi_types.zig` (`SYS_*`, matching Linux/aarch64). No remap/mask layer (deferred). |
 | `elf_loader` | proc | `Elf` | `load(path)` reads a static AArch64 `ET_EXEC` from the VFS, builds a user address space (`mmu.copy` of the identity map + the PT_LOAD span mapped as one block at 64 GiB + a stack at 128 GiB), and `process.create_user_process`. `unload` frees every frame + the page tables. Also registers the first process syscalls (`write`→console, `getpid`, `exit`/`exit_group`, `sched_yield`). Test binary: `userland/hello.c`, compiled by `build.zig` and written into `rootfs.img` as `/hello`. **First code running at EL0.** |
+| `keyboard` | io | `Keyboard` | Console input via the PL011 UART RX interrupt (SPI 1 / INTID 33): unmasks RX + RX-timeout, registers an ISR with `gic_v3`, buffers bytes into a ring (CR→LF, echo each keystroke). Owns `SYS_read` on fd 0 — an empty read `scheduler.block()`s the caller; the ISR `scheduler.wake()`s it. The kernel now boots to an EL0 shell: `bootloader/main.zig`'s `startInit` loads `/init` (from `userland/init.c`) after the test suite, admits it, and runs the scheduler idle loop; `/init` echoes each line you type. |
 
 ## Not started yet
 
@@ -90,9 +91,11 @@ real in QEMU via `zig build test`.
 
 ### Not in the original C `TODO.md`, but standard for "a fundamental OS"
 
-- **Console/TTY layer** — line-buffered input, basic terminal semantics on
-  top of `serial_debug`'s raw `write()`. Needed before any interactive
-  shell/userspace input is meaningful.
+- **Console/TTY layer** — the raw input path exists (`hnsorens.io.keyboard`:
+  UART RX IRQ → ring buffer → blocking `SYS_read`). Still TODO: real line
+  discipline (in-kernel line editing/backspace, canonical vs raw mode),
+  and moving per-keystroke echo behind a termios-like flag rather than
+  always-on in the ISR.
 - **RTC / wall-clock time** — QEMU `virt` exposes a PL031 RTC; nothing
   reads it yet (only the monotonic generic timer counter is touched, in
   `gic_v3`'s test).

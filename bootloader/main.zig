@@ -50,7 +50,46 @@ fn beginKernel() callconv(.c) noreturn {
     Serial.okLog("Boot successful");
     Serial.logSummary(tally.passed, tally.failed, tally.skipped);
 
+    startInit();
     haltForever();
+}
+
+/// Loads `/init` via the elf_loader module's registered vtable, admits it
+/// to the scheduler, and runs the scheduler idle loop -- this is where
+/// "kernel" hands off to "userspace", after every module (and the test
+/// suite) has finished. Returns (falling through to haltForever) only if
+/// the loader/scheduler aren't present or `/init` fails to load.
+fn startInit() void {
+    const elf_di = g_registry.get("elf", "loader") orelse {
+        Serial.failLog("Locating /init loader");
+        return;
+    };
+    const sched_di = g_registry.get("scheduler", "roundrobin") orelse {
+        Serial.failLog("Locating scheduler");
+        return;
+    };
+    const elf: *const shared.Elf = @ptrCast(@alignCast(elf_di.vtable_ptr));
+    const sched: *const shared.Scheduler = @ptrCast(@alignCast(sched_di.vtable_ptr));
+
+    var pid: u32 = 0;
+    if (elf.load("/init", &pid) != 0) {
+        Serial.failLog("Loading /init");
+        return;
+    }
+    if (sched.admit(pid) != 0) {
+        Serial.failLog("Admitting /init");
+        return;
+    }
+    Serial.okLog("Starting /init");
+
+    // Console input arrives as a UART IRQ; unmask it at EL1 so this idle
+    // loop actually services it (and wakes a process blocked in read()).
+    asm volatile ("msr daifclr, #2" ::: .{ .memory = true });
+    while (true) {
+        _ = sched.run();
+        asm volatile ("msr daifclr, #2" ::: .{ .memory = true });
+        asm volatile ("wfi");
+    }
 }
 
 pub fn main() void {

@@ -122,31 +122,41 @@ pub fn build(b: *std.Build) void {
     // zig cc's linker wrapper rejects -Ttext / -z / -N, so the load
     // address is set with --image-base; the loader itself copes with
     // lld's default sub-page-tight AArch64 segment packing.
-    const cc_hello = b.addSystemCommand(&.{
-        "zig",            "cc",
-        "-target",        "aarch64-linux-musl",
-        "-nostdlib",      "-static",
-        "-no-pie",        "-fno-pie",
-        "-ffreestanding", "-fno-stack-protector",
-        "-O2",            "-Wall",
-        "-Wl,-e,_start",  "-Wl,--image-base=0x1000000000",
-        "-o",
-    });
-    const hello_elf = cc_hello.addOutputFileArg("hello.elf");
-    cc_hello.addFileArg(b.path("userland/hello.c"));
+    const UserProg = struct { src: []const u8, dest: []const u8 };
+    const user_progs = [_]UserProg{
+        .{ .src = "userland/hello.c", .dest = "hello" },
+        .{ .src = "userland/init.c", .dest = "init" },
+    };
 
-    const debugfs_write_prog = b.addSystemCommand(&.{
-        "sh", "-c", "debugfs -w -R \"write $1 hello\" \"$2\"", "sh",
-    });
-    debugfs_write_prog.addFileArg(hello_elf); // $1
-    debugfs_write_prog.addArg(rootfs_name); // $2
-    debugfs_write_prog.step.dependOn(&debugfs_write_hello.step);
+    var user_dep: *std.Build.Step = &debugfs_write_hello.step;
+    for (user_progs) |prog| {
+        const cc = b.addSystemCommand(&.{
+            "zig",            "cc",
+            "-target",        "aarch64-linux-musl",
+            "-nostdlib",      "-static",
+            "-no-pie",        "-fno-pie",
+            "-ffreestanding", "-fno-stack-protector",
+            "-O2",            "-Wall",
+            "-Wl,-e,_start",  "-Wl,--image-base=0x1000000000",
+            "-o",
+        });
+        const elf = cc.addOutputFileArg(b.fmt("{s}.elf", .{prog.dest}));
+        cc.addFileArg(b.path(prog.src));
+
+        const inject = b.addSystemCommand(&.{
+            "sh", "-c", b.fmt("debugfs -w -R \"write $1 {s}\" \"$2\"", .{prog.dest}), "sh",
+        });
+        inject.addFileArg(elf); // $1
+        inject.addArg(rootfs_name); // $2
+        inject.step.dependOn(user_dep);
+        user_dep = &inject.step;
+    }
 
     const dd_rootfs = b.addSystemCommand(&.{
         "dd", b.fmt("if={s}", .{rootfs_name}), b.fmt("of={s}", .{img_name}),
         "bs=512", "seek=133120", "conv=notrunc", "status=none",
     });
-    dd_rootfs.step.dependOn(&debugfs_write_prog.step);
+    dd_rootfs.step.dependOn(user_dep);
     dd_rootfs.step.dependOn(last_step);
     last_step = &dd_rootfs.step;
 
