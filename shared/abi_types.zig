@@ -26,6 +26,7 @@ pub const TEST_SKIP: i32 = 2;
 
 // --- errno values used by module vtables (match the kernel errno.h) ---
 pub const EINVAL: c_int = 22;
+pub const ENOSYS: c_int = 38;
 pub const ENOMEM: c_int = 12;
 pub const EFAULT: c_int = 14;
 pub const EBUSY: c_int = 16;
@@ -201,6 +202,311 @@ pub const Timer = extern struct {
     modify: *const fn (id: u32, new_period: u32) callconv(.c) c_int,
     get_system_ticks: *const fn (ticks: *u64) callconv(.c) c_int,
     delay_ticks: *const fn (ticks: u32) callconv(.c) c_int,
+};
+
+// --- Cooperative CPU context switching (AArch64 EL1) ---
+//
+// `hnsorens.sched.context_switch` exports this. A `TaskContext` holds
+// exactly the register state the AArch64 C ABI requires a function call to
+// preserve: the callee-saved GPRs x19-x28, the frame pointer (x29), the
+// link register (x30), and the stack pointer. Saving/restoring that set
+// (and swapping SP) turns a plain function call into a coroutine switch.
+//
+// Caller-saved GPRs (x0-x18), NZCV, and FP/SIMD state are deliberately NOT
+// saved: a cooperative `switch_to` happens at a call boundary where the
+// compiler already treats those as clobbered. A preemptive switch (out of
+// an exception handler) saves the full trap frame separately in the
+// vector trampoline and only reuses this for the SP/callee-saved half.
+pub const TaskContext = extern struct {
+    x19: u64 = 0,
+    x20: u64 = 0,
+    x21: u64 = 0,
+    x22: u64 = 0,
+    x23: u64 = 0,
+    x24: u64 = 0,
+    x25: u64 = 0,
+    x26: u64 = 0,
+    x27: u64 = 0,
+    x28: u64 = 0,
+    /// Frame pointer (x29).
+    fp: u64 = 0,
+    /// Link register (x30) -- the address `switch_to`/`jump_to` resume at.
+    lr: u64 = 0,
+    /// Stack pointer to install (SP_EL1 for kernel tasks).
+    sp: u64 = 0,
+};
+
+/// Raw AArch64 register-file switching, exported by the context_switch
+/// module (category "contextswitch"). Address-space (TTBR0) switching is
+/// intentionally left to `Mmu.set_user_ctx` -- this module only moves the
+/// CPU register state.
+pub const ContextSwitch = extern struct {
+    /// Initializes `ctx` so the first switch into it begins executing
+    /// `entry(arg)` on the stack ending at `stack_top` (grows down;
+    /// rounded down to a 16-byte boundary). `EINVAL` for a null `entry`
+    /// or an implausibly small `stack_top`. If `entry` ever returns, the
+    /// task is parked (logged, then a WFI loop) -- a scheduler is meant to
+    /// hand tasks a real exit path instead.
+    init_kernel_context: *const fn (ctx: *TaskContext, entry: usize, arg: usize, stack_top: u64) callconv(.c) c_int,
+    /// Saves the current execution context into `save`, then resumes
+    /// `restore`. Returns (in `save`'s context) only once some later
+    /// switch targets `save`.
+    switch_to: *const fn (save: *TaskContext, restore: *const TaskContext) callconv(.c) void,
+    /// Like `switch_to` but with no context to save -- for the scheduler's
+    /// first-ever entry into a task, where no prior context needs to be
+    /// resumable. Never returns.
+    jump_to: *const fn (restore: *const TaskContext) callconv(.c) noreturn,
+};
+
+// --- Processes / kernel threads ---
+//
+// `hnsorens.proc.process` owns a fixed table of task control blocks. Each
+// TCB embeds a `TaskContext` (the scheduler switches to it via
+// `ContextSwitch.switch_to`) and a kernel stack carved from `pmm`,
+// addressed through its HHDM alias so it is always mapped. User address
+// spaces are not wired here yet -- kernel threads share the kernel
+// address space (`address_space == 0`).
+
+/// Non-exhaustive so a stray value arriving across the ABI is inspectable
+/// rather than illegal behavior.
+pub const ProcessState = enum(u32) {
+    /// TCB slot is free.
+    dead = 0,
+    /// Created, context initialized, not yet runnable.
+    new = 1,
+    /// Runnable; waiting for the scheduler to pick it.
+    ready = 2,
+    /// Currently executing on a core.
+    running = 3,
+    /// Waiting on something; not runnable until woken.
+    blocked = 4,
+    /// Exited; TCB kept until reaped for its exit code.
+    zombie = 5,
+    _,
+};
+
+pub const ProcessInfo = extern struct {
+    pid: u32 = 0,
+    state: ProcessState = .dead,
+    priority: u32 = 0,
+    exit_code: i32 = 0,
+    /// TTBR0 root for a user process; 0 for a kernel thread.
+    address_space: u64 = 0,
+    /// HHDM virtual address of the kernel stack's low end.
+    kstack_base: u64 = 0,
+    /// Kernel stack size in bytes (power-of-two page block actually
+    /// allocated, which may exceed the requested page count).
+    kstack_size: u64 = 0,
+    name: [32]u8 = [_]u8{0} ** 32,
+};
+
+pub const Process = extern struct {
+    /// Creates a kernel thread: allocates a TCB slot and a `kstack_pages`
+    /// (4 KiB each) kernel stack, builds a `TaskContext` that begins at
+    /// `entry(arg)`, sets state `ready`, and writes the new pid to
+    /// `out_pid`. `EINVAL` for a null `entry` / zero or oversized
+    /// `kstack_pages`; `ENOMEM` if the table is full or the stack can't
+    /// be allocated.
+    create_kernel_thread: *const fn (name: [*:0]const u8, entry: usize, arg: usize, kstack_pages: u32, priority: u32, out_pid: *u32) callconv(.c) c_int,
+    /// Frees a thread's kernel stack and releases its TCB slot. `EINVAL`
+    /// for an unknown pid; `EBUSY` if the thread is `running`.
+    destroy: *const fn (pid: u32) callconv(.c) c_int,
+    exists: *const fn (pid: u32) callconv(.c) bool,
+    /// Writes `&tcb.context` (usable as `*TaskContext`) to `out`, for the
+    /// scheduler to switch through. Valid until `destroy`.
+    context_of: *const fn (pid: u32, out: *?*anyopaque) callconv(.c) c_int,
+    get_info: *const fn (pid: u32, out: *ProcessInfo) callconv(.c) c_int,
+    get_state: *const fn (pid: u32, out: *ProcessState) callconv(.c) c_int,
+    /// `EINVAL` for an unknown pid, an out-of-range state, or `.dead`
+    /// (use `destroy`).
+    set_state: *const fn (pid: u32, state: ProcessState) callconv(.c) c_int,
+    get_priority: *const fn (pid: u32, out: *u32) callconv(.c) c_int,
+    set_priority: *const fn (pid: u32, priority: u32) callconv(.c) c_int,
+    set_exit_code: *const fn (pid: u32, code: i32) callconv(.c) c_int,
+    /// Number of live (non-`dead`) TCBs.
+    count: *const fn () callconv(.c) u32,
+    /// Fills `out_pids[0..max]` with live pids in slot order and writes
+    /// the count to `n_out`. `EOVERFLOW` if there are more than `max`
+    /// (the first `max` are still written).
+    list: *const fn (out_pids: [*]u32, max: u32, n_out: *u32) callconv(.c) c_int,
+};
+
+// --- Syscall dispatch (fixed table) ---
+//
+// `hnsorens.sys.syscall` owns a fixed `SYSCALL_TABLE_SIZE`-entry table and
+// registers a `.sync_svc` callback with the exceptions module. Userspace
+// (and kernel callers, via `Syscalls.invoke`) use the AArch64 Linux
+// convention: number in x8, args in x0..x5, return value in x0 -- so a
+// later musl/newlib port needs no shim. Each number below is a well-known
+// slot a module registers a handler at; there is no remap/mask layer yet.
+pub const SYSCALL_TABLE_SIZE = 512;
+
+// Numbers match Linux/aarch64 where an equivalent exists.
+pub const SYS_getcwd: u32 = 17;
+pub const SYS_dup: u32 = 23;
+pub const SYS_chdir: u32 = 49;
+pub const SYS_openat: u32 = 56;
+pub const SYS_close: u32 = 57;
+pub const SYS_getdents64: u32 = 61;
+pub const SYS_lseek: u32 = 62;
+pub const SYS_read: u32 = 63;
+pub const SYS_write: u32 = 64;
+pub const SYS_fstat: u32 = 80;
+pub const SYS_exit: u32 = 93;
+pub const SYS_exit_group: u32 = 94;
+pub const SYS_sched_yield: u32 = 124;
+pub const SYS_getpid: u32 = 172;
+pub const SYS_getppid: u32 = 173;
+pub const SYS_brk: u32 = 214;
+pub const SYS_clone: u32 = 220;
+pub const SYS_execve: u32 = 221;
+pub const SYS_wait4: u32 = 260;
+
+/// The six general-purpose arguments a syscall handler receives, plus the
+/// number it was invoked as.
+pub const SyscallArgs = extern struct {
+    nr: u64,
+    arg: [6]u64,
+};
+
+/// A registered handler. The return value is placed in x0 on `eret`;
+/// negative means `-errno` by convention (not enforced by the table).
+pub const SyscallHandler = *const fn (args: *const SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64;
+
+pub const Syscalls = extern struct {
+    /// Register `handler` for syscall `nr`. `EINVAL` if `nr >=
+    /// SYSCALL_TABLE_SIZE`, `EBUSY` if a handler is already registered.
+    register: *const fn (nr: u32, handler: SyscallHandler, ctx: ?*anyopaque) callconv(.c) c_int,
+    /// Idempotent -- clearing an empty slot still returns 0. `EINVAL` if
+    /// `nr` is out of range.
+    unregister: *const fn (nr: u32) callconv(.c) c_int,
+    is_registered: *const fn (nr: u32) callconv(.c) bool,
+    count: *const fn () callconv(.c) u32,
+    /// Run syscall `nr` directly from kernel code (no `svc`). Returns the
+    /// handler's value, or `-ENOSYS` if `nr` is unregistered / out of
+    /// range.
+    invoke: *const fn (nr: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64) callconv(.c) i64,
+};
+
+// --- Cooperative round-robin scheduler ---
+//
+// `hnsorens.sched.scheduler` keeps a run queue of ready pids (from the
+// process module) and switches between them with the context_switch
+// module. Cooperative only for now: a task gives up the CPU by calling
+// `yield` / `block` / `exit_current`; there is no tick preemption yet
+// (that needs a reschedule-after-EOIR hook in the exception path).
+//
+// `run` is the entry point -- it switches into the first ready task and
+// returns to its caller once the run queue drains (every task has
+// exited or blocked). The kernel's idle loop is then
+// `while (true) { scheduler.run(); wfi(); }`.
+pub const Scheduler = extern struct {
+    /// Enqueue a ready task. `EINVAL` if the pid is unknown, `EEXIST` if
+    /// it is already queued or currently running, `ENOMEM` if the queue
+    /// is full.
+    admit: *const fn (pid: u32) callconv(.c) c_int,
+    /// Remove a queued (not currently running) task from the run queue
+    /// without destroying it. `EINVAL` if it isn't queued, `EBUSY` if it
+    /// is the running task (use `exit_current`).
+    remove: *const fn (pid: u32) callconv(.c) c_int,
+    /// pid of the running task, or 0 when called from the bootstrap
+    /// context (outside `run`, or with the queue drained).
+    current: *const fn () callconv(.c) u32,
+    queue_len: *const fn () callconv(.c) u32,
+    /// Give up the CPU to the next ready task, re-queuing the caller.
+    /// Returns once the caller is scheduled again. No-op if there is no
+    /// other ready task.
+    yield: *const fn () callconv(.c) void,
+    /// Mark the running task blocked and switch away. It won't run again
+    /// until `wake`. Returns (once rescheduled). `EINVAL` if called with
+    /// no running task.
+    block: *const fn () callconv(.c) c_int,
+    /// Move a blocked task back to ready and re-queue it. `EINVAL` if the
+    /// pid isn't currently blocked.
+    wake: *const fn (pid: u32) callconv(.c) c_int,
+    /// Set the running task to `zombie`, drop it from rotation, and
+    /// switch away. Does NOT return to the calling task.
+    exit_current: *const fn () callconv(.c) void,
+    /// Switch into the first ready task; returns 0 to the caller once the
+    /// run queue has drained. `EBUSY` if already running (no reentry).
+    run: *const fn () callconv(.c) c_int,
+};
+
+// --- Synchronous exception / fault / async trap dispatch (AArch64 EL1) ---
+//
+// `hnsorens.arch.exceptions` owns VBAR_EL1 and a full 16-entry vector
+// table. Every entry saves a `TrapFrame`, decodes what happened, and
+// hands it to whichever module registered a callback for that class. GIC
+// IRQ handling is just an `.irq` callback registered by `gic_v3`; a page
+// fault is a `.data_abort` callback (the process/fault module); a syscall
+// is an `.sync_svc` callback (the syscall module).
+
+/// Full integer register state at an exception, saved by the vector
+/// trampoline. A handler may mutate any field; the changes take effect on
+/// `eret` -- e.g. advance `elr` past a faulting instruction, or write a
+/// syscall's return value into `x[0]`.
+pub const TrapFrame = extern struct {
+    /// x0..x30.
+    x: [31]u64,
+    /// Stack pointer the exception was taken on (SP_EL0 for a lower-EL
+    /// trap, the pre-frame SP_EL1 otherwise).
+    sp: u64,
+    /// ELR_EL1 -- the address `eret` returns to.
+    elr: u64,
+    /// SPSR_EL1 -- PSTATE restored on `eret`.
+    spsr: u64,
+    /// ESR_EL1 -- syndrome. EC is bits 31:26; ISS is bits 24:0.
+    esr: u64,
+    /// FAR_EL1 -- faulting virtual address (valid for aborts / alignment
+    /// faults; stale otherwise).
+    far: u64,
+};
+
+/// Which vector-table entry / decoded cause a callback is registered for.
+/// Values are stable array indices.
+pub const ExceptionVector = enum(u32) {
+    sync_svc = 0,
+    sync_data_abort = 1,
+    sync_instruction_abort = 2,
+    sync_pc_alignment = 3,
+    sync_sp_alignment = 4,
+    /// Any synchronous EC not broken out above.
+    sync_other = 5,
+    irq = 6,
+    fiq = 7,
+    serror = 8,
+};
+
+pub const ExceptionOrigin = enum(u32) {
+    current_el_sp0 = 0,
+    current_el_spx = 1,
+    lower_el_aarch64 = 2,
+    lower_el_aarch32 = 3,
+};
+
+/// A callback's verdict, telling the trampoline what to do next.
+pub const ExceptionOutcome = enum(u32) {
+    /// `eret` with the (possibly modified) frame.
+    handled = 0,
+    /// Callback declined; the exceptions module applies its default
+    /// policy (skip-and-log for `sync_svc`/`sync_other` and the async
+    /// classes; log + halt the core for an unhandled real fault).
+    unhandled = 1,
+};
+
+pub const ExceptionCallback = *const fn (frame: *TrapFrame, origin: ExceptionOrigin, arg: ?*anyopaque) callconv(.c) ExceptionOutcome;
+
+/// Exported by the exceptions module (category "exceptions").
+pub const Exceptions = extern struct {
+    /// Install the vector table in VBAR_EL1 on the current core. The
+    /// module's own `main` already does this for the boot core.
+    init_core: *const fn () callconv(.c) c_int,
+    /// Register the sole callback for `vector`. `EBUSY` if one is set,
+    /// `EINVAL` for a null callback.
+    register_handler: *const fn (vector: ExceptionVector, cb: ExceptionCallback, arg: ?*anyopaque) callconv(.c) c_int,
+    /// Remove `vector`'s callback (idempotent -- removing an absent one
+    /// still returns 0).
+    unregister_handler: *const fn (vector: ExceptionVector) callconv(.c) c_int,
 };
 
 // --- VirtIO-MMIO bus, block device, GPT, ext2, VFS ---
