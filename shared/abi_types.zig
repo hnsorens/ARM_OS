@@ -460,6 +460,22 @@ pub const Scheduler = extern struct {
     run: *const fn () callconv(.c) c_int,
 };
 
+// --- Console keyboard input ---
+//
+// `hnsorens.io.keyboard` drives the receive side of the PL011 UART (the
+// only "keyboard" the QEMU virt board has): it unmasks the UART RX
+// interrupt, registers an ISR with the interrupt manager, and buffers
+// received bytes into a ring, echoing each keystroke. It also owns the
+// `SYS_read` syscall (fd 0), which blocks the calling process until a
+// byte is available and wakes it from the ISR.
+pub const Keyboard = extern struct {
+    /// Non-blocking: pop up to `max` bytes from the input ring into
+    /// `buf`; returns the count (0 if the ring is empty).
+    read: *const fn (buf: [*]u8, max: u64) callconv(.c) u64,
+    /// Bytes currently buffered.
+    available: *const fn () callconv(.c) u64,
+};
+
 // --- Userspace ELF loading ---
 //
 // `hnsorens.proc.elf_loader` reads a static AArch64 `ET_EXEC` binary from

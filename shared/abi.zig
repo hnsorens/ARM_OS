@@ -64,6 +64,7 @@ pub const ExceptionOutcome = shared.ExceptionOutcome;
 pub const ExceptionCallback = shared.ExceptionCallback;
 pub const Exceptions = shared.Exceptions;
 pub const Elf = shared.Elf;
+pub const Keyboard = shared.Keyboard;
 pub const TestEntry = shared.TestEntry;
 
 pub const VirtioQueue = shared.VirtioQueue;
