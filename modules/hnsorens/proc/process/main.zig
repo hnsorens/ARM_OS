@@ -28,6 +28,7 @@ const PAGE_SIZE: u64 = 4096;
 
 const Tcb = struct {
     in_use: bool = false,
+    is_user: bool = false,
     pid: u32 = 0,
     state: abi.ProcessState = .dead,
     priority: u32 = 0,
@@ -96,12 +97,60 @@ pub fn createKernelThread(name: [*:0]const u8, entry: usize, arg: usize, kstack_
         return abi.EINVAL;
     }
 
-    var i: usize = 0;
-    while (i < slot.name.len - 1 and name[i] != 0) : (i += 1) slot.name[i] = name[i];
-
+    copyName(&slot.name, name);
     out_pid.* = s_next_pid;
     s_next_pid += 1;
     return 0;
+}
+
+pub fn createUserProcess(name: [*:0]const u8, ttbr0: u64, user_entry: u64, user_sp: u64, kstack_pages: u32, priority: u32, out_pid: *u32) callconv(.c) c_int {
+    if (ttbr0 == 0 or user_entry == 0 or kstack_pages == 0 or kstack_pages > KSTACK_MAX_PAGES) return abi.EINVAL;
+
+    s_lock.lock();
+    defer s_lock.unlock();
+
+    const slot = blk: {
+        for (&s_table) |*t| {
+            if (!t.in_use) break :blk t;
+        }
+        return abi.ENOMEM;
+    };
+
+    const order = orderForPages(kstack_pages);
+    var phys: u64 = undefined;
+    const st = pmm_if.alloc_page(order, &phys);
+    if (st != 0) return st;
+
+    const size = (@as(u64, 1) << @as(u6, @intCast(order))) * PAGE_SIZE;
+    const base = phys + abi.HHDM_OFFSET;
+    const top = base + size;
+
+    slot.* = .{
+        .in_use = true,
+        .is_user = true,
+        .pid = s_next_pid,
+        .state = .ready,
+        .priority = priority,
+        .address_space = ttbr0,
+        .kstack_phys = phys,
+        .kstack_base = base,
+        .kstack_size = size,
+    };
+    if (cs_if.init_user_context(&slot.context, top, ttbr0, user_entry, user_sp) != 0) {
+        _ = pmm_if.release(phys);
+        slot.* = .{};
+        return abi.EINVAL;
+    }
+
+    copyName(&slot.name, name);
+    out_pid.* = s_next_pid;
+    s_next_pid += 1;
+    return 0;
+}
+
+fn copyName(dst: *[32]u8, src: [*:0]const u8) void {
+    var i: usize = 0;
+    while (i < dst.len - 1 and src[i] != 0) : (i += 1) dst[i] = src[i];
 }
 
 pub fn destroy(pid: u32) callconv(.c) c_int {
@@ -145,6 +194,7 @@ pub fn getInfo(pid: u32, out: *abi.ProcessInfo) callconv(.c) c_int {
         .address_space = slot.address_space,
         .kstack_base = slot.kstack_base,
         .kstack_size = slot.kstack_size,
+        .is_user = slot.is_user,
     };
     @memcpy(&out.name, &slot.name);
     return 0;
@@ -229,6 +279,7 @@ pub fn main(boot_info_ptr: *anyopaque) void {
 comptime {
     abi.exportInterface("table", abi.Process, .{
         .create_kernel_thread = createKernelThread,
+        .create_user_process = createUserProcess,
         .destroy = destroy,
         .exists = exists,
         .context_of = contextOf,

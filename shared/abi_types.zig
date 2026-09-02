@@ -27,6 +27,8 @@ pub const TEST_SKIP: i32 = 2;
 // --- errno values used by module vtables (match the kernel errno.h) ---
 pub const EINVAL: c_int = 22;
 pub const ENOSYS: c_int = 38;
+pub const ENOEXEC: c_int = 8;
+pub const EBADF: c_int = 9;
 pub const ENOMEM: c_int = 12;
 pub const EFAULT: c_int = 14;
 pub const EBUSY: c_int = 16;
@@ -312,6 +314,9 @@ pub const ProcessInfo = extern struct {
     /// Kernel stack size in bytes (power-of-two page block actually
     /// allocated, which may exceed the requested page count).
     kstack_size: u64 = 0,
+    /// True for a process created with `create_user_process` (runs at EL0
+    /// in its own address space); false for a kernel thread.
+    is_user: bool = false,
     name: [32]u8 = [_]u8{0} ** 32,
 };
 
@@ -323,6 +328,14 @@ pub const Process = extern struct {
     /// `kstack_pages`; `ENOMEM` if the table is full or the stack can't
     /// be allocated.
     create_kernel_thread: *const fn (name: [*:0]const u8, entry: usize, arg: usize, kstack_pages: u32, priority: u32, out_pid: *u32) callconv(.c) c_int,
+    /// Creates an EL0 process: a TCB with a `kstack_pages` kernel stack
+    /// (used only while the process is trapped in the kernel) whose
+    /// context, on first switch, installs `ttbr0` (pre-composed
+    /// `(asid << 48) | root`) and drops to EL0 at `user_entry` with
+    /// SP_EL0 = `user_sp`. The address space itself is the ELF loader's
+    /// to build and to tear down. `EINVAL` / `ENOMEM` as
+    /// `create_kernel_thread`.
+    create_user_process: *const fn (name: [*:0]const u8, ttbr0: u64, user_entry: u64, user_sp: u64, kstack_pages: u32, priority: u32, out_pid: *u32) callconv(.c) c_int,
     /// Frees a thread's kernel stack and releases its TCB slot. `EINVAL`
     /// for an unknown pid; `EBUSY` if the thread is `running`.
     destroy: *const fn (pid: u32) callconv(.c) c_int,
@@ -445,6 +458,28 @@ pub const Scheduler = extern struct {
     /// Switch into the first ready task; returns 0 to the caller once the
     /// run queue has drained. `EBUSY` if already running (no reentry).
     run: *const fn () callconv(.c) c_int,
+};
+
+// --- Userspace ELF loading ---
+//
+// `hnsorens.proc.elf_loader` reads a static AArch64 `ET_EXEC` binary from
+// the VFS, builds a user address space (a copy of the bootloader's TTBR0
+// identity map -- so device MMIO stays reachable while the kernel handles
+// a syscall -- plus the program's PT_LOAD segments and a stack, all above
+// the identity-mapped range), and creates a ready EL0 process for it. It
+// also owns the small set of process syscalls a first userspace program
+// needs (write to the console, getpid, exit, sched_yield).
+pub const Elf = extern struct {
+    /// Loads `path` into a fresh user address space and creates a ready
+    /// user process; writes its pid to `out_pid`. The caller admits it to
+    /// the scheduler. `ENOENT` if the path doesn't resolve, `ENOEXEC` for
+    /// a malformed / non-AArch64 / non-`ET_EXEC` image, `ENOMEM` on
+    /// resource exhaustion.
+    load: *const fn (path: [*:0]const u8, out_pid: *u32) callconv(.c) c_int,
+    /// Tears down a loaded process: frees its user page tables and every
+    /// backing frame, then destroys the TCB. `EINVAL` for an unknown pid,
+    /// `EBUSY` if it is still `running`.
+    unload: *const fn (pid: u32) callconv(.c) c_int,
 };
 
 // --- Synchronous exception / fault / async trap dispatch (AArch64 EL1) ---

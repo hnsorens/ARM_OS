@@ -63,6 +63,7 @@ pub const ExceptionOrigin = shared.ExceptionOrigin;
 pub const ExceptionOutcome = shared.ExceptionOutcome;
 pub const ExceptionCallback = shared.ExceptionCallback;
 pub const Exceptions = shared.Exceptions;
+pub const Elf = shared.Elf;
 pub const TestEntry = shared.TestEntry;
 
 pub const VirtioQueue = shared.VirtioQueue;
@@ -103,6 +104,8 @@ pub const HHDM_OFFSET = shared.HHDM_OFFSET;
 
 pub const EINVAL = shared.EINVAL;
 pub const ENOSYS = shared.ENOSYS;
+pub const ENOEXEC = shared.ENOEXEC;
+pub const EBADF = shared.EBADF;
 pub const ENOMEM = shared.ENOMEM;
 pub const EFAULT = shared.EFAULT;
 pub const EBUSY = shared.EBUSY;
