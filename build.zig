@@ -115,11 +115,38 @@ pub fn build(b: *std.Build) void {
     });
     debugfs_write_hello.step.dependOn(&mke2fs_rootfs.step);
 
+    // The first EL0 program (userland/hello.c): a freestanding static
+    // AArch64 executable, no libc, linked at 64 GiB so it lands above the
+    // kernel's identity-mapped range (see modules/hnsorens/proc/elf_loader).
+    // Written into the rootfs as /hello for that module's kernelTest to load.
+    // zig cc's linker wrapper rejects -Ttext / -z / -N, so the load
+    // address is set with --image-base; the loader itself copes with
+    // lld's default sub-page-tight AArch64 segment packing.
+    const cc_hello = b.addSystemCommand(&.{
+        "zig",            "cc",
+        "-target",        "aarch64-linux-musl",
+        "-nostdlib",      "-static",
+        "-no-pie",        "-fno-pie",
+        "-ffreestanding", "-fno-stack-protector",
+        "-O2",            "-Wall",
+        "-Wl,-e,_start",  "-Wl,--image-base=0x1000000000",
+        "-o",
+    });
+    const hello_elf = cc_hello.addOutputFileArg("hello.elf");
+    cc_hello.addFileArg(b.path("userland/hello.c"));
+
+    const debugfs_write_prog = b.addSystemCommand(&.{
+        "sh", "-c", "debugfs -w -R \"write $1 hello\" \"$2\"", "sh",
+    });
+    debugfs_write_prog.addFileArg(hello_elf); // $1
+    debugfs_write_prog.addArg(rootfs_name); // $2
+    debugfs_write_prog.step.dependOn(&debugfs_write_hello.step);
+
     const dd_rootfs = b.addSystemCommand(&.{
         "dd", b.fmt("if={s}", .{rootfs_name}), b.fmt("of={s}", .{img_name}),
         "bs=512", "seek=133120", "conv=notrunc", "status=none",
     });
-    dd_rootfs.step.dependOn(&debugfs_write_hello.step);
+    dd_rootfs.step.dependOn(&debugfs_write_prog.step);
     dd_rootfs.step.dependOn(last_step);
     last_step = &dd_rootfs.step;
 

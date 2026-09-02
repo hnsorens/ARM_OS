@@ -22,6 +22,7 @@ real in QEMU via `zig build test`.
 | `process` | proc | `Process` | Fixed 64-slot TCB table. `create_kernel_thread` (kernel stack from `pmm` via its HHDM alias, `TaskContext` built through `context_switch`), state machine (new/ready/running/blocked/zombie/dead), priority, exit code, `destroy`/reap, `list`. Kernel threads only for now (user address spaces come with the ELF loader). |
 | `scheduler` | sched | `Scheduler` | Cooperative round-robin over a ready-pid ring buffer. `admit`/`remove`/`yield`/`block`/`wake`/`exit_current`; `run` switches into the first task and returns to its caller once the queue drains. No tick preemption yet (needs a reschedule-after-EOIR hook in the exception path). Mirrors HendOS `scheduler.c` semantics, queue-based. |
 | `syscall` | sys | `Syscalls` | Fixed 512-slot dispatch table. `register(nr, handler)` / `unregister` / `invoke` (direct kernel call) / `is_registered` / `count`. Registers one `.sync_svc` callback with `exceptions`; reads nr from x8, args x0..x5, writes result to x0 (AArch64 Linux convention). Numbers spec'd centrally in `abi_types.zig` (`SYS_*`, matching Linux/aarch64). No remap/mask layer (deferred). |
+| `elf_loader` | proc | `Elf` | `load(path)` reads a static AArch64 `ET_EXEC` from the VFS, builds a user address space (`mmu.copy` of the identity map + the PT_LOAD span mapped as one block at 64 GiB + a stack at 128 GiB), and `process.create_user_process`. `unload` frees every frame + the page tables. Also registers the first process syscalls (`write`→console, `getpid`, `exit`/`exit_group`, `sched_yield`). Test binary: `userland/hello.c`, compiled by `build.zig` and written into `rootfs.img` as `/hello`. **First code running at EL0.** |
 
 ## Not started yet
 
@@ -57,10 +58,11 @@ real in QEMU via `zig build test`.
   number → handler table at spec'd indices, argument marshaling, and the
   EL0 entry once processes exist. (Userspace syscall remap/mask layer:
   deferred — add later as its own piece.)
-- **User-mode ELF loader** — distinct from the existing bootloader module
-  loader (which loads *kernel* modules pre-MMU-setup, at fixed
-  high-canonical addresses). This one loads a userspace binary into a
-  process's own `vmm` address space, sets up its stack, and drops to EL0.
+- ~~**User-mode ELF loader**~~ — **DONE** as `hnsorens.proc.elf_loader`
+  (static `ET_EXEC` only; dynamic/PIE, `argv`/`envp` on the stack, and
+  demand paging are still TODO). Uses `mmu.copy` + `mmu.map` directly
+  rather than `vmm` (a user `vmm` space would be the cleaner long-term
+  home once brk/mmap syscalls exist).
 - **Exception/fault handlers** — the vector table + dispatch + trap frame
   now exist (`hnsorens.arch.exceptions`). What's left: a `.sync_data_abort`
   / `.sync_instruction_abort` callback (in the process/fault module) that
