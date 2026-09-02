@@ -234,6 +234,14 @@ pub const TaskContext = extern struct {
     lr: u64 = 0,
     /// Stack pointer to install (SP_EL1 for kernel tasks).
     sp: u64 = 0,
+    /// Value to load into TTBR0_EL1 on switch -- already composed as
+    /// `(asid << 48) | page_table_root`. `init_kernel_context` snapshots
+    /// the current (kernel identity) TTBR0 here so every kernel task
+    /// carries it explicitly; `init_user_context` sets a user address
+    /// space. `switch_to` saves and restores it around every switch, so a
+    /// user process's page tables can be freed safely once no task holds
+    /// its root.
+    ttbr0: u64 = 0,
 };
 
 /// Raw AArch64 register-file switching, exported by the context_switch
@@ -248,6 +256,13 @@ pub const ContextSwitch = extern struct {
     /// task is parked (logged, then a WFI loop) -- a scheduler is meant to
     /// hand tasks a real exit path instead.
     init_kernel_context: *const fn (ctx: *TaskContext, entry: usize, arg: usize, stack_top: u64) callconv(.c) c_int,
+    /// Initializes `ctx` so the first switch into it runs on the kernel
+    /// stack ending at `kstack_top`, installs `ttbr0` (already composed as
+    /// `(asid << 48) | root`) as the address space, and immediately drops
+    /// to EL0 at `user_entry` with SP_EL0 = `user_sp` and a cleared
+    /// PSTATE (EL0t, interrupts unmasked). `EINVAL` for a null
+    /// `user_entry` / `ttbr0`, or an implausibly small `kstack_top`.
+    init_user_context: *const fn (ctx: *TaskContext, kstack_top: u64, ttbr0: u64, user_entry: u64, user_sp: u64) callconv(.c) c_int,
     /// Saves the current execution context into `save`, then resumes
     /// `restore`. Returns (in `save`'s context) only once some later
     /// switch targets `save`.

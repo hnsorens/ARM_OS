@@ -18,11 +18,13 @@ pub const serial_if = abi.importInterface(abi.Serial);
 
 // --- The switch primitives, in assembly -------------------------------
 //
-// TaskContext is 13 packed u64s, so field offsets are 8*index:
+// TaskContext is 14 packed u64s, so field offsets are 8*index:
 //   x19..x28 -> 0,8,16,24,32,40,48,56,64,72
-//   fp (x29) -> 80   lr (x30) -> 88   sp -> 96
-// x9 is caller-saved (a scratch temp for the SP move); nothing else is
-// touched that the C ABI would expect preserved.
+//   fp (x29) -> 80   lr (x30) -> 88   sp -> 96   ttbr0 -> 104
+// x9 is caller-saved (a scratch temp); nothing else is touched that the
+// C ABI would expect preserved. TTBR0_EL1 is saved and restored around
+// every switch (with an isb) so kernel tasks keep the identity map and a
+// dead user process's page tables become safe to free.
 comptime {
     asm (
         \\.global ctxsw_switch_to
@@ -35,6 +37,8 @@ comptime {
         \\    stp x29, x30, [x0, #80]
         \\    mov x9, sp
         \\    str x9, [x0, #96]
+        \\    mrs x9, ttbr0_el1
+        \\    str x9, [x0, #104]
         \\    ldp x19, x20, [x1, #0]
         \\    ldp x21, x22, [x1, #16]
         \\    ldp x23, x24, [x1, #32]
@@ -43,6 +47,9 @@ comptime {
         \\    ldp x29, x30, [x1, #80]
         \\    ldr x9, [x1, #96]
         \\    mov sp, x9
+        \\    ldr x9, [x1, #104]
+        \\    msr ttbr0_el1, x9
+        \\    isb
         \\    ret
         \\
         \\.global ctxsw_jump_to
@@ -55,12 +62,15 @@ comptime {
         \\    ldp x29, x30, [x0, #80]
         \\    ldr x9, [x0, #96]
         \\    mov sp, x9
+        \\    ldr x9, [x0, #104]
+        \\    msr ttbr0_el1, x9
+        \\    isb
         \\    ret
         \\
-        \\// First code a freshly init'd context runs. init_kernel_context
-        \\// leaves the entry fn in the x19 slot and its argument in x20;
-        \\// the restore sequence above has just loaded both. If entry
-        \\// returns, fall through to the Zig park routine.
+        \\// First code a freshly init'd kernel context runs.
+        \\// init_kernel_context leaves the entry fn in the x19 slot and its
+        \\// argument in x20; the restore sequence above has just loaded
+        \\// both. If entry returns, fall through to the Zig park routine.
         \\.global ctxsw_trampoline
         \\ctxsw_trampoline:
         \\    mov x0, x20
@@ -69,12 +79,48 @@ comptime {
         \\9:
         \\    wfi
         \\    b 9b
+        \\
+        \\// First code a freshly init'd user context runs, on its kernel
+        \\// stack with its address space (TTBR0) already installed by the
+        \\// restore sequence. init_user_context leaves the user entry PC in
+        \\// x19 and the user SP in x20. Drop to EL0.
+        \\.global ctxsw_user_trampoline
+        \\ctxsw_user_trampoline:
+        \\    msr elr_el1, x19
+        \\    msr sp_el0, x20
+        \\    mov x0, #0
+        \\    msr spsr_el1, x0        // EL0t, DAIF clear, NZCV 0
+        \\    // Don't leak kernel register contents into EL0.
+        \\    mov x1, #0
+        \\    mov x2, #0
+        \\    mov x3, #0
+        \\    mov x4, #0
+        \\    mov x5, #0
+        \\    mov x6, #0
+        \\    mov x7, #0
+        \\    mov x8, #0
+        \\    mov x9, #0
+        \\    mov x10, #0
+        \\    mov x11, #0
+        \\    mov x12, #0
+        \\    mov x13, #0
+        \\    mov x14, #0
+        \\    mov x15, #0
+        \\    mov x16, #0
+        \\    mov x17, #0
+        \\    mov x18, #0
+        \\    mov x19, #0
+        \\    mov x20, #0
+        \\    mov x29, #0
+        \\    mov x30, #0
+        \\    eret
     );
 }
 
 extern fn ctxsw_switch_to(save: *abi.TaskContext, restore: *const abi.TaskContext) callconv(.c) void;
 extern fn ctxsw_jump_to(restore: *const abi.TaskContext) callconv(.c) noreturn;
 extern var ctxsw_trampoline: u8;
+extern var ctxsw_user_trampoline: u8;
 
 /// Reached only if a task's entry function returns (a bug in this design
 /// -- kernel tasks are expected to loop or block forever, and userspace
@@ -85,15 +131,36 @@ export fn ctxsw_task_returned() callconv(.c) void {
 
 const MIN_STACK_BYTES: u64 = 4096;
 
+fn currentTtbr0() u64 {
+    return asm volatile ("mrs %[v], ttbr0_el1"
+        : [v] "=r" (-> u64),
+    );
+}
+
 pub fn initKernelContext(ctx: *abi.TaskContext, entry: usize, arg: usize, stack_top: u64) callconv(.c) c_int {
     if (entry == 0 or stack_top < MIN_STACK_BYTES) return abi.EINVAL;
     ctx.* = .{};
     ctx.sp = stack_top & ~@as(u64, 0xF);
     ctx.lr = @intFromPtr(&ctxsw_trampoline);
+    // A kernel task keeps whatever address space is live now (the
+    // bootloader's TTBR0 identity map).
+    ctx.ttbr0 = currentTtbr0();
     // Picked up by ctxsw_trampoline after the restore sequence loads the
     // callee-saved slots.
     ctx.x19 = entry;
     ctx.x20 = arg;
+    return 0;
+}
+
+pub fn initUserContext(ctx: *abi.TaskContext, kstack_top: u64, ttbr0: u64, user_entry: u64, user_sp: u64) callconv(.c) c_int {
+    if (user_entry == 0 or ttbr0 == 0 or kstack_top < MIN_STACK_BYTES) return abi.EINVAL;
+    ctx.* = .{};
+    ctx.sp = kstack_top & ~@as(u64, 0xF);
+    ctx.lr = @intFromPtr(&ctxsw_user_trampoline);
+    ctx.ttbr0 = ttbr0;
+    // Picked up by ctxsw_user_trampoline.
+    ctx.x19 = user_entry;
+    ctx.x20 = user_sp & ~@as(u64, 0xF);
     return 0;
 }
 
@@ -105,6 +172,7 @@ pub fn main(boot_info_ptr: *anyopaque) void {
 comptime {
     abi.exportInterface("aarch64", abi.ContextSwitch, .{
         .init_kernel_context = initKernelContext,
+        .init_user_context = initUserContext,
         .switch_to = ctxsw_switch_to,
         .jump_to = ctxsw_jump_to,
     });
