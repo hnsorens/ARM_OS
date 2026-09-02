@@ -10,6 +10,7 @@ const sysreg = @import("sysreg");
 const spinlock = @import("spinlock");
 
 pub const serial_if = abi.importInterface(abi.Serial);
+pub const exc_if = abi.importInterface(abi.Exceptions);
 
 pub const MAX_INTERRUPT_VECTORS = 1024;
 const MAX_CORES_SUPPORTED = 64;
@@ -32,89 +33,13 @@ var s_isr_table: [MAX_INTERRUPT_VECTORS]RegisteredIsr = [_]RegisteredIsr{.{}} **
 var s_core_topology: [MAX_CORES_SUPPORTED]CoreMap = [_]CoreMap{.{}} ** MAX_CORES_SUPPORTED;
 var s_isr_lock: spinlock.SpinLock = .{};
 
-// --- Exception vector table -------------------------------------------
+// --- Exception vector table ------------------------------------------
 //
-// AArch64 requires a 2KB-aligned table of 16 128-byte-spaced entries (4
-// exception classes x 4 source configurations); every entry lands on the
-// same trampoline, which saves all GPRs, calls into `c_interrupt_handler`
-// below, restores them, and returns. `save_context`/`restore_context` are
-// plain GNU-as macros, valid inside a Zig `asm` block same as anywhere
-// else -- this is a near-verbatim port of the C driver's vector.S.
-comptime {
-    asm (
-        \\.balign 2048
-        \\.global exception_vector_table
-        \\exception_vector_table:
-        \\    /* --- Current EL with SP0 (Offsets 0x000 - 0x180) --- */
-        \\    .balign 128
-        \\    b irq_vector_entry // Synchronous
-        \\    .balign 128
-        \\    b irq_vector_entry // IRQ
-        \\    .balign 128
-        \\    b irq_vector_entry // FIQ
-        \\    .balign 128
-        \\    b irq_vector_entry // SError
-        \\
-        \\    /* --- Current EL with SPx (Offsets 0x200 - 0x380) --- */
-        \\    .balign 128
-        \\    b irq_vector_entry // Synchronous
-        \\    .balign 128
-        \\    b irq_vector_entry // IRQ (this is where the timer interrupt lands)
-        \\    .balign 128
-        \\    b irq_vector_entry // FIQ
-        \\    .balign 128
-        \\    b irq_vector_entry // SError
-        \\
-        \\.macro save_context
-        \\    sub sp, sp, #256
-        \\    stp x0, x1, [sp, #0]
-        \\    stp x2, x3, [sp, #16]
-        \\    stp x4, x5, [sp, #32]
-        \\    stp x6, x7, [sp, #48]
-        \\    stp x8, x9, [sp, #64]
-        \\    stp x10, x11, [sp, #80]
-        \\    stp x12, x13, [sp, #96]
-        \\    stp x14, x15, [sp, #112]
-        \\    stp x16, x17, [sp, #128]
-        \\    stp x18, x19, [sp, #144]
-        \\    stp x20, x21, [sp, #160]
-        \\    stp x22, x23, [sp, #176]
-        \\    stp x24, x25, [sp, #192]
-        \\    stp x26, x27, [sp, #208]
-        \\    stp x28, x29, [sp, #224]
-        \\    str x30, [sp, #240]
-        \\.endm
-        \\
-        \\.macro restore_context
-        \\    ldp x0, x1, [sp, #0]
-        \\    ldp x2, x3, [sp, #16]
-        \\    ldp x4, x5, [sp, #32]
-        \\    ldp x6, x7, [sp, #48]
-        \\    ldp x8, x9, [sp, #64]
-        \\    ldp x10, x11, [sp, #80]
-        \\    ldp x12, x13, [sp, #96]
-        \\    ldp x14, x15, [sp, #112]
-        \\    ldp x16, x17, [sp, #128]
-        \\    ldp x18, x19, [sp, #144]
-        \\    ldp x20, x21, [sp, #160]
-        \\    ldp x22, x23, [sp, #176]
-        \\    ldp x24, x25, [sp, #192]
-        \\    ldp x26, x27, [sp, #208]
-        \\    ldp x28, x29, [sp, #224]
-        \\    ldr x30, [sp, #240]
-        \\    add sp, sp, #256
-        \\.endm
-        \\
-        \\.global irq_vector_entry
-        \\irq_vector_entry:
-        \\    save_context
-        \\    bl c_interrupt_handler
-        \\    restore_context
-        \\    eret
-    );
-}
-
-extern var exception_vector_table: u8;
+// Moved out to `hnsorens.arch.exceptions`, which owns VBAR_EL1 and a full
+// 16-entry table. This module registers `gicIrqCallback` there for the
+// IRQ/FIQ classes (see `main`), so GIC dispatch is just one exception
+// callback among the fault/syscall ones -- it no longer needs its own
+// vector table or VBAR write.
 
 // --- GICD (Distributor) register map -------------------------------------
 //
@@ -201,7 +126,6 @@ const Icc = struct {
 };
 
 const Mpidr = sysreg.Reg(u64, "mpidr_el1");
-const Vbar = sysreg.Reg(u64, "vbar_el1");
 
 fn mpidrToCoreId(mpidr: u64) u32 {
     const aff0: u32 = @truncate(mpidr & 0xFF);
@@ -289,9 +213,6 @@ pub fn initCore() callconv(.c) c_int {
     if (ret != 0) return ret;
     ret = gicv3InitCpuInterfaceNs();
     if (ret != 0) return ret;
-
-    Vbar.write(@intFromPtr(&exception_vector_table));
-    asm volatile ("isb");
 
     return 0;
 }
@@ -438,22 +359,29 @@ pub fn unregisterHandler(vector: u32) callconv(.c) c_int {
     return 0;
 }
 
-// --- 10. C-level interrupt dispatcher ---------------------------------------
+// --- 10. IRQ dispatch (registered with the exceptions module) -------------
 
-export fn c_interrupt_handler() callconv(.c) void {
+/// Registered for `.irq` and `.fiq` with `hnsorens.arch.exceptions`. The
+/// trap frame is unused -- GIC state comes from the CPU interface system
+/// registers (IAR1/EOIR1), not the saved GPRs.
+fn gicIrqCallback(frame: *abi.TrapFrame, origin: abi.ExceptionOrigin, arg: ?*anyopaque) callconv(.c) abi.ExceptionOutcome {
+    _ = frame;
+    _ = origin;
+    _ = arg;
+
     const iar = iccReadIar1El1();
     const id: u32 = @truncate(iar & 0xFFFFFFFF);
 
-    if (id == 1023) return; // spurious
+    if (id == 1023) return .handled; // spurious
 
     if (id < MAX_INTERRUPT_VECTORS) {
         s_isr_lock.lock();
         const handler = s_isr_table[id].handler;
-        const arg = s_isr_table[id].arg;
+        const arg_ctx = s_isr_table[id].arg;
         s_isr_lock.unlock();
 
         if (handler) |h| {
-            h(arg);
+            h(arg_ctx);
         } else {
             kernel_fmt.print(serial_if, "Unhandled Interrupt ID: {d}\n", .{id});
         }
@@ -462,6 +390,20 @@ export fn c_interrupt_handler() callconv(.c) void {
     }
 
     iccWriteEoir1El1(iar);
+    return .handled;
+}
+
+var s_irq_hook_installed: bool = false;
+
+/// Registers `gicIrqCallback` for the IRQ and FIQ exception classes with
+/// the exceptions module. Runs once, before any GIC test or the timer
+/// module's init.
+pub fn main(boot_info_ptr: *anyopaque) void {
+    _ = boot_info_ptr;
+    if (s_irq_hook_installed) return;
+    _ = exc_if.register_handler(.irq, &gicIrqCallback, null);
+    _ = exc_if.register_handler(.fiq, &gicIrqCallback, null);
+    s_irq_hook_installed = true;
 }
 
 // --- 11. Helper to read current MPIDR (useful for the OS) ------------------
