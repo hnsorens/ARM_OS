@@ -48,6 +48,7 @@ pub const SYS_renameat = shared.SYS_renameat;
 pub const SYS_ftruncate = shared.SYS_ftruncate;
 pub const SYS_faccessat = shared.SYS_faccessat;
 pub const SYS_chdir = shared.SYS_chdir;
+pub const SYS_fchdir = shared.SYS_fchdir;
 pub const SYS_fchmodat = shared.SYS_fchmodat;
 pub const SYS_fchownat = shared.SYS_fchownat;
 pub const SYS_openat = shared.SYS_openat;
@@ -242,6 +243,7 @@ pub const EACCES = shared.EACCES;
 pub const ENODEV = shared.ENODEV;
 pub const ENOTTY = shared.ENOTTY;
 pub const ERANGE = shared.ERANGE;
+pub const EPIPE = shared.EPIPE;
 pub const EDESTADDRREQ = shared.EDESTADDRREQ;
 
 pub const MMU_RO = shared.MMU_RO;

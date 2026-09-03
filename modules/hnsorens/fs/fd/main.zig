@@ -22,9 +22,15 @@ pub const serial_if = abi.importInterface(abi.Serial);
 const MAX_PROCESSES = 64;
 const MAX_FDS = 32;
 const MAX_OPEN_FILES = 128;
+const MAX_PIPES = 32;
+const PIPE_BUF = 4096;
 const PATH_MAX = 256;
 
-const Backing = enum(u8) { none, tty, file };
+const O_NONBLOCK: u32 = 0o4000;
+
+// backing: none | tty | file (VFS path + offset) | dev (special char dev,
+// path is /dev/null etc.) | pipe (offset = pipe index, flags bit0 = write end)
+const Backing = enum(u8) { none, tty, file, dev, pipe };
 
 const OpenFile = struct {
     backing: Backing = .none,
@@ -34,14 +40,27 @@ const OpenFile = struct {
     path: [PATH_MAX]u8 = [_]u8{0} ** PATH_MAX,
 };
 
+const Pipe = struct {
+    in_use: bool = false,
+    buf: [PIPE_BUF]u8 = undefined,
+    head: usize = 0,
+    count: usize = 0,
+    readers: u32 = 0,
+    writers: u32 = 0,
+    blocked_reader: u32 = 0,
+    blocked_writer: u32 = 0,
+};
+
 const FdTable = struct {
     in_use: bool = false,
     pid: u32 = 0,
+    cwd: [PATH_MAX]u8 = [_]u8{0} ** PATH_MAX, // "" == "/"
     fds: [MAX_FDS]?*OpenFile = [_]?*OpenFile{null} ** MAX_FDS,
 };
 
 var s_open: [MAX_OPEN_FILES]OpenFile = [_]OpenFile{.{}} ** MAX_OPEN_FILES;
 var s_tables: [MAX_PROCESSES]FdTable = [_]FdTable{.{}} ** MAX_PROCESSES;
+var s_pipes: [MAX_PIPES]Pipe = [_]Pipe{.{}} ** MAX_PIPES;
 var s_lock: spinlock.SpinLock = .{};
 
 // --- pools -----------------------------------------------------
@@ -60,9 +79,40 @@ fn allocOpen() ?*OpenFile {
     return null;
 }
 
+// caller holds s_lock
 fn releaseOpen(of: *OpenFile) void {
     if (of.refcount > 0) of.refcount -= 1;
-    if (of.refcount == 0) of.* = .{};
+    if (of.refcount != 0) return;
+    if (of.backing == .pipe) {
+        const p = &s_pipes[@intCast(of.offset)];
+        if (of.flags & 1 != 0) {
+            if (p.writers > 0) p.writers -= 1;
+            if (p.writers == 0 and p.blocked_reader != 0) {
+                const r = p.blocked_reader;
+                p.blocked_reader = 0;
+                _ = sched_if.wake(r);
+            }
+        } else {
+            if (p.readers > 0) p.readers -= 1;
+            if (p.readers == 0 and p.blocked_writer != 0) {
+                const w = p.blocked_writer;
+                p.blocked_writer = 0;
+                _ = sched_if.wake(w);
+            }
+        }
+        if (p.readers == 0 and p.writers == 0) p.* = .{};
+    }
+    of.* = .{};
+}
+
+fn allocPipe() ?usize {
+    for (&s_pipes, 0..) |*p, i| {
+        if (!p.in_use) {
+            p.* = .{ .in_use = true, .readers = 1, .writers = 1 };
+            return i;
+        }
+    }
+    return null;
 }
 
 fn lowestFreeFd(tbl: *FdTable) ?u32 {
@@ -97,6 +147,8 @@ pub fn openDefaults(pid: u32) callconv(.c) c_int {
     con.* = .{ .backing = .tty, .refcount = 3, .offset = 0 };
 
     tbl.* = .{ .in_use = true, .pid = pid };
+    tbl.cwd[0] = '/';
+    tbl.cwd[1] = 0;
     tbl.fds[0] = con;
     tbl.fds[1] = con;
     tbl.fds[2] = con;
@@ -114,6 +166,7 @@ pub fn forkTable(parent: u32, child: u32) callconv(.c) c_int {
     } else return abi.ENOMEM;
 
     dst.* = .{ .in_use = true, .pid = child };
+    @memcpy(&dst.cwd, &src.cwd);
     for (src.fds, 0..) |slot, i| {
         if (slot) |of| {
             of.refcount += 1;
@@ -136,7 +189,135 @@ pub fn clearTable(pid: u32) callconv(.c) c_int {
     return 0;
 }
 
+// --- path resolution (cwd-aware; the VFS handles `.`/`..` components) --
+
+var s_rng: u64 = 0x243F6A8885A308D3;
+fn rnd() u8 {
+    var x = s_rng;
+    x ^= x << 13;
+    x ^= x >> 7;
+    x ^= x << 17;
+    s_rng = x;
+    return @truncate(x >> 24);
+}
+
+fn appendZ(dst: *[PATH_MAX]u8, at: *usize, s: [*:0]const u8) void {
+    var i: usize = 0;
+    while (s[i] != 0 and at.* < PATH_MAX - 1) : (i += 1) {
+        dst[at.*] = s[i];
+        at.* += 1;
+    }
+    dst[at.*] = 0;
+}
+
+/// Resolves `path` against pid's cwd (for a relative path) into `out`.
+fn resolvePath(pid: u32, path: [*:0]const u8, out: *[PATH_MAX]u8) void {
+    if (path[0] == '/') {
+        copyPath(out, path);
+        return;
+    }
+    var n: usize = 0;
+    s_lock.lock();
+    if (tableOf(pid)) |tbl| {
+        var i: usize = 0;
+        while (i < PATH_MAX - 1 and tbl.cwd[i] != 0) : (i += 1) {
+            out[i] = tbl.cwd[i];
+        }
+        n = i;
+    }
+    s_lock.unlock();
+    if (n == 0) {
+        out[0] = '/';
+        n = 1;
+    }
+    if (out[n - 1] != '/' and n < PATH_MAX - 1) {
+        out[n] = '/';
+        n += 1;
+    }
+    out[n] = 0;
+    appendZ(out, &n, path);
+}
+
+// --- special /dev nodes -------------------------------------
+// of.offset for a .dev backing: 0=null 1=zero 2=full 3=urandom
+
+fn devKind(p: [*:0]const u8) ?u64 {
+    const s = std.mem.span(p);
+    if (std.mem.eql(u8, s, "/dev/null")) return 0;
+    if (std.mem.eql(u8, s, "/dev/zero")) return 1;
+    if (std.mem.eql(u8, s, "/dev/full")) return 2;
+    if (std.mem.eql(u8, s, "/dev/urandom") or std.mem.eql(u8, s, "/dev/random")) return 3;
+    return null;
+}
+
 // --- per-pid file ops (syscall bodies) --------------------
+
+fn pipeRead(p: *Pipe, pid: u32, buf: [*]u8, count: u64, nonblock: bool) i64 {
+    while (true) {
+        s_lock.lock();
+        if (p.count > 0) {
+            var i: u64 = 0;
+            while (i < count and p.count > 0) : (i += 1) {
+                buf[i] = p.buf[p.head];
+                p.head = (p.head + 1) % PIPE_BUF;
+                p.count -= 1;
+            }
+            if (p.blocked_writer != 0) {
+                const w = p.blocked_writer;
+                p.blocked_writer = 0;
+                _ = sched_if.wake(w);
+            }
+            s_lock.unlock();
+            return @intCast(i);
+        }
+        if (p.writers == 0) {
+            s_lock.unlock();
+            return 0; // EOF
+        }
+        if (nonblock or sched_if.current() == 0) {
+            s_lock.unlock();
+            return -@as(i64, abi.EAGAIN);
+        }
+        p.blocked_reader = pid;
+        s_lock.unlock();
+        _ = sched_if.block();
+    }
+}
+
+fn pipeWrite(p: *Pipe, pid: u32, buf: [*]const u8, count: u64, nonblock: bool) i64 {
+    var done: u64 = 0;
+    while (done < count) {
+        s_lock.lock();
+        if (p.readers == 0) {
+            s_lock.unlock();
+            return if (done > 0) @intCast(done) else -@as(i64, abi.EPIPE);
+        }
+        var wrote_any = false;
+        while (done < count and p.count < PIPE_BUF) : (done += 1) {
+            p.buf[(p.head + p.count) % PIPE_BUF] = buf[done];
+            p.count += 1;
+            wrote_any = true;
+        }
+        if (wrote_any and p.blocked_reader != 0) {
+            const r = p.blocked_reader;
+            p.blocked_reader = 0;
+            _ = sched_if.wake(r);
+        }
+        if (done >= count) {
+            s_lock.unlock();
+            return @intCast(done);
+        }
+        // buffer full
+        if (nonblock or sched_if.current() == 0) {
+            s_lock.unlock();
+            return if (done > 0) @intCast(done) else -@as(i64, abi.EAGAIN);
+        }
+        p.blocked_writer = pid;
+        s_lock.unlock();
+        _ = sched_if.block();
+    }
+    return @intCast(done);
+}
 
 pub fn fdRead(pid: u32, fd: u32, buf: [*]u8, count: u64) i64 {
     s_lock.lock();
@@ -153,6 +334,25 @@ pub fn fdRead(pid: u32, fd: u32, buf: [*]u8, count: u64) i64 {
 
     switch (of.backing) {
         .tty => return @intCast(tty_if.read(buf, count)),
+        .pipe => return pipeRead(&s_pipes[@intCast(of.offset)], pid, buf, count, of.flags & O_NONBLOCK != 0),
+        .dev => switch (of.offset) {
+            0 => return 0, // /dev/null EOF
+            1 => { // /dev/zero
+                var i: u64 = 0;
+                while (i < count) : (i += 1) buf[i] = 0;
+                return @intCast(count);
+            },
+            2 => { // /dev/full: reads as zero
+                var i: u64 = 0;
+                while (i < count) : (i += 1) buf[i] = 0;
+                return @intCast(count);
+            },
+            else => { // /dev/urandom
+                var i: u64 = 0;
+                while (i < count) : (i += 1) buf[i] = rnd();
+                return @intCast(count);
+            },
+        },
         .file => {
             var got: u64 = 0;
             const rc = vfs_if.read(pathZ(of), of.offset, buf, count, &got);
@@ -179,6 +379,11 @@ pub fn fdWrite(pid: u32, fd: u32, buf: [*]const u8, count: u64) i64 {
 
     switch (of.backing) {
         .tty => return @intCast(tty_if.write(buf, count)),
+        .pipe => return pipeWrite(&s_pipes[@intCast(of.offset)], pid, buf, count, of.flags & O_NONBLOCK != 0),
+        .dev => switch (of.offset) {
+            2 => return -@as(i64, abi.ENOSPC), // /dev/full
+            else => return @intCast(count), // null / zero / urandom: discard
+        },
         .file => {
             var put: u64 = 0;
             const rc = vfs_if.write(pathZ(of), of.offset, buf, count, &put);
@@ -191,25 +396,29 @@ pub fn fdWrite(pid: u32, fd: u32, buf: [*]const u8, count: u64) i64 {
 }
 
 pub fn fdOpenat(pid: u32, path: [*:0]const u8, flags: u32, mode: u16) i64 {
-    // Only absolute paths for now (no per-process cwd yet); a relative
-    // path is taken as relative to the root.
     var zbuf: [PATH_MAX]u8 = [_]u8{0} ** PATH_MAX;
-    if (path[0] == '/') {
-        copyPath(&zbuf, path);
-    } else {
-        zbuf[0] = '/';
-        var i: usize = 0;
-        while (i < PATH_MAX - 2 and path[i] != 0) : (i += 1) zbuf[i + 1] = path[i];
-    }
+    resolvePath(pid, path, &zbuf);
     const zp: [*:0]const u8 = @ptrCast(&zbuf);
 
-    var ino: u32 = 0;
-    var ft: u8 = 0;
-    var rc = vfs_if.resolve(zp, &ino, &ft);
-    if (rc == abi.ENOENT and (flags & abi.O_CREAT) != 0) {
-        rc = vfs_if.create(zp, mode);
+    // Special device nodes (no devfs yet -- recognised by path).
+    const dk = devKind(zp);
+    const is_devtty = blk: {
+        const s = std.mem.span(zp);
+        break :blk std.mem.eql(u8, s, "/dev/tty") or std.mem.eql(u8, s, "/dev/console") or std.mem.eql(u8, s, "/dev/stdin") or std.mem.eql(u8, s, "/dev/stdout") or std.mem.eql(u8, s, "/dev/stderr");
+    };
+
+    if (dk == null and !is_devtty) {
+        var ino: u32 = 0;
+        var ft: u8 = 0;
+        var rc = vfs_if.resolve(zp, &ino, &ft);
+        if (rc == abi.ENOENT and (flags & abi.O_CREAT) != 0) {
+            rc = vfs_if.create(zp, mode);
+        }
+        if (rc != 0) return -@as(i64, rc);
+        if (rc == 0 and ft == abi.EXT2_FT_REG_FILE and (flags & abi.O_TRUNC) != 0 and (flags & (abi.O_WRONLY | abi.O_RDWR)) != 0) {
+            _ = vfs_if.truncate(zp, 0);
+        }
     }
-    if (rc != 0) return -@as(i64, rc);
 
     s_lock.lock();
     defer s_lock.unlock();
@@ -218,14 +427,19 @@ pub fn fdOpenat(pid: u32, path: [*:0]const u8, flags: u32, mode: u16) i64 {
     const slot = lowestFreeFd(tbl) orelse return -@as(i64, abi.EMFILE);
     const of = allocOpen() orelse return -@as(i64, abi.ENFILE);
 
-    var start: u64 = 0;
-    if ((flags & abi.O_APPEND) != 0) {
-        var st: abi.Ext2Stat = .{};
-        if (vfs_if.stat(zp, &st) == 0) start = st.size;
+    if (is_devtty) {
+        of.* = .{ .backing = .tty, .refcount = 1, .flags = flags };
+    } else if (dk) |kind| {
+        of.* = .{ .backing = .dev, .refcount = 1, .offset = kind, .flags = flags };
+    } else {
+        var start: u64 = 0;
+        if ((flags & abi.O_APPEND) != 0) {
+            var st: abi.Ext2Stat = .{};
+            if (vfs_if.stat(zp, &st) == 0) start = st.size;
+        }
+        of.* = .{ .backing = .file, .refcount = 1, .offset = start, .flags = flags };
+        copyPath(&of.path, zp);
     }
-
-    of.* = .{ .backing = .file, .refcount = 1, .offset = start, .flags = flags };
-    copyPath(&of.path, zp);
     tbl.fds[slot] = of;
     return @intCast(slot);
 }
@@ -320,18 +534,11 @@ fn sysDup(args: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
 
 // --- path resolution for the *at() family -------------------------
 //
-// No per-process cwd yet: AT_FDCWD (and any relative path) resolves
-// against the filesystem root. An absolute path is used as-is.
+// dirfd is assumed AT_FDCWD: an absolute path is used verbatim, a
+// relative one is joined onto the caller's cwd (VFS handles `.`/`..`).
 
 fn resolveAt(path: [*:0]const u8, out: *[PATH_MAX]u8) void {
-    if (path[0] == '/') {
-        copyPath(out, path);
-        return;
-    }
-    out[0] = '/';
-    var i: usize = 0;
-    while (i < PATH_MAX - 2 and path[i] != 0) : (i += 1) out[i + 1] = path[i];
-    out[i + 1] = 0;
+    resolvePath(sched_if.current(), path, out);
 }
 
 fn dtypeFor(ext2_ft: u8) u8 {
@@ -439,8 +646,13 @@ fn sysFstat(args: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
     s_lock.unlock();
 
     switch (of.backing) {
-        .tty => {
+        .tty, .dev => {
             ttyKStat(out);
+            if (of.backing == .dev) out.st_mode = 0x2000 | 0o666; // S_IFCHR
+            return 0;
+        },
+        .pipe => {
+            out.* = .{ .st_dev = 1, .st_ino = 1, .st_mode = 0x1000 | 0o600, .st_nlink = 1, .st_blksize = PIPE_BUF }; // S_IFIFO
             return 0;
         },
         .file => {
@@ -721,6 +933,116 @@ fn sysZeroOk(args: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
     return 0; // fsync / fchmodat / fchownat / utimensat: accepted, no-op
 }
 
+// --- cwd -----------------------------------------------------
+
+fn sysGetcwd(args: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
+    _ = ctx;
+    const buf: [*]u8 = @ptrFromInt(args.arg[0]);
+    const size: usize = @intCast(args.arg[1]);
+    s_lock.lock();
+    defer s_lock.unlock();
+    const tbl = tableOf(sched_if.current()) orelse return -@as(i64, abi.EINVAL);
+    var len: usize = 0;
+    while (len < PATH_MAX and tbl.cwd[len] != 0) len += 1;
+    if (len == 0) {
+        tbl.cwd[0] = '/';
+        len = 1;
+    }
+    if (len + 1 > size) return -@as(i64, abi.ERANGE);
+    var i: usize = 0;
+    while (i < len) : (i += 1) buf[i] = tbl.cwd[i];
+    buf[len] = 0;
+    return @intCast(len + 1); // Linux getcwd returns the length including the NUL
+}
+
+fn setCwdTo(pid: u32, zp: [*:0]const u8) i64 {
+    var ino: u32 = 0;
+    var ft: u8 = 0;
+    const rc = vfs_if.resolve(zp, &ino, &ft);
+    if (rc != 0) return -@as(i64, rc);
+    if (ft != abi.EXT2_FT_DIR) return -@as(i64, abi.ENOTDIR);
+    s_lock.lock();
+    defer s_lock.unlock();
+    const tbl = tableOf(pid) orelse return -@as(i64, abi.EINVAL);
+    copyPath(&tbl.cwd, zp);
+    return 0;
+}
+
+fn sysChdir(args: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
+    _ = ctx;
+    var zbuf: [PATH_MAX]u8 = undefined;
+    resolvePath(sched_if.current(), @ptrFromInt(args.arg[0]), &zbuf);
+    return setCwdTo(sched_if.current(), @ptrCast(&zbuf));
+}
+
+fn sysFchdir(args: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
+    _ = ctx;
+    const pid = sched_if.current();
+    const fd: u32 = @intCast(args.arg[0]);
+    s_lock.lock();
+    const tbl = tableOf(pid) orelse {
+        s_lock.unlock();
+        return -@as(i64, abi.EBADF);
+    };
+    if (fd >= MAX_FDS or tbl.fds[fd] == null or tbl.fds[fd].?.backing != .file) {
+        s_lock.unlock();
+        return -@as(i64, abi.EBADF);
+    }
+    var pbuf: [PATH_MAX]u8 = undefined;
+    copyPath(&pbuf, pathZ(tbl.fds[fd].?));
+    s_lock.unlock();
+    return setCwdTo(pid, @ptrCast(&pbuf));
+}
+
+// --- pipe2 -------------------------------------------------
+
+fn sysPipe2(args: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
+    _ = ctx;
+    const ufds: [*]i32 = @ptrFromInt(args.arg[0]);
+    const flags: u32 = @truncate(args.arg[1]);
+    const pid = sched_if.current();
+
+    s_lock.lock();
+    defer s_lock.unlock();
+    const tbl = tableOf(pid) orelse return -@as(i64, abi.EBADF);
+
+    const pidx = allocPipe() orelse return -@as(i64, abi.ENFILE);
+    const rd = allocOpen() orelse {
+        s_pipes[pidx] = .{};
+        return -@as(i64, abi.ENFILE);
+    };
+    // Claim rd's slot immediately -- allocOpen() picks the first
+    // backing==.none/refcount==0 slot, so it would hand out this same one
+    // again for wr otherwise.
+    rd.* = .{ .backing = .pipe, .refcount = 1, .offset = pidx, .flags = flags & O_NONBLOCK };
+    const wr = allocOpen() orelse {
+        rd.* = .{};
+        s_pipes[pidx] = .{};
+        return -@as(i64, abi.ENFILE);
+    };
+    wr.* = .{ .backing = .pipe, .refcount = 1, .offset = pidx, .flags = 1 | (flags & O_NONBLOCK) };
+
+    const s0 = lowestFreeFd(tbl) orelse {
+        rd.* = .{};
+        wr.* = .{};
+        s_pipes[pidx] = .{};
+        return -@as(i64, abi.EMFILE);
+    };
+    tbl.fds[s0] = rd;
+    const s1 = lowestFreeFd(tbl) orelse {
+        tbl.fds[s0] = null;
+        rd.* = .{};
+        wr.* = .{};
+        s_pipes[pidx] = .{};
+        return -@as(i64, abi.EMFILE);
+    };
+    tbl.fds[s1] = wr;
+
+    ufds[0] = @intCast(s0);
+    ufds[1] = @intCast(s1);
+    return 0;
+}
+
 pub fn main(boot_info_ptr: *anyopaque) void {
     _ = boot_info_ptr;
     _ = sc_if.register(abi.SYS_read, &sysRead, null);
@@ -749,7 +1071,11 @@ pub fn main(boot_info_ptr: *anyopaque) void {
     _ = sc_if.register(abi.SYS_fchmodat, &sysZeroOk, null);
     _ = sc_if.register(abi.SYS_fchownat, &sysZeroOk, null);
     _ = sc_if.register(abi.SYS_utimensat, &sysZeroOk, null);
-    kernel_fmt.print(serial_if, "[fd] tables + rw/open/close/lseek/dup + stat/dents/fcntl/ioctl/*at\n", .{});
+    _ = sc_if.register(abi.SYS_getcwd, &sysGetcwd, null);
+    _ = sc_if.register(abi.SYS_chdir, &sysChdir, null);
+    _ = sc_if.register(abi.SYS_fchdir, &sysFchdir, null);
+    _ = sc_if.register(abi.SYS_pipe2, &sysPipe2, null);
+    kernel_fmt.print(serial_if, "[fd] tables + rw/open/close/lseek/dup + stat/dents/fcntl/ioctl/*at + cwd + pipe2\n", .{});
 }
 
 // --- test hooks --------------------------------------------

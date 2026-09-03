@@ -132,8 +132,10 @@ Legend: `[x]` done · `[~]` partial / stubbed · `[ ]` not started
       (+ `AT_REMOVEDIR`) / `renameat` 38 / `symlinkat` 36 /
       `readlinkat` 78 / `ftruncate` 46 (new `vfs.truncate` → `ext2.file_truncate`)
 - [x] `fsync` 82 / `fchmodat` 53 / `fchownat` 54 / `utimensat` 88 → 0
-- [ ] `getcwd` 17 / `chdir` 49 / `fchdir` 50 — need per-process cwd
-- [ ] `statfs` 43 / `fstatfs` 44 / `mknodat` 33 (for `/dev`) / `statx` 291
+- [x] `getcwd` 17 / `chdir` 49 / `fchdir` 50 — per-process cwd string in
+      `FdTable` (copied on fork, "/" on `open_defaults`); relative paths
+      and `AT_FDCWD` join onto it, VFS resolves `.`/`..`
+- [ ] `statfs` 43 / `fstatfs` 44 / `mknodat` 33 / `statx` 291
       (musl falls back to `newfstatat` on ENOSYS, fine)
 
 ### Fds / pipes / process
@@ -142,16 +144,24 @@ Legend: `[x]` done · `[~]` partial / stubbed · `[ ]` not started
 - [~] `ppoll` 73 → 0 (treated as "nothing ready / timed out")
 - [x] `setpgid` 154 → 0, `getpgid`/`getsid`/`setsid` → pid
 - [~] `futex` 98 → 0 (single-thread; musl static locks are uncontended)
-- [ ] `pipe2` 59 — needs an in-kernel pipe object (shell pipelines)
-- [ ] `wait4` `WNOHANG` / `waitid` 95
+- [x] `pipe2` 59 — real in-kernel `Pipe` (4 KiB ring, reader/writer
+      refcounts, cooperative block/wake via `scheduler`, `O_NONBLOCK` →
+      `EAGAIN`, EOF when writers hit 0, `EPIPE` when readers do).
+      `dup3` shares an end (refcount); `fork` inherits both.
+- [x] `wait4` `WNOHANG` → returns 0 when no child is reapable
+- [ ] `waitid` 95
 
-### `/dev` nodes
-- [ ] `/dev/null`, `/dev/zero`, `/dev/tty`, `/dev/console`, `/dev/urandom`
+### `/dev` nodes  — path-recognised in `fd`, no devfs
+- [x] `/dev/null` (r→EOF, w→discard), `/dev/zero` (r→zeros),
+      `/dev/full` (w→ENOSPC), `/dev/urandom`/`/dev/random` (r→xorshift),
+      `/dev/tty`/`/dev/console`/`/dev/std{in,out,err}` → tty backing
+- [ ] mknod-backed real `/dev` tree
 
-Coverage: `userland/systest.c` + `syscall_batch` kernelTest exercise
-uname / getrandom / clock_gettime / writev / mkdirat / openat+O_CREAT /
-write / ftruncate / fstat / getdents64 / unlinkat / getuid end to end
-against the ext2 rootfs. qemu-test `passed=389`.
+Coverage: `systest.c`/`syscall_batch` (uname, getrandom, clock_gettime,
+writev, mkdirat, openat+O_CREAT, write, ftruncate, fstat, getdents64,
+unlinkat, getuid) and `pipetest.c`/`pipe_cwd_dev` (pipe2 rw + EOF, cwd
+getcwd/chdir + relative openat, /dev/null/zero/urandom) — both end to
+end against the ext2 rootfs. qemu-test `passed=390`.
 
 ---
 

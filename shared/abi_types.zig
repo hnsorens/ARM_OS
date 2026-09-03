@@ -55,6 +55,7 @@ pub const EACCES: c_int = 13;
 pub const ENODEV: c_int = 19;
 pub const ENOTTY: c_int = 25;
 pub const ERANGE: c_int = 34;
+pub const EPIPE: c_int = 32;
 pub const EDESTADDRREQ: c_int = 89;
 
 // --- Boot info passed to every module entry ---
@@ -449,6 +450,7 @@ pub const SYS_renameat: u32 = 38;
 pub const SYS_ftruncate: u32 = 46;
 pub const SYS_faccessat: u32 = 48;
 pub const SYS_chdir: u32 = 49;
+pub const SYS_fchdir: u32 = 50;
 pub const SYS_fchmodat: u32 = 53;
 pub const SYS_fchownat: u32 = 54;
 pub const SYS_openat: u32 = 56;

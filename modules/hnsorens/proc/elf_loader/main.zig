@@ -632,6 +632,8 @@ fn sysWait4(args: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
 
     const wpid: i64 = @bitCast(args.arg[0]);
     const status_ptr = args.arg[1];
+    const WNOHANG: u64 = 1;
+    const options = args.arg[2];
 
     while (true) {
         var pids: [64]u32 = undefined;
@@ -662,6 +664,7 @@ fn sysWait4(args: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
             return @intCast(zombie);
         }
         if (!any_child) return -@as(i64, abi.ECHILD);
+        if (options & WNOHANG != 0) return 0; // no reapable child right now
 
         addWaiter(me);
         _ = sched_if.block();
