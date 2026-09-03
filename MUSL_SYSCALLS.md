@@ -167,14 +167,17 @@ end against the ext2 rootfs. qemu-test `passed=390`.
 
 ## Tier C — configure scripts / polish (mostly `-ENOSYS`-tolerant)
 
-- [ ] `pselect6` 72, `epoll_create1` 20, `epoll_ctl` 21, `epoll_pwait` 22
-- [ ] `eventfd2` 19, `timerfd_create` 85, `timerfd_settime` 86, `timerfd_gettime` 87
-- [ ] `futex` 98            — stub-ish while single-thread
-- [ ] `personality` 92, `getrusage` 165, `times` 153
-- [ ] `getpriority` 141, `setpriority` 140
-- [ ] `sched_get_priority_max` 125, `sched_get_priority_min` 126
-- [ ] `membarrier` 283, `fadvise64` 223, `getcpu` 168
-- [ ] `statx` 291           — `-ENOSYS` → musl falls back to `newfstatat`
+- [x] `personality` 92, `getrusage` 165 (zeroed), `times` 153,
+      `getpriority`/`setpriority` 141/140, `sched_{get,set}scheduler`
+      119/120, `sched_getparam` 121, `sched_get_priority_{max,min}`
+      125/126, `membarrier` 283, `fadvise64` 223, `getcpu` 168,
+      `getgroups` 158 — all accepted / canned (safe: "success, no state"
+      is correct on a single-CPU box)
+- [ ] `statx` 291 — left **unregistered** on purpose (→ ENOSYS → musl
+      falls back to `newfstatat`; a no-op stub would hand back a garbage
+      stat). Same reasoning keeps `waitid` 95 unregistered.
+- [ ] `pselect6` 72, `epoll_create1`/`ctl`/`pwait` 20-22, `eventfd2` 19,
+      `timerfd_*` 85-87 — need real event objects; most tools don't
 - socket family (198+) — skip unless networking
 
 ---

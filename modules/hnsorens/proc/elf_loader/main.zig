@@ -1061,6 +1061,32 @@ fn sysGettid(a: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
     return @intCast(sched_if.current());
 }
 
+fn zeroBytes(uptr: u64, n: usize) void {
+    if (uptr == 0) return;
+    const p: [*]u8 = @ptrFromInt(uptr);
+    var i: usize = 0;
+    while (i < n) : (i += 1) p[i] = 0;
+}
+
+fn sysGetrusage(a: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
+    _ = ctx;
+    zeroBytes(a.arg[1], 144); // struct rusage
+    return 0;
+}
+
+fn sysGetcpu(a: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
+    _ = ctx;
+    zeroBytes(a.arg[0], 4); // *cpu = 0
+    zeroBytes(a.arg[1], 4); // *node = 0
+    return 0;
+}
+
+fn sysSchedGetparam(a: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
+    _ = ctx;
+    zeroBytes(a.arg[1], 4); // struct sched_param { int sched_priority; }
+    return 0;
+}
+
 fn sysSetTidAddress(a: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
     _ = a;
     _ = ctx;
@@ -1221,6 +1247,23 @@ pub fn main(boot_info_ptr: *anyopaque) void {
     // threads -- single-thread, no real futex
     _ = sc_if.register(abi.SYS_futex, &sysZero, null);
     _ = sc_if.register(abi.SYS_ppoll, &sysZero, null);
+
+    // Tier C -- accepted / canned; safe because "success, no state" is
+    // the correct behaviour for each of these on a single-CPU box.
+    _ = sc_if.register(abi.SYS_getgroups, &sysZero, null); // no supplementary groups
+    _ = sc_if.register(abi.SYS_getrusage, &sysGetrusage, null);
+    _ = sc_if.register(abi.SYS_times, &sysZero, null);
+    _ = sc_if.register(abi.SYS_getpriority, &sysZero, null);
+    _ = sc_if.register(abi.SYS_setpriority, &sysZero, null);
+    _ = sc_if.register(abi.SYS_sched_setscheduler, &sysZero, null);
+    _ = sc_if.register(abi.SYS_sched_getscheduler, &sysZero, null); // SCHED_OTHER
+    _ = sc_if.register(abi.SYS_sched_getparam, &sysSchedGetparam, null);
+    _ = sc_if.register(abi.SYS_sched_get_priority_max, &sysZero, null);
+    _ = sc_if.register(abi.SYS_sched_get_priority_min, &sysZero, null);
+    _ = sc_if.register(abi.SYS_personality, &sysZero, null);
+    _ = sc_if.register(abi.SYS_membarrier, &sysZero, null);
+    _ = sc_if.register(abi.SYS_getcpu, &sysGetcpu, null);
+    _ = sc_if.register(abi.SYS_fadvise64, &sysZero, null);
 
     kernel_fmt.print(serial_if, "[elf_loader] process + tree + anon mmap/brk + misc syscalls\n", .{});
 }
