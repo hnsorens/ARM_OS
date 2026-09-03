@@ -221,17 +221,23 @@ pub const Timer = extern struct {
 
 // --- Cooperative CPU context switching (AArch64 EL1) ---
 //
-// `hnsorens.sched.context_switch` exports this. A `TaskContext` holds
-// exactly the register state the AArch64 C ABI requires a function call to
-// preserve: the callee-saved GPRs x19-x28, the frame pointer (x29), the
-// link register (x30), and the stack pointer. Saving/restoring that set
-// (and swapping SP) turns a plain function call into a coroutine switch.
+// `hnsorens.sched.context_switch` exports this. A `TaskContext` holds the
+// register state the AArch64 C ABI requires a function call to preserve --
+// the callee-saved GPRs x19-x28, the frame pointer (x29), the link
+// register (x30), the stack pointer -- plus the per-task CPU state a
+// switch must not blur between tasks: TTBR0_EL1 (address space), TPIDR_EL0
+// (userspace thread pointer / TLS) and the full FP/SIMD register file
+// (q0-q31, FPSR, FPCR). Saving/restoring that set (and swapping SP) turns
+// a plain function call into a coroutine switch.
 //
-// Caller-saved GPRs (x0-x18), NZCV, and FP/SIMD state are deliberately NOT
-// saved: a cooperative `switch_to` happens at a call boundary where the
-// compiler already treats those as clobbered. A preemptive switch (out of
-// an exception handler) saves the full trap frame separately in the
-// vector trampoline and only reuses this for the SP/callee-saved half.
+// Caller-saved GPRs (x0-x18) and NZCV are deliberately NOT saved: a
+// cooperative `switch_to` happens at a call boundary where the compiler
+// already treats those as clobbered. FP/SIMD *is* saved despite being
+// mostly caller-saved, because userspace (musl) runs NEON between switch
+// points and the lower 64 bits of v8-v15 are callee-saved. A preemptive
+// switch (out of an exception handler) saves the full trap frame
+// separately in the vector trampoline and only reuses this for the
+// SP/callee-saved half.
 pub const TaskContext = extern struct {
     x19: u64 = 0,
     x20: u64 = 0,
@@ -256,7 +262,26 @@ pub const TaskContext = extern struct {
     /// space. `switch_to` saves and restores it around every switch, so a
     /// user process's page tables can be freed safely once no task holds
     /// its root.
-    ttbr0: u64 = 0,
+    ttbr0: u64 = 0, // offset 104
+
+    /// TPIDR_EL0 -- the userspace thread pointer (musl/glibc TLS base;
+    /// `errno` lives off it). Userspace sets it itself via `msr`; the
+    /// kernel only has to preserve it per task. `switch_to` saves and
+    /// restores it so two user processes don't share one TLS block.
+    tpidr: u64 = 0, // offset 112
+
+    /// FPSR / FPCR at the switch point. FPCR = 0 is the ABI-default
+    /// userspace entry state (round-to-nearest, no traps), which the
+    /// zeroed context gives a freshly `init_user_context`'d task.
+    fpsr: u64 = 0, // offset 120
+    fpcr: u64 = 0, // offset 128
+
+    /// FP/SIMD register file q0..q31 (32 * 128 bits = 512 bytes), saved
+    /// and restored by `switch_to`. musl's `memcpy`/`memset`/`strlen` are
+    /// NEON, so this is not optional once anything libc-linked runs.
+    /// `align(16)` so the `stp q`/`ldp q` pairs in the switch asm are
+    /// well-formed regardless of where the struct lands.
+    v: [64]u64 align(16) = [_]u64{0} ** 64, // offset 144, ends 656
 };
 
 /// Raw AArch64 register-file switching, exported by the context_switch

@@ -18,13 +18,18 @@ pub const serial_if = abi.importInterface(abi.Serial);
 
 // --- The switch primitives, in assembly -------------------------------
 //
-// TaskContext is 14 packed u64s, so field offsets are 8*index:
+// TaskContext field offsets (the leading run is 8*index):
 //   x19..x28 -> 0,8,16,24,32,40,48,56,64,72
 //   fp (x29) -> 80   lr (x30) -> 88   sp -> 96   ttbr0 -> 104
+//   tpidr_el0 -> 112   fpsr -> 120   fpcr -> 128
+//   q0..q31   -> 144,160,...,624   (16-aligned; 32 * 16 bytes = 512)
 // x9 is caller-saved (a scratch temp); nothing else is touched that the
 // C ABI would expect preserved. TTBR0_EL1 is saved and restored around
 // every switch (with an isb) so kernel tasks keep the identity map and a
-// dead user process's page tables become safe to free.
+// dead user process's page tables become safe to free. TPIDR_EL0 and the
+// whole FP/SIMD state travel with the task too -- musl keeps `errno` off
+// TPIDR_EL0 and its string ops are NEON, so a switch that dropped either
+// would corrupt userspace.
 comptime {
     asm (
         \\.global ctxsw_switch_to
@@ -39,6 +44,28 @@ comptime {
         \\    str x9, [x0, #96]
         \\    mrs x9, ttbr0_el1
         \\    str x9, [x0, #104]
+        \\    mrs x9, tpidr_el0
+        \\    str x9, [x0, #112]
+        \\    mrs x9, fpsr
+        \\    str x9, [x0, #120]
+        \\    mrs x9, fpcr
+        \\    str x9, [x0, #128]
+        \\    stp q0,  q1,  [x0, #144]
+        \\    stp q2,  q3,  [x0, #176]
+        \\    stp q4,  q5,  [x0, #208]
+        \\    stp q6,  q7,  [x0, #240]
+        \\    stp q8,  q9,  [x0, #272]
+        \\    stp q10, q11, [x0, #304]
+        \\    stp q12, q13, [x0, #336]
+        \\    stp q14, q15, [x0, #368]
+        \\    stp q16, q17, [x0, #400]
+        \\    stp q18, q19, [x0, #432]
+        \\    stp q20, q21, [x0, #464]
+        \\    stp q22, q23, [x0, #496]
+        \\    stp q24, q25, [x0, #528]
+        \\    stp q26, q27, [x0, #560]
+        \\    stp q28, q29, [x0, #592]
+        \\    stp q30, q31, [x0, #624]
         \\    ldp x19, x20, [x1, #0]
         \\    ldp x21, x22, [x1, #16]
         \\    ldp x23, x24, [x1, #32]
@@ -49,6 +76,28 @@ comptime {
         \\    mov sp, x9
         \\    ldr x9, [x1, #104]
         \\    msr ttbr0_el1, x9
+        \\    ldr x9, [x1, #112]
+        \\    msr tpidr_el0, x9
+        \\    ldr x9, [x1, #120]
+        \\    msr fpsr, x9
+        \\    ldr x9, [x1, #128]
+        \\    msr fpcr, x9
+        \\    ldp q0,  q1,  [x1, #144]
+        \\    ldp q2,  q3,  [x1, #176]
+        \\    ldp q4,  q5,  [x1, #208]
+        \\    ldp q6,  q7,  [x1, #240]
+        \\    ldp q8,  q9,  [x1, #272]
+        \\    ldp q10, q11, [x1, #304]
+        \\    ldp q12, q13, [x1, #336]
+        \\    ldp q14, q15, [x1, #368]
+        \\    ldp q16, q17, [x1, #400]
+        \\    ldp q18, q19, [x1, #432]
+        \\    ldp q20, q21, [x1, #464]
+        \\    ldp q22, q23, [x1, #496]
+        \\    ldp q24, q25, [x1, #528]
+        \\    ldp q26, q27, [x1, #560]
+        \\    ldp q28, q29, [x1, #592]
+        \\    ldp q30, q31, [x1, #624]
         \\    isb
         \\    ret
         \\
@@ -64,6 +113,28 @@ comptime {
         \\    mov sp, x9
         \\    ldr x9, [x0, #104]
         \\    msr ttbr0_el1, x9
+        \\    ldr x9, [x0, #112]
+        \\    msr tpidr_el0, x9
+        \\    ldr x9, [x0, #120]
+        \\    msr fpsr, x9
+        \\    ldr x9, [x0, #128]
+        \\    msr fpcr, x9
+        \\    ldp q0,  q1,  [x0, #144]
+        \\    ldp q2,  q3,  [x0, #176]
+        \\    ldp q4,  q5,  [x0, #208]
+        \\    ldp q6,  q7,  [x0, #240]
+        \\    ldp q8,  q9,  [x0, #272]
+        \\    ldp q10, q11, [x0, #304]
+        \\    ldp q12, q13, [x0, #336]
+        \\    ldp q14, q15, [x0, #368]
+        \\    ldp q16, q17, [x0, #400]
+        \\    ldp q18, q19, [x0, #432]
+        \\    ldp q20, q21, [x0, #464]
+        \\    ldp q22, q23, [x0, #496]
+        \\    ldp q24, q25, [x0, #528]
+        \\    ldp q26, q27, [x0, #560]
+        \\    ldp q28, q29, [x0, #592]
+        \\    ldp q30, q31, [x0, #624]
         \\    isb
         \\    ret
         \\
@@ -169,6 +240,42 @@ fn currentTtbr0() u64 {
     );
 }
 
+/// Snapshot the caller's live TPIDR_EL0 + FP/SIMD state into `ctx`. Used
+/// by `initForkedContext` so a forked child resumes at EL0 with the
+/// parent's exact thread pointer (errno!) and FP register file -- the
+/// trap frame only carried the general-purpose registers.
+fn captureFpAndTls(ctx: *abi.TaskContext) void {
+    ctx.tpidr = asm volatile ("mrs %[v], tpidr_el0"
+        : [v] "=r" (-> u64),
+    );
+    ctx.fpsr = asm volatile ("mrs %[v], fpsr"
+        : [v] "=r" (-> u64),
+    );
+    ctx.fpcr = asm volatile ("mrs %[v], fpcr"
+        : [v] "=r" (-> u64),
+    );
+    asm volatile (
+        \\ stp q0,  q1,  [%[v], #0]
+        \\ stp q2,  q3,  [%[v], #32]
+        \\ stp q4,  q5,  [%[v], #64]
+        \\ stp q6,  q7,  [%[v], #96]
+        \\ stp q8,  q9,  [%[v], #128]
+        \\ stp q10, q11, [%[v], #160]
+        \\ stp q12, q13, [%[v], #192]
+        \\ stp q14, q15, [%[v], #224]
+        \\ stp q16, q17, [%[v], #256]
+        \\ stp q18, q19, [%[v], #288]
+        \\ stp q20, q21, [%[v], #320]
+        \\ stp q22, q23, [%[v], #352]
+        \\ stp q24, q25, [%[v], #384]
+        \\ stp q26, q27, [%[v], #416]
+        \\ stp q28, q29, [%[v], #448]
+        \\ stp q30, q31, [%[v], #480]
+        :
+        : [v] "r" (&ctx.v),
+        : .{ .memory = true });
+}
+
 pub fn initKernelContext(ctx: *abi.TaskContext, entry: usize, arg: usize, stack_top: u64) callconv(.c) c_int {
     if (entry == 0 or stack_top < MIN_STACK_BYTES) return abi.EINVAL;
     ctx.* = .{};
@@ -206,6 +313,9 @@ pub fn initForkedContext(ctx: *abi.TaskContext, kstack_top: u64, ttbr0: u64, fra
     ctx.sp = slot;
     ctx.lr = @intFromPtr(&ctxsw_forked_trampoline);
     ctx.ttbr0 = ttbr0;
+    // The child inherits the parent's thread pointer + FP register file;
+    // the trap frame only held x0..x30.
+    captureFpAndTls(ctx);
     return 0;
 }
 

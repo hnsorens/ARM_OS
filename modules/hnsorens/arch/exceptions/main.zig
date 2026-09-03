@@ -205,7 +205,16 @@ fn applyDefault(vector: abi.ExceptionVector, frame: *abi.TrapFrame, origin: abi.
 
 pub fn initCore() callconv(.c) c_int {
     Vbar.write(@intFromPtr(&exc_vector_table));
-    asm volatile ("isb");
+    // Allow FP/SIMD at EL1 *and* EL0 (CPACR_EL1.FPEN = 0b11). Firmware
+    // usually leaves this open already -- the kernel itself runs NEON code
+    // -- but musl userland's string ops are NEON too, so make EL0 access
+    // explicit rather than depend on inherited state.
+    asm volatile (
+        \\ mrs x0, cpacr_el1
+        \\ orr x0, x0, #0x300000
+        \\ msr cpacr_el1, x0
+        \\ isb
+        ::: .{ .x0 = true });
     return 0;
 }
 

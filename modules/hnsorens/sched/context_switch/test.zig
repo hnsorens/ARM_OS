@@ -360,6 +360,168 @@ fn testCalleeSavedPreservedAcrossSwitch() callconv(.c) i32 {
     return t.result();
 }
 
+// --- 9. FP/SIMD register file preserved across a switch -----------
+//
+// musl userland runs NEON (memcpy/memset/strlen) between switch points,
+// so `switch_to` must carry q0..q31. A worker trashes a representative
+// span of them each time it runs; the test's own sentinels -- placed in
+// caller-saved (d0/d16/d31) and callee-saved (d8/d15) FP regs alike --
+// must be the ones live again when it resumes.
+
+var g_fp_ctx: abi.TaskContext = .{};
+
+fn fpTrashWorker(arg: usize) callconv(.c) void {
+    _ = arg;
+    while (true) {
+        asm volatile (
+            \\ mov  x9, #0x00BA
+            \\ movk x9, #0xD000, lsl #16
+            \\ dup  v0.2d,  x9
+            \\ dup  v8.2d,  x9
+            \\ dup  v15.2d, x9
+            \\ dup  v16.2d, x9
+            \\ dup  v31.2d, x9
+            ::: .{ .x9 = true, .memory = true });
+        ctxsw_switch_to(&g_fp_ctx, &g_main_ctx);
+    }
+}
+
+fn testFpRegsPreservedAcrossSwitch() callconv(.c) i32 {
+    var t = kernel_test.Tracker{ .serial = serial_if };
+    g_main_ctx = .{};
+    g_fp_ctx = .{};
+    t.expectEqual(@src(), main.initKernelContext(&g_fp_ctx, @intFromPtr(&fpTrashWorker), 0, stackTop(0)), 0);
+
+    const s0: u64 = 0x1122334455667700;
+    const s8: u64 = 0x1122334455667708;
+    const s15: u64 = 0x112233445566770F;
+    const s16: u64 = 0x1122334455667710;
+    const s31: u64 = 0x112233445566771F;
+    asm volatile (
+        \\ fmov d0,  %[a0]
+        \\ fmov d8,  %[a8]
+        \\ fmov d15, %[a15]
+        \\ fmov d16, %[a16]
+        \\ fmov d31, %[a31]
+        :
+        : [a0] "r" (s0),
+          [a8] "r" (s8),
+          [a15] "r" (s15),
+          [a16] "r" (s16),
+          [a31] "r" (s31),
+        : .{ .memory = true });
+
+    var i: u32 = 0;
+    while (i < 300) : (i += 1) {
+        ctxsw_switch_to(&g_main_ctx, &g_fp_ctx);
+    }
+
+    var o0: u64 = 0;
+    var o8: u64 = 0;
+    var o15: u64 = 0;
+    var o16: u64 = 0;
+    var o31: u64 = 0;
+    asm volatile (
+        \\ fmov %[r0],  d0
+        \\ fmov %[r8],  d8
+        \\ fmov %[r15], d15
+        \\ fmov %[r16], d16
+        \\ fmov %[r31], d31
+        : [r0] "=r" (o0),
+          [r8] "=r" (o8),
+          [r15] "=r" (o15),
+          [r16] "=r" (o16),
+          [r31] "=r" (o31),
+        :
+        : .{ .memory = true });
+
+    t.expectEqual(@src(), o0, s0);
+    t.expectEqual(@src(), o8, s8);
+    t.expectEqual(@src(), o15, s15);
+    t.expectEqual(@src(), o16, s16);
+    t.expectEqual(@src(), o31, s31);
+    return t.result();
+}
+
+// --- 10. TPIDR_EL0 (userspace TLS pointer) travels with the task --
+
+var g_tp_ctx: abi.TaskContext = .{};
+
+fn tpidrTrashWorker(arg: usize) callconv(.c) void {
+    _ = arg;
+    while (true) {
+        asm volatile (
+            \\ mov  x9, #0xF00D
+            \\ movk x9, #0xBAAD, lsl #16
+            \\ msr  tpidr_el0, x9
+            ::: .{ .x9 = true, .memory = true });
+        ctxsw_switch_to(&g_tp_ctx, &g_main_ctx);
+    }
+}
+
+fn testTpidrPreservedAcrossSwitch() callconv(.c) i32 {
+    var t = kernel_test.Tracker{ .serial = serial_if };
+    g_main_ctx = .{};
+    g_tp_ctx = .{};
+    t.expectEqual(@src(), main.initKernelContext(&g_tp_ctx, @intFromPtr(&tpidrTrashWorker), 0, stackTop(0)), 0);
+
+    const sentinel: u64 = 0x0123456789ABCDEF;
+    asm volatile ("msr tpidr_el0, %[v]"
+        :
+        : [v] "r" (sentinel),
+        : .{ .memory = true });
+
+    var i: u32 = 0;
+    while (i < 300) : (i += 1) {
+        ctxsw_switch_to(&g_main_ctx, &g_tp_ctx);
+    }
+
+    const got = asm volatile ("mrs %[v], tpidr_el0"
+        : [v] "=r" (-> u64),
+    );
+    // The kernel doesn't otherwise use TPIDR_EL0; leave it clean.
+    asm volatile ("msr tpidr_el0, xzr" ::: .{ .memory = true });
+
+    t.expectEqual(@src(), got, sentinel);
+    return t.result();
+}
+
+// --- 11. a forked context snapshots the parent's TLS + FP ---------
+//
+// The trap frame a fork carries only holds x0..x30; init_forked_context
+// has to capture TPIDR_EL0 and the FP register file from the live CPU so
+// the child resumes at EL0 with the parent's `errno` pointer and floats.
+
+fn testForkedContextCapturesTlsAndFp() callconv(.c) i32 {
+    var t = kernel_test.Tracker{ .serial = serial_if };
+
+    const tls_sentinel: u64 = 0xFEEDFACECAFEBEEF;
+    const d9_sentinel: u64 = 0x4444333322221111;
+    asm volatile (
+        \\ msr  tpidr_el0, %[tls]
+        \\ fmov d9, %[d9]
+        :
+        : [tls] "r" (tls_sentinel),
+          [d9] "r" (d9_sentinel),
+        : .{ .memory = true });
+
+    var frame: abi.TrapFrame = std.mem.zeroes(abi.TrapFrame);
+    frame.elr = 0x4000;
+    frame.sp = 0x8000;
+    frame.x[0] = 0x999;
+
+    var ctx: abi.TaskContext = .{};
+    const rc = main.initForkedContext(&ctx, stackTop(0), 0x1000, &frame);
+
+    asm volatile ("msr tpidr_el0, xzr" ::: .{ .memory = true });
+
+    t.expectEqual(@src(), rc, 0);
+    t.expectEqual(@src(), ctx.tpidr, tls_sentinel);
+    // d9 == low 64 bits of q9 == ctx.v[2*9].
+    t.expectEqual(@src(), ctx.v[18], d9_sentinel);
+    return t.result();
+}
+
 comptime {
     abi.kernelTest("single_yield_round_trip", &testSingleYieldRoundTrip);
     abi.kernelTest("ping_pong_many", &testPingPongMany);
@@ -369,4 +531,7 @@ comptime {
     abi.kernelTest("re_entry_resumes_after_switch_point", &testReEntryResumesAfterSwitchPoint);
     abi.kernelTest("init_rejects_bad_args", &testInitRejectsBadArgs);
     abi.kernelTest("callee_saved_preserved_across_switch", &testCalleeSavedPreservedAcrossSwitch);
+    abi.kernelTest("fp_regs_preserved_across_switch", &testFpRegsPreservedAcrossSwitch);
+    abi.kernelTest("tpidr_preserved_across_switch", &testTpidrPreservedAcrossSwitch);
+    abi.kernelTest("forked_context_captures_tls_and_fp", &testForkedContextCapturesTlsAndFp);
 }
