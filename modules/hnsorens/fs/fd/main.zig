@@ -933,6 +933,59 @@ fn sysZeroOk(args: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
     return 0; // fsync / fchmodat / fchownat / utimensat: accepted, no-op
 }
 
+fn fillStatfs(uptr: u64) void {
+    if (uptr == 0) return;
+    const p: [*]u8 = @ptrFromInt(uptr);
+    var i: usize = 0;
+    while (i < 120) : (i += 1) p[i] = 0;
+    // aarch64 struct statfs: 8-byte fields.
+    std.mem.writeInt(u64, p[0..8], 0xEF53, .little); // f_type (EXT2_SUPER_MAGIC)
+    std.mem.writeInt(u64, p[8..16], 4096, .little); // f_bsize
+    std.mem.writeInt(u64, p[16..24], 262144, .little); // f_blocks (1 GiB)
+    std.mem.writeInt(u64, p[24..32], 131072, .little); // f_bfree
+    std.mem.writeInt(u64, p[32..40], 131072, .little); // f_bavail
+    std.mem.writeInt(u64, p[40..48], 65536, .little); // f_files
+    std.mem.writeInt(u64, p[48..56], 32768, .little); // f_ffree
+    std.mem.writeInt(u64, p[72..80], 255, .little); // f_namelen
+    std.mem.writeInt(u64, p[80..88], 4096, .little); // f_frsize
+}
+
+fn sysStatfs(args: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
+    _ = ctx;
+    var zbuf: [PATH_MAX]u8 = undefined;
+    resolveAt(@ptrFromInt(args.arg[0]), &zbuf);
+    var ino: u32 = 0;
+    var ft: u8 = 0;
+    if (vfs_if.resolve(@ptrCast(&zbuf), &ino, &ft) != 0) return -@as(i64, abi.ENOENT);
+    fillStatfs(args.arg[1]);
+    return 0;
+}
+
+fn sysFstatfs(args: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
+    _ = ctx;
+    const fd: u32 = @intCast(args.arg[0]);
+    if (fd >= MAX_FDS) return -@as(i64, abi.EBADF);
+    fillStatfs(args.arg[1]);
+    return 0;
+}
+
+fn sysMknodat(args: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
+    _ = ctx;
+    var zbuf: [PATH_MAX]u8 = undefined;
+    resolveAt(@ptrFromInt(args.arg[1]), &zbuf);
+    const mode: u16 = @truncate(args.arg[2]);
+    const dev: u32 = @truncate(args.arg[3]);
+    const ft: u8 = switch (mode & abi.EXT2_S_IFMT) {
+        abi.EXT2_S_IFCHR => abi.EXT2_FT_CHRDEV,
+        abi.EXT2_S_IFBLK => abi.EXT2_FT_BLKDEV,
+        abi.EXT2_S_IFIFO => abi.EXT2_FT_FIFO,
+        abi.EXT2_S_IFSOCK => abi.EXT2_FT_SOCK,
+        else => abi.EXT2_FT_REG_FILE,
+    };
+    const rc = vfs_if.mknod(@ptrCast(&zbuf), mode, ft, dev);
+    return if (rc != 0) -@as(i64, rc) else 0;
+}
+
 // --- cwd -----------------------------------------------------
 
 fn sysGetcwd(args: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
@@ -1075,6 +1128,9 @@ pub fn main(boot_info_ptr: *anyopaque) void {
     _ = sc_if.register(abi.SYS_chdir, &sysChdir, null);
     _ = sc_if.register(abi.SYS_fchdir, &sysFchdir, null);
     _ = sc_if.register(abi.SYS_pipe2, &sysPipe2, null);
+    _ = sc_if.register(abi.SYS_statfs, &sysStatfs, null);
+    _ = sc_if.register(abi.SYS_fstatfs, &sysFstatfs, null);
+    _ = sc_if.register(abi.SYS_mknodat, &sysMknodat, null);
     kernel_fmt.print(serial_if, "[fd] tables + rw/open/close/lseek/dup + stat/dents/fcntl/ioctl/*at + cwd + pipe2\n", .{});
 }
 

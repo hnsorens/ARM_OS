@@ -110,6 +110,18 @@ void _start(void)
     if (!found_f) exit_(75);
     sc6(SYS_close, dfd, 0, 0, 0, 0, 0);
 
+    /* statfs */
+    unsigned char sfs[128];
+    if (sc6(43 /*statfs*/, (long)"/", (long)sfs, 0, 0, 0, 0) != 0) exit_(79);
+    long f_bsize = 0;
+    for (int i = 0; i < 8; i++) f_bsize |= (long)sfs[8 + i] << (8 * i);
+    if (f_bsize != 4096) exit_(80);
+
+    /* mknodat a char device into the dir */
+    if (sc6(33 /*mknodat*/, AT_FDCWD, (long)"/systest_dir/dev0", 020666 /*S_IFCHR|0666*/, (1 << 8) | 3, 0, 0) != 0)
+        exit_(81);
+    sc6(SYS_unlinkat, AT_FDCWD, (long)"/systest_dir/dev0", 0, 0, 0, 0);
+
     /* cleanup */
     if (sc6(SYS_unlinkat, AT_FDCWD, (long)"/systest_dir/f", 0, 0, 0, 0) != 0) exit_(76);
     if (sc6(SYS_unlinkat, AT_FDCWD, (long)"/systest_dir", AT_REMOVEDIR, 0, 0, 0) != 0) exit_(77);

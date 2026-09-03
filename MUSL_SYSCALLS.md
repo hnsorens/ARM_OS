@@ -135,8 +135,10 @@ Legend: `[x]` done · `[~]` partial / stubbed · `[ ]` not started
 - [x] `getcwd` 17 / `chdir` 49 / `fchdir` 50 — per-process cwd string in
       `FdTable` (copied on fork, "/" on `open_defaults`); relative paths
       and `AT_FDCWD` join onto it, VFS resolves `.`/`..`
-- [ ] `statfs` 43 / `fstatfs` 44 / `mknodat` 33 / `statx` 291
-      (musl falls back to `newfstatat` on ENOSYS, fine)
+- [x] `statfs` 43 / `fstatfs` 44 (canned: ext2 magic, 4 KiB blocks,
+      fake counts so `df` doesn't divide by zero) / `mknodat` 33
+      (→ `vfs.mknod`, file-type from `mode & S_IFMT`)
+- [ ] `statx` 291 — left unregistered (→ ENOSYS → musl falls back)
 
 ### Fds / pipes / process
 - [x] `fcntl` 25 (`F_DUPFD(_CLOEXEC)`, `F_GET/SETFD` no-op, `F_GET/SETFL`)
@@ -182,17 +184,36 @@ end against the ext2 rootfs. qemu-test `passed=390`.
 
 ---
 
-## Layer 3 — interactive bash (real signals subsystem, later)
+## Layer 3 — signals  — CORE DONE (`hnsorens.sys.signal`)
 
-- [ ] Signal delivery + `rt_sigreturn` 139 — build `rt_sigframe` on the
-      user/alt stack, set `ELR`/`x0..x2`/`lr`, restore on return
-- [ ] `sigaltstack` 132, `rt_sigpending` 136, `rt_sigsuspend` 133,
-      `rt_sigtimedwait` 137, `rt_sigqueueinfo` 138
-- [ ] Signal sources: `SIGCHLD` on child exit; `SIGSEGV/BUS/ILL` from the
-      fault handlers; `SIGINT/QUIT` from the tty; `SIGPIPE`; `SIGWINCH`
-- [ ] termios in the tty — `TCSETS/TCSETSW/TCSETSF` driving `set_mode`
+- [x] Signal delivery + `rt_sigreturn` 139 — full AArch64 `rt_sigframe`
+      (siginfo + ucontext{ uc_sigmask, sigcontext{ x0..x30, sp, pc,
+      pstate }, fpsimd_context }) on the user stack; delivered via a new
+      `exceptions.set_user_return_hook` run on every EL0 return.
+- [x] `rt_sigaction` 134 (real handler/flags/restorer/mask),
+      `rt_sigprocmask` 135, `rt_sigpending` 136
+- [x] Sources: `SIGCHLD` on child exit; `SIGSEGV` from the EL0 fault
+      handler (`.sync_data_abort`/`.sync_instruction_abort` → raise +
+      `.handled` so the kernel doesn't halt; EL1 faults still halt);
+      `SIGINT`/`SIGQUIT` from the tty on `^C`/`^\` (no fg pgrp yet →
+      signals the running process); `kill`/`tkill`/`tgkill`
+- [x] Default actions: fatal → `exit(sig)`; ignore CHLD/CONT/WINCH/URG/
+      STOP/TSTP. fork inherits dispositions + blocked mask; execve resets.
+- [~] `sigaltstack` 132 — not implemented (SA_ONSTACK ignored)
+- [ ] `rt_sigsuspend` 133, `rt_sigtimedwait` 137, `rt_sigqueueinfo` 138
+- [ ] `SIGPIPE` on write to a broken pipe (`pipeWrite` returns EPIPE but
+      doesn't raise the signal yet)
+- [ ] no `SA_RESTART` — a signal that wakes a blocked syscall lets it
+      return early (EINTR/short) rather than restarting
+
+## Layer 3 — interactive bash (job control, later)
+
+- [ ] termios in the tty — `TCSETS/TCSETSW/TCSETSF` actually driving
+      `set_mode` (readline raw/canonical); `ioctl` currently accepts them
+      and no-ops
 - [ ] job control — foreground pgrp, `TIOCSPGRP/TIOCGPGRP`, `TIOCSCTTY`,
-      `SIGTSTP/CONT/TTIN/TTOU`, `tcsetpgrp`
+      `SIGTSTP/CONT/TTIN/TTOU`, `tcsetpgrp`. `^C` currently signals the
+      running process, not the fg pgrp.
 
 ---
 

@@ -19,6 +19,7 @@ const spinlock = @import("spinlock");
 pub const keyboard_if = abi.importInterface(abi.Keyboard);
 pub const sched_if = abi.importInterface(abi.Scheduler);
 pub const serial_if = abi.importInterface(abi.Serial);
+pub const signal_if = abi.importInterface(abi.Signal);
 pub const process_if = abi.importInterface(abi.Process); // block/wake test only
 
 const LINE_MAX = 256;
@@ -26,6 +27,8 @@ const COOKED_SIZE = 1024;
 
 const BS: u8 = 0x08;
 const DEL: u8 = 0x7F;
+const CTRL_C: u8 = 0x03;
+const CTRL_BACKSLASH: u8 = 0x1C;
 const CTRL_U: u8 = 0x15;
 const CTRL_W: u8 = 0x17;
 const CTRL_D: u8 = 0x04;
@@ -99,6 +102,14 @@ pub fn ttyRxByte(byte: u8) callconv(.c) void {
     }
 
     switch (b) {
+        CTRL_C, CTRL_BACKSLASH => {
+            // No foreground process group yet: signal whatever user
+            // process is currently running. Discard the pending line.
+            if (s_echo) out("^C\r\n");
+            s_line_len = 0;
+            const cur = sched_if.current();
+            if (cur != 0) signal_if.raise(cur, if (b == CTRL_C) 2 else 3); // SIGINT / SIGQUIT
+        },
         '\n' => {
             if (s_echo) out("\r\n");
             commitLineLocked(true);
