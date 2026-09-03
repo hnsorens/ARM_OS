@@ -66,6 +66,18 @@ var s_images: [MAX_IMAGES]Image = [_]Image{.{}} ** MAX_IMAGES;
 var s_next_asid: u16 = 1;
 var s_lock: spinlock.SpinLock = .{};
 
+// The kernel identity-map root, snapshotted in main() while the kernel's
+// own TTBR0 is still active. buildImage must copy *this*, not "whatever
+// TTBR0 currently is" -- during execve the caller's user space is active.
+var s_kernel_root: u64 = 0;
+
+fn kernelRoot() u64 {
+    if (s_kernel_root != 0) return s_kernel_root;
+    var r: u64 = 0;
+    _ = mmu_if.get_user_ctx(&r);
+    return r;
+}
+
 fn orderForBytes(size: u64) u8 {
     const pages = (size + PAGE_SIZE - 1) / PAGE_SIZE;
     var order: u8 = 0;
@@ -94,15 +106,34 @@ fn freeImageParts(uroot: u64, segs: []const SegRec, stack_phys: u64) void {
     if (uroot != 0) _ = mmu_if.free(uroot);
 }
 
-// --- load ----------------------------------------------------------
+// --- image building (shared by load + execve) --------------------
 
-pub fn load(path: [*:0]const u8, out_pid: *u32) callconv(.c) c_int {
+const Built = struct {
+    uroot: u64 = 0,
+    entry: u64 = 0,
+    img_phys: u64 = 0,
+    img_pages: u64 = 0,
+    stack_phys: u64 = 0,
+    stack_pages: u64 = 0,
+};
+
+fn freeBuilt(b: *const Built) void {
+    if (b.img_phys != 0) _ = pmm_if.release(b.img_phys);
+    if (b.stack_phys != 0) _ = pmm_if.release(b.stack_phys);
+    if (b.uroot != 0) _ = mmu_if.free(b.uroot);
+}
+
+/// Reads `path`, parses the static AArch64 ET_EXEC, and constructs a
+/// fresh user address space (identity-map copy + the PT_LOAD span mapped
+/// as one block + a 128 GiB stack). On failure everything it allocated is
+/// freed and an errno is returned; on success `out` is filled and the
+/// caller owns the resources (attach to a process, or `freeBuilt`).
+fn buildImage(path: [*:0]const u8, out: *Built) c_int {
     var st: abi.Ext2Stat = .{};
     if (vfs_if.stat(path, &st) != 0) return abi.ENOENT;
     if (st.size == 0 or st.size > 16 * 1024 * 1024) return abi.ENOEXEC;
     if ((st.mode & abi.EXT2_S_IFMT) != abi.EXT2_S_IFREG) return abi.ENOEXEC;
 
-    // Whole file into a scratch buffer.
     var file_phys: u64 = undefined;
     var file_pages: u64 = undefined;
     if (allocFrames(st.size, &file_phys, &file_pages) != 0) return abi.ENOMEM;
@@ -127,13 +158,10 @@ pub fn load(path: [*:0]const u8, out_pid: *u32) callconv(.c) c_int {
     if (ehdr.e_phoff + @as(u64, ehdr.e_phnum) * @sizeOf(std.elf.Elf64_Phdr) > st.size) return abi.ENOEXEC;
 
     // Fresh user address space = a private copy of the kernel identity map.
-    var kroot: u64 = 0;
-    if (mmu_if.get_user_ctx(&kroot) != 0 or kroot == 0) return abi.EIO;
+    const kroot = kernelRoot();
+    if (kroot == 0) return abi.EIO;
     var uroot: u64 = 0;
     if (mmu_if.copy(kroot, &uroot) != 0) return abi.ENOMEM;
-
-    var segs: [MAX_SEGS]SegRec = [_]SegRec{.{}} ** MAX_SEGS;
-    var n_segs: usize = 0;
 
     const phdrs: [*]const std.elf.Elf64_Phdr = @ptrCast(@alignCast(buf.ptr + @as(usize, @intCast(ehdr.e_phoff))));
 
@@ -190,21 +218,41 @@ pub fn load(path: [*:0]const u8, out_pid: *u32) callconv(.c) c_int {
         freeImageParts(uroot, &.{}, 0);
         return abi.ENOMEM;
     }
-    segs[0] = .{ .phys = img_phys, .pages = img_pages };
-    n_segs = 1;
 
     // User stack.
     var stack_phys: u64 = undefined;
     var stack_pages: u64 = undefined;
     if (allocFrames(USER_STACK_PAGES * PAGE_SIZE, &stack_phys, &stack_pages) != 0) {
-        freeImageParts(uroot, segs[0..n_segs], 0);
+        _ = pmm_if.release(img_phys);
+        _ = mmu_if.free(uroot);
         return abi.ENOMEM;
     }
     if (mmu_if.map(uroot, USER_STACK_BASE, stack_phys, USER_STACK_PAGES, .ps_4kb, abi.MMU_USER | abi.MMU_NO_EXEC) != 0) {
-        freeImageParts(uroot, segs[0..n_segs], stack_phys);
+        _ = pmm_if.release(img_phys);
+        _ = pmm_if.release(stack_phys);
+        _ = mmu_if.free(uroot);
         return abi.ENOMEM;
     }
-    const user_sp = USER_STACK_BASE + USER_STACK_PAGES * PAGE_SIZE;
+
+    out.* = .{
+        .uroot = uroot,
+        .entry = ehdr.e_entry,
+        .img_phys = img_phys,
+        .img_pages = img_pages,
+        .stack_phys = stack_phys,
+        .stack_pages = stack_pages,
+    };
+    return 0;
+}
+
+const USER_SP_TOP: u64 = USER_STACK_BASE + USER_STACK_PAGES * PAGE_SIZE;
+
+// --- load ----------------------------------------------------------
+
+pub fn load(path: [*:0]const u8, out_pid: *u32) callconv(.c) c_int {
+    var b: Built = .{};
+    const rc = buildImage(path, &b);
+    if (rc != 0) return rc;
 
     s_lock.lock();
     const asid: u16 = blk: {
@@ -216,27 +264,27 @@ pub fn load(path: [*:0]const u8, out_pid: *u32) callconv(.c) c_int {
         if (!im.in_use) break im;
     } else {
         s_lock.unlock();
-        freeImageParts(uroot, segs[0..n_segs], stack_phys);
+        freeBuilt(&b);
         return abi.ENOMEM;
     };
     s_lock.unlock();
 
-    const ttbr0 = (@as(u64, asid) << 48) | uroot;
+    const ttbr0 = (@as(u64, asid) << 48) | b.uroot;
 
     var pid: u32 = 0;
-    const rc = process_if.create_user_process("elf", ttbr0, ehdr.e_entry, user_sp, KSTACK_PAGES, 0, &pid);
-    if (rc != 0) {
-        freeImageParts(uroot, segs[0..n_segs], stack_phys);
-        return rc;
+    const rc2 = process_if.create_user_process("elf", ttbr0, b.entry, USER_SP_TOP, KSTACK_PAGES, 0, &pid);
+    if (rc2 != 0) {
+        freeBuilt(&b);
+        return rc2;
     }
 
     img_slot.* = .{
         .in_use = true,
         .pid = pid,
-        .uroot = uroot,
-        .stack_phys = stack_phys,
-        .n_segs = n_segs,
-        .segs = segs,
+        .uroot = b.uroot,
+        .stack_phys = b.stack_phys,
+        .n_segs = 1,
+        .segs = [_]SegRec{.{ .phys = b.img_phys, .pages = b.img_pages }} ++ [_]SegRec{.{}} ** (MAX_SEGS - 1),
     };
     // fresh process -> stdin/stdout/stderr on the console.
     _ = fd_if.open_defaults(pid);
@@ -451,8 +499,136 @@ fn sysWait4(args: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
     }
 }
 
+// --- execve ------------------------------------------------------
+
+const MAX_STRV = 32;
+const ARG_BUF = 2048;
+
+/// Copies a user NULL-terminated `char *[]` (at `uptr`, in the *current*
+/// address space) into `buf`, appending NUL-terminated strings starting
+/// at `*w`; records each string's offset in `off`. Returns the count.
+fn copyStrv(uptr: u64, off: []u32, buf: []u8, w: *usize) usize {
+    if (uptr == 0) return 0;
+    const arr: [*]const u64 = @ptrFromInt(uptr);
+    var n: usize = 0;
+    while (n < off.len) : (n += 1) {
+        const s_uptr = arr[n];
+        if (s_uptr == 0) break;
+        if (w.* >= buf.len - 1) break;
+        const s: [*:0]const u8 = @ptrFromInt(s_uptr);
+        off[n] = @intCast(w.*);
+        var i: usize = 0;
+        while (s[i] != 0 and w.* < buf.len - 1) : (i += 1) {
+            buf[w.*] = s[i];
+            w.* += 1;
+        }
+        buf[w.*] = 0;
+        w.* += 1;
+    }
+    return n;
+}
+
+/// execve(path, argv, envp) -- replaces the caller's image in place,
+/// keeping pid / parent / fd table. A raw handler: on success it rewrites
+/// the trap frame so `eret` lands in the new program's `_start` with a
+/// freshly built SysV initial stack, and never "returns" to the caller.
+/// On failure (bad path, not an ET_EXEC, OOM) the caller is untouched and
+/// gets `-errno`.
+fn sysExecve(frame: *abi.TrapFrame, ctx: ?*anyopaque) callconv(.c) i64 {
+    _ = ctx;
+    const me = sched_if.current();
+    if (me == 0) return -@as(i64, abi.EINVAL);
+    if (frame.x[0] == 0) return -@as(i64, abi.EINVAL);
+    const path: [*:0]const u8 = @ptrFromInt(frame.x[0]);
+
+    // 1. Copy argv + envp strings out of the *old* address space (active).
+    var strbuf: [ARG_BUF]u8 = undefined;
+    var argv_off: [MAX_STRV]u32 = undefined;
+    var envp_off: [MAX_STRV]u32 = undefined;
+    var w: usize = 0;
+    const argc = copyStrv(frame.x[1], &argv_off, &strbuf, &w);
+    const envc = copyStrv(frame.x[2], &envp_off, &strbuf, &w);
+    const strv_bytes = w;
+
+    // 2. Build the new image. Fails safe -- old process untouched.
+    var b: Built = .{};
+    const rc = buildImage(path, &b);
+    if (rc != 0) return -@as(i64, rc);
+
+    // 3. Find the caller's image record; capture the old resources.
+    s_lock.lock();
+    const img = for (&s_images) |*im| {
+        if (im.in_use and im.pid == me) break im;
+    } else {
+        s_lock.unlock();
+        freeBuilt(&b);
+        return -@as(i64, abi.EINVAL);
+    };
+    const old_uroot = img.uroot;
+    const old_img_phys = img.segs[0].phys;
+    const old_stack_phys = img.stack_phys;
+    s_lock.unlock();
+
+    // 4. Install the new address space.
+    const new_ttbr0 = (@as(u64, nextForkAsid()) << 48) | b.uroot;
+    _ = process_if.set_address_space(me, new_ttbr0);
+    asm volatile ("msr ttbr0_el1, %[v]\nisb"
+        :
+        : [v] "r" (new_ttbr0),
+        : .{ .memory = true });
+    // The new address space is now active.
+
+    // 5. Build the SysV AArch64 initial stack:
+    //   [argc][argv...][NULL][envp...][NULL][auxv: AT_NULL, 0][strings]
+    var sp = USER_SP_TOP;
+    sp = (sp - strv_bytes) & ~@as(u64, 0xF);
+    const strings_base = sp;
+    @memcpy(@as([*]u8, @ptrFromInt(strings_base))[0..strv_bytes], strbuf[0..strv_bytes]);
+
+    const slots = 1 + argc + 1 + envc + 1 + 2;
+    sp = (sp - slots * 8) & ~@as(u64, 0xF);
+    const pv: [*]u64 = @ptrFromInt(sp);
+    var k: usize = 0;
+    pv[k] = argc;
+    k += 1;
+    for (0..argc) |i| {
+        pv[k] = strings_base + argv_off[i];
+        k += 1;
+    }
+    pv[k] = 0;
+    k += 1; // argv terminator
+    for (0..envc) |j| {
+        pv[k] = strings_base + envp_off[j];
+        k += 1;
+    }
+    pv[k] = 0;
+    k += 1; // envp terminator
+    pv[k] = 0;
+    k += 1; // auxv a_type = AT_NULL
+    pv[k] = 0; // auxv a_val
+
+    // 6. Rewrite the trap frame so eret enters the new program.
+    for (&frame.x) |*r| r.* = 0;
+    frame.elr = b.entry;
+    frame.sp = sp; // exc_common restores SP_EL0 from here
+
+    // 7. Adopt the new image; free the old one.
+    s_lock.lock();
+    img.uroot = b.uroot;
+    img.segs[0] = .{ .phys = b.img_phys, .pages = b.img_pages };
+    img.stack_phys = b.stack_phys;
+    img.n_segs = 1;
+    s_lock.unlock();
+    _ = pmm_if.release(old_img_phys);
+    _ = pmm_if.release(old_stack_phys);
+    _ = mmu_if.free(old_uroot);
+
+    return 0;
+}
+
 pub fn main(boot_info_ptr: *anyopaque) void {
     _ = boot_info_ptr;
+    _ = mmu_if.get_user_ctx(&s_kernel_root); // kernel TTBR0 is still active here
     _ = sc_if.register(abi.SYS_getpid, &sysGetpid, null);
     _ = sc_if.register(abi.SYS_getppid, &sysGetppid, null);
     _ = sc_if.register(abi.SYS_sched_yield, &sysSchedYield, null);
@@ -460,6 +636,7 @@ pub fn main(boot_info_ptr: *anyopaque) void {
     _ = sc_if.register(abi.SYS_exit_group, &sysExit, null);
     _ = sc_if.register(abi.SYS_wait4, &sysWait4, null);
     _ = sc_if.register_raw(abi.SYS_clone, &sysClone, null);
+    _ = sc_if.register_raw(abi.SYS_execve, &sysExecve, null);
     kernel_fmt.print(serial_if, "[elf_loader] ready; process syscalls + tree\n", .{});
 }
 

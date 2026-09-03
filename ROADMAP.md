@@ -26,7 +26,7 @@ real in QEMU via `zig build test`.
 | `keyboard` | io | `Keyboard` | Raw byte source: PL011 UART RX interrupt (SPI 1 / INTID 33) → a registered listener. |
 | `tty` | io | `Tty` | Console line discipline over `keyboard`: canonical mode (line buffer + echo + backspace/^U/^W, CR→LF, ^D EOF), raw mode, blocking `read` (block/wake). |
 | `fd` | fs | `Fd` | Per-process fd tables + open-file descriptions (offset = the file pointer, refcount, backing = tty or a VFS path). Owns `read`/`write`/`openat`/`close`/`lseek`/`dup`. `open_defaults`/`fork_table`/`clear_table` for the process layer. |
-| `elf_loader` (extended) | proc | `Elf` | ELF load/unload **plus** the process-lifecycle syscalls: `getpid`/`getppid`/`sched_yield`/`exit`/`exit_group`/`wait4`, and `clone` (== fork). fork = `mmu.fork` + `create_forked_process` + `fd.fork_table` + admit; wait4 finds a zombie child, writes a Linux-style status, reaps it (`mmu.free_all`). Process tree via `ProcessInfo.parent`; a parent that exits reparents to pid 0. |
+| `elf_loader` (extended) | proc | `Elf` | ELF load/unload **plus** the process-lifecycle syscalls: `getpid`/`getppid`/`sched_yield`/`exit`/`exit_group`/`wait4`, `clone` (== fork), and `execve`. fork = `mmu.fork` + `create_forked_process` + `fd.fork_table` + admit; wait4 finds a zombie child, writes a Linux-style status, reaps it (`mmu.free_all`). execve = `buildImage` a new address space, in-place TTBR0 swap, rebuilt SysV initial stack (argc/argv/envp/auxv), trap-frame rewrite, old-image teardown — keeps pid/parent/fds. Process tree via `ProcessInfo.parent`; a parent that exits reparents to pid 0. |
 
 ## Not started yet
 
@@ -62,11 +62,12 @@ real in QEMU via `zig build test`.
   number → handler table at spec'd indices, argument marshaling, and the
   EL0 entry once processes exist. (Userspace syscall remap/mask layer:
   deferred — add later as its own piece.)
-- ~~**User-mode ELF loader**~~ — **DONE** as `hnsorens.proc.elf_loader`
-  (static `ET_EXEC` only; dynamic/PIE, `argv`/`envp` on the stack, and
-  demand paging are still TODO). Uses `mmu.copy` + `mmu.map` directly
-  rather than `vmm` (a user `vmm` space would be the cleaner long-term
-  home once brk/mmap syscalls exist).
+- ~~**User-mode ELF loader**~~ — **DONE** as `hnsorens.proc.elf_loader`,
+  now with `fork` / `execve` / `wait4` too. Static `ET_EXEC` only;
+  dynamic/PIE, auxv beyond `AT_NULL`, FP/SIMD context save, and demand
+  paging / CoW fork are still TODO. Uses `mmu.copy`/`mmu.fork` + `mmu.map`
+  directly rather than `vmm` (a user `vmm` space would be the cleaner
+  long-term home once brk/mmap syscalls exist).
 - **Exception/fault handlers** — the vector table + dispatch + trap frame
   now exist (`hnsorens.arch.exceptions`). What's left: a `.sync_data_abort`
   / `.sync_instruction_abort` callback (in the process/fault module) that

@@ -158,8 +158,37 @@ fn testWaiterSet() callconv(.c) i32 {
     return t.result();
 }
 
+// --- execve replaces the image in place --------------------------
+//
+// /exectest (userland/exectest.c): first execve's a bad path (must fail,
+// caller continues), then execve's /hello with an argv. execve keeps the
+// pid, so /hello exits 100 + <this pid>. Covers buildImage reuse, the
+// in-place TTBR0 swap, the rebuilt initial stack, the trap-frame rewrite
+// and old-image teardown.
+
+fn testExecveReplacesImage() callconv(.c) i32 {
+    var t = kernel_test.Tracker{ .serial = serial_if };
+    const free_before = pmm_if.get_free_memory();
+
+    var pid: u32 = 0;
+    t.expectEqual(@src(), main.load("/exectest", &pid), 0);
+    t.expectEqual(@src(), sched_if.admit(pid), 0);
+    t.expectEqual(@src(), sched_if.run(), 0);
+
+    var info: abi.ProcessInfo = .{};
+    t.expectEqual(@src(), process_if.get_info(pid, &info), 0);
+    t.expectEqual(@src(), info.state, abi.ProcessState.zombie);
+    // /hello (post-exec) exits 100 + getpid(); pid is unchanged by execve.
+    t.expectEqual(@src(), info.exit_code, @as(i32, @intCast(100 + pid)));
+
+    t.expectEqual(@src(), main.unload(pid), 0);
+    t.expectEqual(@src(), pmm_if.get_free_memory(), free_before);
+    return t.result();
+}
+
 comptime {
     abi.kernelTest("waiter_set", &testWaiterSet);
+    abi.kernelTest("execve_replaces_image", &testExecveReplacesImage);
     abi.kernelTest("load_run_hello", &testLoadRunHello);
     abi.kernelTest("load_missing_path", &testLoadMissingPath);
     abi.kernelTest("load_non_elf", &testLoadNonElf);
