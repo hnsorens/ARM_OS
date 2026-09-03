@@ -56,6 +56,7 @@ pub const SYS_execve = shared.SYS_execve;
 pub const SYS_wait4 = shared.SYS_wait4;
 pub const SyscallArgs = shared.SyscallArgs;
 pub const SyscallHandler = shared.SyscallHandler;
+pub const RawSyscallHandler = shared.RawSyscallHandler;
 pub const Syscalls = shared.Syscalls;
 pub const TrapFrame = shared.TrapFrame;
 pub const ExceptionVector = shared.ExceptionVector;

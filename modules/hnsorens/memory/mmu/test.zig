@@ -295,7 +295,73 @@ fn testCombinedFlagsRoundTrip() callconv(.c) i32 {
     return t.result();
 }
 
+const pmm_if = main.pmm_if;
+
+// fork() gives the child independent copies of every leaf page, while
+// still sharing the kernel-identity blocks; free_all reclaims everything
+// the fork allocated.
+fn testForkCopiesLeafPages() callconv(.c) i32 {
+    var t = kernel_test.Tracker{ .serial = serial_if };
+
+    var src: u64 = 0;
+    t.expectEqual(@src(), main.alloc(&src), 0);
+
+    var page: u64 = 0;
+    t.expectEqual(@src(), pmm_if.alloc_page(0, &page), 0);
+    const pv: [*]u8 = @ptrFromInt(page + abi.HHDM_OFFSET);
+    for (0..4096) |i| pv[i] = @truncate(i * 7 + 1);
+
+    const vaddr: u64 = 0x1_0000_0000; // 4 GiB
+    t.expectEqual(@src(), main.map(src, vaddr, page, 1, .ps_4kb, abi.MMU_USER), 0);
+
+    var child: u64 = 0;
+    t.expectEqual(@src(), main.fork(src, &child), 0);
+
+    var cphys: u64 = 0;
+    var cflags: u64 = 0;
+    t.expectEqual(@src(), main.translate(child, vaddr, &cphys, &cflags), 0);
+    t.expectNotEqual(@src(), cphys, page); // a different physical frame
+
+    const cv: [*]u8 = @ptrFromInt(cphys + abi.HHDM_OFFSET);
+    var same = true;
+    for (0..4096) |i| {
+        if (cv[i] != @as(u8, @truncate(i * 7 + 1))) same = false;
+    }
+    t.expectTrue(@src(), same); // contents duplicated
+
+    cv[0] = 0xEE; // mutate the child
+    t.expectEqual(@src(), pv[0], @as(u8, 1)); // parent frame untouched
+
+    t.expectEqual(@src(), main.freeAll(child), 0);
+    t.expectEqual(@src(), main.free(src), 0);
+    t.expectEqual(@src(), pmm_if.release(page), 0);
+    return t.result();
+}
+
+fn testForkFreeAllBalancesPmm() callconv(.c) i32 {
+    var t = kernel_test.Tracker{ .serial = serial_if };
+    const before = pmm_if.get_free_memory();
+
+    var src: u64 = 0;
+    t.expectEqual(@src(), main.alloc(&src), 0);
+    var page: u64 = 0;
+    t.expectEqual(@src(), pmm_if.alloc_page(0, &page), 0);
+    t.expectEqual(@src(), main.map(src, 0x2_0000_0000, page, 1, .ps_4kb, abi.MMU_USER), 0);
+
+    var child: u64 = 0;
+    t.expectEqual(@src(), main.fork(src, &child), 0);
+    t.expectLessThan(@src(), pmm_if.get_free_memory(), before);
+
+    t.expectEqual(@src(), main.freeAll(child), 0); // tables + the copied leaf frame
+    t.expectEqual(@src(), main.free(src), 0);
+    t.expectEqual(@src(), pmm_if.release(page), 0);
+    t.expectEqual(@src(), pmm_if.get_free_memory(), before);
+    return t.result();
+}
+
 comptime {
+    abi.kernelTest("fork_copies_leaf_pages", &testForkCopiesLeafPages);
+    abi.kernelTest("fork_free_all_balances_pmm", &testForkFreeAllBalancesPmm);
     abi.kernelTest("page_table_creation", &testPageTableCreation);
     abi.kernelTest("translation_and_flags", &testTranslationAndFlags);
     abi.kernelTest("huge_pages", &testHugePages);

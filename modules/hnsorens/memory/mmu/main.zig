@@ -9,7 +9,7 @@ const std = @import("std");
 const abi = @import("abi");
 const kernel_test = @import("kernel_test");
 
-const pmm_if = abi.importInterface(abi.Pmm);
+pub const pmm_if = abi.importInterface(abi.Pmm);
 pub const serial_if = abi.importInterface(abi.Serial);
 
 const ARM_TABLE_DESCRIPTOR: u64 = 0x3;
@@ -193,6 +193,135 @@ pub fn copy(src_root: u64, dst_root: *u64) callconv(.c) c_int {
     }
 
     dst_root.* = new_l0_phys;
+    return 0;
+}
+
+// --- Fork copy (fork / free_all) ------------------------------------------
+//
+// `fork` is `copy` except that every L3 *leaf* page gets a freshly
+// allocated physical frame with its contents memcpy'd, so parent and
+// child have independent memory (proper `fork(2)` semantics, eager rather
+// than copy-on-write -- CoW needs the write-fault handler). Block entries
+// (the shared kernel identity 1 GiB blocks at L1) are still shared by
+// value. `free_all` is the matching teardown: it frees the table frames
+// *and* every L3 leaf frame (which `free` deliberately leaves to the
+// caller), while still skipping the shared identity blocks. Use `fork` +
+// `free_all` as a pair; a `copy`'d or hand-`map`'d space still uses
+// `free`.
+
+fn pageBytes(phys: u64) [*]u8 {
+    return @ptrFromInt(phys + abi.HHDM_OFFSET);
+}
+
+fn forkL3Table(dst_l3: [*]u64, src_l3: [*]u64) c_int {
+    for (0..512) |m| {
+        if (!pteValid(src_l3[m])) continue;
+        const src_phys = src_l3[m] & PTE_ADDR_MASK;
+        var new_phys: u64 = undefined;
+        if (pmm_if.alloc_page(0, &new_phys) != 0) return abi.ENOMEM;
+        @memcpy(pageBytes(new_phys)[0..4096], pageBytes(src_phys)[0..4096]);
+        // Same descriptor bits, new output address.
+        dst_l3[m] = new_phys | (src_l3[m] & ~PTE_ADDR_MASK);
+    }
+    return 0;
+}
+
+fn forkL2Table(dst_l2: [*]u64, src_l2: [*]u64) c_int {
+    for (0..512) |k| {
+        if (!pteValid(src_l2[k])) continue;
+        if (!isTableEntry(src_l2[k])) {
+            dst_l2[k] = src_l2[k]; // 2 MiB block -- share (user progs don't use these)
+            continue;
+        }
+        var new_l3: u64 = undefined;
+        if (pmm_if.alloc_page(0, &new_l3) != 0) return abi.ENOMEM;
+        dst_l2[k] = new_l3 | ARM_TABLE_DESCRIPTOR;
+        const dl3 = l2v(new_l3);
+        @memset(dl3[0..512], 0);
+        const st = forkL3Table(dl3, l2v(src_l2[k] & PAGE_MASK));
+        if (st != 0) return st;
+    }
+    return 0;
+}
+
+fn forkL1Table(dst_l1: [*]u64, src_l1: [*]u64) c_int {
+    for (0..512) |j| {
+        if (!pteValid(src_l1[j])) continue;
+        if (!isTableEntry(src_l1[j])) {
+            dst_l1[j] = src_l1[j]; // 1 GiB block -- the shared kernel identity map
+            continue;
+        }
+        var new_l2: u64 = undefined;
+        if (pmm_if.alloc_page(0, &new_l2) != 0) return abi.ENOMEM;
+        dst_l1[j] = new_l2 | ARM_TABLE_DESCRIPTOR;
+        const dl2 = l2v(new_l2);
+        @memset(dl2[0..512], 0);
+        const st = forkL2Table(dl2, l2v(src_l1[j] & PAGE_MASK));
+        if (st != 0) return st;
+    }
+    return 0;
+}
+
+pub fn fork(src_root: u64, dst_root: *u64) callconv(.c) c_int {
+    if (src_root == 0) return abi.EINVAL;
+
+    var new_l0: u64 = undefined;
+    if (pmm_if.alloc_page(0, &new_l0) != 0) return abi.ENOMEM;
+    const src_l0 = l2v(src_root);
+    const dst_l0 = l2v(new_l0);
+    @memset(dst_l0[0..512], 0);
+
+    for (0..512) |i| {
+        if (!pteValid(src_l0[i])) continue;
+        var new_l1: u64 = undefined;
+        if (pmm_if.alloc_page(0, &new_l1) != 0) {
+            _ = freeAll(new_l0);
+            return abi.ENOMEM;
+        }
+        dst_l0[i] = new_l1 | ARM_TABLE_DESCRIPTOR;
+        const dl1 = l2v(new_l1);
+        @memset(dl1[0..512], 0);
+        const st = forkL1Table(dl1, l2v(src_l0[i] & PAGE_MASK));
+        if (st != 0) {
+            _ = freeAll(new_l0);
+            return st;
+        }
+    }
+    dst_root.* = new_l0;
+    return 0;
+}
+
+fn freeAllL3(l3: [*]u64) void {
+    for (0..512) |m| {
+        if (pteValid(l3[m])) _ = pmm_if.release(l3[m] & PTE_ADDR_MASK);
+    }
+}
+
+fn freeAllL2(l2: [*]u64) void {
+    for (0..512) |k| {
+        if (!pteValid(l2[k]) or !isTableEntry(l2[k])) continue;
+        freeAllL3(l2v(l2[k] & PAGE_MASK));
+        _ = pmm_if.release(l2[k] & PAGE_MASK);
+    }
+}
+
+fn freeAllL1(l1: [*]u64) void {
+    for (0..512) |j| {
+        if (!pteValid(l1[j]) or !isTableEntry(l1[j])) continue; // skip 1 GiB identity blocks
+        freeAllL2(l2v(l1[j] & PAGE_MASK));
+        _ = pmm_if.release(l1[j] & PAGE_MASK);
+    }
+}
+
+pub fn freeAll(root: u64) callconv(.c) c_int {
+    if (root == 0) return abi.EINVAL;
+    const l0 = l2v(root);
+    for (0..512) |i| {
+        if (!pteValid(l0[i]) or !isTableEntry(l0[i])) continue;
+        freeAllL1(l2v(l0[i] & PAGE_MASK));
+        _ = pmm_if.release(l0[i] & PAGE_MASK);
+    }
+    _ = pmm_if.release(root);
     return 0;
 }
 
@@ -492,6 +621,8 @@ comptime {
         .alloc = alloc,
         .free = free,
         .copy = copy,
+        .fork = fork,
+        .free_all = freeAll,
         .set_user_ctx = setUserCtx,
         .set_kernel_ctx = setKernelCtx,
         .get_user_ctx = getUserCtx,

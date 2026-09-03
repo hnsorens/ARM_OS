@@ -108,6 +108,15 @@ pub const Mmu = extern struct {
     alloc: *const fn (out_root: *u64) callconv(.c) c_int,
     free: *const fn (root: u64) callconv(.c) c_int,
     copy: *const fn (src_root: u64, dest_root: *u64) callconv(.c) c_int,
+    /// Deep copy for `fork(2)`: like `copy` but every leaf page is a fresh
+    /// physical frame with contents duplicated (independent memory), while
+    /// the shared kernel-identity 1 GiB blocks stay shared. Pair with
+    /// `free_all`.
+    fork: *const fn (src_root: u64, dest_root: *u64) callconv(.c) c_int,
+    /// Teardown for a `fork`-created space: frees the table frames AND
+    /// every leaf frame (which `free` leaves to the caller), still
+    /// skipping the shared identity blocks.
+    free_all: *const fn (root: u64) callconv(.c) c_int,
     set_user_ctx: *const fn (root: u64, asid: u16) callconv(.c) c_int,
     set_kernel_ctx: *const fn (root: u64, asid: u16) callconv(.c) c_int,
     get_user_ctx: *const fn (root: *u64) callconv(.c) c_int,
@@ -269,6 +278,13 @@ pub const ContextSwitch = extern struct {
     /// PSTATE (EL0t, interrupts unmasked). `EINVAL` for a null
     /// `user_entry` / `ttbr0`, or an implausibly small `kstack_top`.
     init_user_context: *const fn (ctx: *TaskContext, kstack_top: u64, ttbr0: u64, user_entry: u64, user_sp: u64) callconv(.c) c_int,
+    /// Initializes `ctx` for a forked child: copies `frame` (the parent's
+    /// trap frame at the fork `svc`) onto the child's kernel stack, forces
+    /// its x0 to 0, installs `ttbr0`, and arranges the first switch into
+    /// `ctx` to `eret` to EL0 with that (copied) register + PC + SP_EL0
+    /// state -- so the child returns 0 from `fork()` right where the
+    /// parent called it.
+    init_forked_context: *const fn (ctx: *TaskContext, kstack_top: u64, ttbr0: u64, frame: *const TrapFrame) callconv(.c) c_int,
     /// Saves the current execution context into `save`, then resumes
     /// `restore`. Returns (in `save`'s context) only once some later
     /// switch targets `save`.
@@ -308,6 +324,9 @@ pub const ProcessState = enum(u32) {
 
 pub const ProcessInfo = extern struct {
     pid: u32 = 0,
+    /// Parent pid (0 for the first process / after reparenting to a gone
+    /// parent).
+    parent: u32 = 0,
     state: ProcessState = .dead,
     priority: u32 = 0,
     exit_code: i32 = 0,
@@ -340,6 +359,14 @@ pub const Process = extern struct {
     /// to build and to tear down. `EINVAL` / `ENOMEM` as
     /// `create_kernel_thread`.
     create_user_process: *const fn (name: [*:0]const u8, ttbr0: u64, user_entry: u64, user_sp: u64, kstack_pages: u32, priority: u32, out_pid: *u32) callconv(.c) c_int,
+    /// Creates a forked child: a TCB whose context (built via
+    /// `ContextSwitch.init_forked_context`) resumes at EL0 from `frame`
+    /// with x0 = 0, in address space `ttbr0`, parented to `parent`.
+    create_forked_process: *const fn (name: [*:0]const u8, ttbr0: u64, parent: u32, frame: *const TrapFrame, kstack_pages: u32, priority: u32, out_pid: *u32) callconv(.c) c_int,
+    /// Point `pid` at a new address space (updates both the recorded root
+    /// and the saved context's TTBR0) -- for `execve`.
+    set_address_space: *const fn (pid: u32, ttbr0: u64) callconv(.c) c_int,
+    set_parent: *const fn (pid: u32, parent: u32) callconv(.c) c_int,
     /// Frees a thread's kernel stack and releases its TCB slot. `EINVAL`
     /// for an unknown pid; `EBUSY` if the thread is `running`.
     destroy: *const fn (pid: u32) callconv(.c) c_int,
@@ -418,6 +445,13 @@ pub const SyscallArgs = extern struct {
 /// negative means `-errno` by convention (not enforced by the table).
 pub const SyscallHandler = *const fn (args: *const SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64;
 
+/// A "raw" handler that gets the whole `TrapFrame` -- for syscalls that
+/// must read or rewrite the caller's full register / PC state (`clone`
+/// / `fork`, `execve`). May mutate the frame; the return value still
+/// lands in x0 afterward. A raw handler registered for a number takes
+/// precedence over a plain one.
+pub const RawSyscallHandler = *const fn (frame: *TrapFrame, ctx: ?*anyopaque) callconv(.c) i64;
+
 pub const Syscalls = extern struct {
     /// Register `handler` for syscall `nr`. `EINVAL` if `nr >=
     /// SYSCALL_TABLE_SIZE`, `EBUSY` if a handler is already registered.
@@ -429,8 +463,14 @@ pub const Syscalls = extern struct {
     count: *const fn () callconv(.c) u32,
     /// Run syscall `nr` directly from kernel code (no `svc`). Returns the
     /// handler's value, or `-ENOSYS` if `nr` is unregistered / out of
-    /// range.
+    /// range. (Raw handlers are not reachable this way -- they need a real
+    /// trap frame.)
     invoke: *const fn (nr: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64) callconv(.c) i64,
+    /// Register a raw (trap-frame) handler for `nr`; takes precedence over
+    /// a plain one. `EINVAL` for a null handler / out-of-range `nr`,
+    /// `EBUSY` if one is already registered.
+    register_raw: *const fn (nr: u32, handler: RawSyscallHandler, ctx: ?*anyopaque) callconv(.c) c_int,
+    unregister_raw: *const fn (nr: u32) callconv(.c) c_int,
 };
 
 // --- Cooperative round-robin scheduler ---
