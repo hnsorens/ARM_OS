@@ -117,11 +117,54 @@ fn testPmmBalancedAfterLoadUnload() callconv(.c) i32 {
     return t.result();
 }
 
+// --- fork + wait + process tree, end to end at EL0 --------------
+//
+// /forktest (userland/forktest.c): the parent forks, the child checks
+// its ppid and exits 7, the parent wait4()s and validates the reaped pid
+// + status, exiting 0 only on full success. Puts mmu.fork, the forked
+// EL0 context, fd.fork_table, the waiter/wake path and reaping all on
+// the line. (The proc module registered clone/wait4 before this runs.)
+
+fn testForkWaitEndToEnd() callconv(.c) i32 {
+    var t = kernel_test.Tracker{ .serial = serial_if };
+    const free_before = pmm_if.get_free_memory();
+
+    var pid: u32 = 0;
+    t.expectEqual(@src(), main.load("/forktest", &pid), 0);
+    t.expectEqual(@src(), sched_if.admit(pid), 0);
+    t.expectEqual(@src(), sched_if.run(), 0);
+
+    var info: abi.ProcessInfo = .{};
+    t.expectEqual(@src(), process_if.get_info(pid, &info), 0);
+    t.expectEqual(@src(), info.state, abi.ProcessState.zombie);
+    t.expectEqual(@src(), info.exit_code, @as(i32, 0)); // forktest exits 0 only on success
+
+    t.expectEqual(@src(), main.unload(pid), 0); // frees the parent; child was already reaped
+    t.expectEqual(@src(), pmm_if.get_free_memory(), free_before);
+    return t.result();
+}
+
+fn testWaiterSet() callconv(.c) i32 {
+    var t = kernel_test.Tracker{ .serial = serial_if };
+    main.removeWaiter(5);
+    main.removeWaiter(6);
+    t.expectFalse(@src(), main.isWaiting(5));
+    main.addWaiter(5);
+    t.expectTrue(@src(), main.isWaiting(5));
+    t.expectFalse(@src(), main.isWaiting(6));
+    main.addWaiter(5); // idempotent
+    main.removeWaiter(5);
+    t.expectFalse(@src(), main.isWaiting(5));
+    return t.result();
+}
+
 comptime {
+    abi.kernelTest("waiter_set", &testWaiterSet);
     abi.kernelTest("load_run_hello", &testLoadRunHello);
     abi.kernelTest("load_missing_path", &testLoadMissingPath);
     abi.kernelTest("load_non_elf", &testLoadNonElf);
     abi.kernelTest("unload_unknown_pid", &testUnloadUnknownPid);
     abi.kernelTest("two_instances_independent", &testTwoInstancesIndependent);
     abi.kernelTest("pmm_balanced_after_load_unload", &testPmmBalancedAfterLoadUnload);
+    abi.kernelTest("fork_wait_end_to_end", &testForkWaitEndToEnd);
 }

@@ -126,6 +126,7 @@ pub fn build(b: *std.Build) void {
     const user_progs = [_]UserProg{
         .{ .src = "userland/hello.c", .dest = "hello" },
         .{ .src = "userland/init.c", .dest = "init" },
+        .{ .src = "userland/forktest.c", .dest = "forktest" },
     };
 
     var user_dep: *std.Build.Step = &debugfs_write_hello.step;

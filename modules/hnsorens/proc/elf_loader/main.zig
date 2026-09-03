@@ -31,10 +31,12 @@ pub const vfs_if = abi.importInterface(abi.Vfs);
 pub const mmu_if = abi.importInterface(abi.Mmu);
 pub const pmm_if = abi.importInterface(abi.Pmm);
 pub const process_if = abi.importInterface(abi.Process);
+pub const fd_if = abi.importInterface(abi.Fd);
 pub const sched_if = abi.importInterface(abi.Scheduler);
 pub const sc_if = abi.importInterface(abi.Syscalls);
-pub const fd_if = abi.importInterface(abi.Fd);
 pub const serial_if = abi.importInterface(abi.Serial);
+
+const ROOT_MASK: u64 = 0x0000_FFFF_FFFF_F000; // strip the ASID bits off a TTBR0 value
 
 const PAGE_SIZE: u64 = 4096;
 const USER_STACK_BASE: u64 = 0x0000_2000_0000_0000; // 128 GiB
@@ -261,11 +263,83 @@ pub fn unload(pid: u32) callconv(.c) c_int {
     return 0;
 }
 
-// --- process syscalls -------------------------------------------
+// --- process-lifecycle syscalls + the process tree ------------------
 //
-// read/write/openat/close/lseek/dup are the fd module's; fork/exec/wait
-// are the proc module's. What's left here is the minimal lifecycle set
-// this module already owns via `load`/`unload`.
+// getpid / getppid / sched_yield / exit / exit_group / wait4, and clone
+// (== fork). read/write/openat/close/lseek/dup are the fd module's.
+//
+// fork = mmu.fork of the caller's address space (an eager, independent
+// copy of every page -- not CoW), process.create_forked_process (a TCB
+// whose context erets to EL0 from the caller's trap frame with x0 = 0),
+// fd.fork_table, then admit. wait4 finds a zombie child, writes a
+// Linux-style status, and reaps it (frees the space via mmu.free_all and
+// the TCB). A parent that exits reparents its live children to pid 0
+// (reparent-to-init needs an init that actually reaps).
+
+const KSTACK_PAGES_FORK: u32 = 8;
+
+var s_waiters: [16]u32 = [_]u32{0} ** 16;
+var s_proc_lock: spinlock.SpinLock = .{};
+
+fn nextForkAsid() u16 {
+    s_lock.lock();
+    defer s_lock.unlock();
+    const a = s_next_asid & 0xFF;
+    s_next_asid += 1;
+    return if (a == 0) 1 else a;
+}
+
+pub fn addWaiter(pid: u32) void {
+    s_proc_lock.lock();
+    defer s_proc_lock.unlock();
+    for (&s_waiters) |*w| {
+        if (w.* == pid) return;
+    }
+    for (&s_waiters) |*w| {
+        if (w.* == 0) {
+            w.* = pid;
+            return;
+        }
+    }
+}
+
+pub fn removeWaiter(pid: u32) void {
+    s_proc_lock.lock();
+    defer s_proc_lock.unlock();
+    for (&s_waiters) |*w| {
+        if (w.* == pid) w.* = 0;
+    }
+}
+
+pub fn isWaiting(pid: u32) bool {
+    s_proc_lock.lock();
+    defer s_proc_lock.unlock();
+    for (s_waiters) |w| {
+        if (w == pid) return true;
+    }
+    return false;
+}
+
+fn reparentChildren(ppid: u32, new_parent: u32) void {
+    var pids: [64]u32 = undefined;
+    var n: u32 = 0;
+    _ = process_if.list(&pids, pids.len, &n);
+    for (pids[0..n]) |p| {
+        var info: abi.ProcessInfo = .{};
+        if (process_if.get_info(p, &info) == 0 and info.parent == ppid) {
+            _ = process_if.set_parent(p, new_parent);
+        }
+    }
+}
+
+fn reapChild(pid: u32) void {
+    var info: abi.ProcessInfo = .{};
+    if (process_if.get_info(pid, &info) == 0) {
+        _ = fd_if.clear_table(pid);
+        if (info.address_space != 0) _ = mmu_if.free_all(info.address_space & ROOT_MASK);
+    }
+    _ = process_if.destroy(pid);
+}
 
 fn sysGetpid(args: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
     _ = args;
@@ -273,16 +347,12 @@ fn sysGetpid(args: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
     return @intCast(sched_if.current());
 }
 
-fn sysExit(args: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
+fn sysGetppid(args: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
+    _ = args;
     _ = ctx;
-    const pid = sched_if.current();
-    if (pid != 0) {
-        const code: i32 = @truncate(@as(i64, @bitCast(args.arg[0])));
-        _ = process_if.set_exit_code(pid, code);
-        _ = fd_if.clear_table(pid); // close all fds on exit
-    }
-    sched_if.exit_current();
-    return 0; // not reached
+    var info: abi.ProcessInfo = .{};
+    if (process_if.get_info(sched_if.current(), &info) != 0) return 0;
+    return @intCast(info.parent);
 }
 
 fn sysSchedYield(args: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
@@ -292,13 +362,105 @@ fn sysSchedYield(args: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i6
     return 0;
 }
 
+fn sysExit(args: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
+    _ = ctx;
+    const me = sched_if.current();
+    if (me == 0) {
+        sched_if.exit_current();
+        return 0;
+    }
+    _ = process_if.set_exit_code(me, @truncate(@as(i64, @bitCast(args.arg[0]))));
+    _ = fd_if.clear_table(me);
+    reparentChildren(me, 0);
+
+    var info: abi.ProcessInfo = .{};
+    if (process_if.get_info(me, &info) == 0 and info.parent != 0 and isWaiting(info.parent)) {
+        _ = sched_if.wake(info.parent);
+    }
+
+    sched_if.exit_current();
+    return 0; // not reached
+}
+
+fn sysClone(frame: *abi.TrapFrame, ctx: ?*anyopaque) callconv(.c) i64 {
+    _ = ctx;
+    const parent = sched_if.current();
+    if (parent == 0) return -@as(i64, abi.EINVAL);
+
+    var pinfo: abi.ProcessInfo = .{};
+    if (process_if.get_info(parent, &pinfo) != 0 or pinfo.address_space == 0) return -@as(i64, abi.EINVAL);
+
+    var child_root: u64 = 0;
+    if (mmu_if.fork(pinfo.address_space & ROOT_MASK, &child_root) != 0) return -@as(i64, abi.ENOMEM);
+
+    const child_ttbr0 = (@as(u64, nextForkAsid()) << 48) | child_root;
+
+    var child_pid: u32 = 0;
+    const rc = process_if.create_forked_process("fork", child_ttbr0, parent, frame, KSTACK_PAGES_FORK, pinfo.priority, &child_pid);
+    if (rc != 0) {
+        _ = mmu_if.free_all(child_root);
+        return -@as(i64, rc);
+    }
+
+    _ = fd_if.fork_table(parent, child_pid);
+    _ = sched_if.admit(child_pid);
+    return @intCast(child_pid); // parent gets the pid; the child's own context yields 0
+}
+
+fn sysWait4(args: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
+    _ = ctx;
+    const me = sched_if.current();
+    if (me == 0) return -@as(i64, abi.EINVAL);
+
+    const wpid: i64 = @bitCast(args.arg[0]);
+    const status_ptr = args.arg[1];
+
+    while (true) {
+        var pids: [64]u32 = undefined;
+        var n: u32 = 0;
+        _ = process_if.list(&pids, pids.len, &n);
+
+        var any_child = false;
+        var zombie: u32 = 0;
+        for (pids[0..n]) |p| {
+            var info: abi.ProcessInfo = .{};
+            if (process_if.get_info(p, &info) != 0 or info.parent != me) continue;
+            if (wpid > 0 and p != @as(u32, @intCast(wpid))) continue;
+            any_child = true;
+            if (info.state == .zombie) {
+                zombie = p;
+                break;
+            }
+        }
+
+        if (zombie != 0) {
+            var zi: abi.ProcessInfo = .{};
+            _ = process_if.get_info(zombie, &zi);
+            if (status_ptr != 0) {
+                const sp: *i32 = @ptrFromInt(status_ptr);
+                sp.* = (zi.exit_code & 0xFF) << 8;
+            }
+            reapChild(zombie);
+            return @intCast(zombie);
+        }
+        if (!any_child) return -@as(i64, abi.ECHILD);
+
+        addWaiter(me);
+        _ = sched_if.block();
+        removeWaiter(me);
+    }
+}
+
 pub fn main(boot_info_ptr: *anyopaque) void {
     _ = boot_info_ptr;
     _ = sc_if.register(abi.SYS_getpid, &sysGetpid, null);
+    _ = sc_if.register(abi.SYS_getppid, &sysGetppid, null);
+    _ = sc_if.register(abi.SYS_sched_yield, &sysSchedYield, null);
     _ = sc_if.register(abi.SYS_exit, &sysExit, null);
     _ = sc_if.register(abi.SYS_exit_group, &sysExit, null);
-    _ = sc_if.register(abi.SYS_sched_yield, &sysSchedYield, null);
-    kernel_fmt.print(serial_if, "[elf_loader] ready\n", .{});
+    _ = sc_if.register(abi.SYS_wait4, &sysWait4, null);
+    _ = sc_if.register_raw(abi.SYS_clone, &sysClone, null);
+    kernel_fmt.print(serial_if, "[elf_loader] ready; process syscalls + tree\n", .{});
 }
 
 comptime {
