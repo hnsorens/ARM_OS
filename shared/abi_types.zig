@@ -29,6 +29,10 @@ pub const EINVAL: c_int = 22;
 pub const ENOSYS: c_int = 38;
 pub const ENOEXEC: c_int = 8;
 pub const EBADF: c_int = 9;
+pub const ECHILD: c_int = 10;
+pub const ESPIPE: c_int = 29;
+pub const EMFILE: c_int = 24;
+pub const ENFILE: c_int = 23;
 pub const ENOMEM: c_int = 12;
 pub const EFAULT: c_int = 14;
 pub const EBUSY: c_int = 16;
@@ -390,6 +394,19 @@ pub const SYS_clone: u32 = 220;
 pub const SYS_execve: u32 = 221;
 pub const SYS_wait4: u32 = 260;
 
+// open() flags and lseek() whence (generic Linux values).
+pub const O_RDONLY: u32 = 0;
+pub const O_WRONLY: u32 = 1;
+pub const O_RDWR: u32 = 2;
+pub const O_CREAT: u32 = 0o100;
+pub const O_TRUNC: u32 = 0o1000;
+pub const O_APPEND: u32 = 0o2000;
+pub const O_DIRECTORY: u32 = 0o200000;
+pub const AT_FDCWD: i32 = -100;
+pub const SEEK_SET: u32 = 0;
+pub const SEEK_CUR: u32 = 1;
+pub const SEEK_END: u32 = 2;
+
 /// The six general-purpose arguments a syscall handler receives, plus the
 /// number it was invoked as.
 pub const SyscallArgs = extern struct {
@@ -460,20 +477,63 @@ pub const Scheduler = extern struct {
     run: *const fn () callconv(.c) c_int,
 };
 
-// --- Console keyboard input ---
+// --- Raw console keyboard input ---
 //
 // `hnsorens.io.keyboard` drives the receive side of the PL011 UART (the
 // only "keyboard" the QEMU virt board has): it unmasks the UART RX
-// interrupt, registers an ISR with the interrupt manager, and buffers
-// received bytes into a ring, echoing each keystroke. It also owns the
-// `SYS_read` syscall (fd 0), which blocks the calling process until a
-// byte is available and wakes it from the ISR.
+// interrupt, registers an ISR, and hands every received byte, raw, to a
+// registered listener. Line discipline is `hnsorens.io.tty`'s job; fd
+// plumbing is `hnsorens.fs.fd`'s.
+pub const KeyListener = *const fn (byte: u8) callconv(.c) void;
+
 pub const Keyboard = extern struct {
-    /// Non-blocking: pop up to `max` bytes from the input ring into
-    /// `buf`; returns the count (0 if the ring is empty).
+    /// Set the sink for raw RX bytes (invoked from the ISR). One
+    /// listener; a later call replaces it. While one is set, bytes go
+    /// only to it (not the fallback ring below).
+    set_listener: *const fn (cb: KeyListener) callconv(.c) void,
+    /// Non-blocking: drain up to `max` bytes from the fallback ring (used
+    /// only when no listener is set). Returns the count.
     read: *const fn (buf: [*]u8, max: u64) callconv(.c) u64,
-    /// Bytes currently buffered.
     available: *const fn () callconv(.c) u64,
+};
+
+// --- Console line discipline (tty) ---
+//
+// `hnsorens.io.tty` sits on `keyboard`'s raw byte stream and `serial`'s
+// output. In canonical mode it buffers a line, echoes keystrokes, handles
+// backspace / ^U / ^D, translates CR->LF, and only lets a `read` complete
+// once a full line (or EOF) is ready. In raw mode every byte is delivered
+// as it arrives. It owns the block/wake of a process waiting on console
+// input.
+pub const Tty = extern struct {
+    /// Blocking read of console input. Canonical: returns at most one
+    /// line's worth (up to `max`), 0 at EOF (^D on an empty line). Raw:
+    /// returns as soon as >= 1 byte is available.
+    read: *const fn (buf: [*]u8, max: u64) callconv(.c) u64,
+    /// Write to the console (goes to `serial`). Returns `len`.
+    write: *const fn (buf: [*]const u8, len: u64) callconv(.c) u64,
+    /// `canonical` = line-buffered + editing; `echo` = echo keystrokes.
+    set_mode: *const fn (canonical: bool, echo: bool) callconv(.c) void,
+};
+
+// --- File descriptors / open-file table ---
+//
+// `hnsorens.fs.fd` owns a per-process fd table and a pool of open-file
+// descriptions (each with an offset -- the "file pointer" -- a refcount,
+// and a backing: the console tty, or a VFS path). It owns the
+// `read`/`write`/`openat`/`close`/`lseek`/`dup` syscalls, dispatching by
+// fd to the right backing. The `Fd` vtable below is for the process
+// modules to set up / fork / tear down a table.
+pub const Fd = extern struct {
+    /// Give `pid` a fresh table with fds 0/1/2 bound to the console.
+    /// `EEXIST` if it already has one.
+    open_defaults: *const fn (pid: u32) callconv(.c) c_int,
+    /// Give `child` a copy of `parent`'s table (open-file descriptions
+    /// shared, refcounts bumped) -- fork semantics.
+    fork_table: *const fn (parent: u32, child: u32) callconv(.c) c_int,
+    /// Close every fd and release `pid`'s table (idempotent-ish: `EINVAL`
+    /// if `pid` has no table).
+    clear_table: *const fn (pid: u32) callconv(.c) c_int,
 };
 
 // --- Userspace ELF loading ---
