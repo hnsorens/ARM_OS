@@ -41,6 +41,32 @@ pselect6); `statx`/`waitid` deliberately unregistered so musl falls back.
 
 ---
 
+## BLOCKER: bootloader module-loader layout fragility
+
+Recurring all session: when a module's on-disk size/section layout
+shifts, an **adjacent** module (usually the next one loaded) gets
+corrupted — symptom is a Zig panic or an EL0 SIGSEGV / pmm leak in a
+test that the change doesn't touch, and the symptom *moves* when
+unrelated code (e.g. a `pub const panic` handler) is added. Confirmed
+triggers this session:
+  * `s_mm` as a large non-zero `.data` array in `elf_loader` (fixed by
+    forcing it to `.bss` — zero defaults)
+  * the ~250-line signal block in `elf_loader` (fixed by splitting it
+    into `hnsorens.sys.signal`)
+  * adding `on_execve` to the `Fd` vtable + `cloexec: u32` to `FdTable`
+    (`O_CLOEXEC` work) → `/forktest` SIGSEGVs, +22-page leak
+  * `nanosleep` real (grows `elf_loader`) → same `/forktest` failure
+
+`elfSpan`/`computeSegmentMapping`/`linkElfModule` all *look* right
+(`p_memsz` used, whole segment `@memset`-zeroed, no relocs land in
+`.bss`). The real cause is unfound. **This gates further growth of
+`fd` / `elf_loader`** — the remaining syscalls (real `nanosleep`,
+`O_CLOEXEC`, job control) need it fixed or need to land in fresh small
+modules. Start by dumping every loaded module's final [phys, virt] page
+ranges at boot and checking for overlap / a wrong relocation delta.
+
+---
+
 ## Kernel prerequisites (non-syscall — nothing runs without these)
 
 - [x] **FP/SIMD** — `CPACR_EL1.FPEN=0b11` in `exceptions.initCore()`;
