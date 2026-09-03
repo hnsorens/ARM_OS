@@ -264,6 +264,7 @@ fn runUserExpect(comptime path: [:0]const u8, want_code: i32) fn () callconv(.c)
 
 const testSyscallBatch = runUserExpect("/systest", 55);
 const testPipeCwdDev = runUserExpect("/pipetest", 66);
+const testSignals = runUserExpect("/sigtest", 88);
 
 comptime {
     abi.kernelTest("waiter_set", &testWaiterSet);
@@ -272,6 +273,7 @@ comptime {
     abi.kernelTest("mmap_brk_end_to_end", &testMmapBrkEndToEnd);
     abi.kernelTest("syscall_batch", &testSyscallBatch);
     abi.kernelTest("pipe_cwd_dev", &testPipeCwdDev);
+    abi.kernelTest("signals", &testSignals);
     abi.kernelTest("load_run_hello", &testLoadRunHello);
     abi.kernelTest("load_missing_path", &testLoadMissingPath);
     abi.kernelTest("load_non_elf", &testLoadNonElf);

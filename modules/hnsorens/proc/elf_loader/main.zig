@@ -34,6 +34,7 @@ pub const process_if = abi.importInterface(abi.Process);
 pub const fd_if = abi.importInterface(abi.Fd);
 pub const sched_if = abi.importInterface(abi.Scheduler);
 pub const sc_if = abi.importInterface(abi.Syscalls);
+pub const signal_if = abi.importInterface(abi.Signal);
 pub const serial_if = abi.importInterface(abi.Serial);
 
 const ROOT_MASK: u64 = 0x0000_FFFF_FFFF_F000; // strip the ASID bits off a TTBR0 value
@@ -475,6 +476,7 @@ pub fn unload(pid: u32) callconv(.c) c_int {
 
     _ = fd_if.clear_table(pid); // idempotent -- exit() may already have
     mmForget(pid, true); // mmu.free below won't touch anon leaf frames
+    signal_if.forget(pid);
     freeImageParts(img.uroot, img.segs[0..img.n_segs], img.stack_phys);
     img.* = .{};
     return 0;
@@ -554,6 +556,7 @@ fn reapChild(pid: u32) void {
     if (process_if.get_info(pid, &info) == 0) {
         _ = fd_if.clear_table(pid);
         mmForget(pid, false); // free_all frees every leaf; just drop bookkeeping
+        signal_if.forget(pid);
         if (info.address_space != 0) _ = mmu_if.free_all(info.address_space & ROOT_MASK);
     }
     _ = process_if.destroy(pid);
@@ -580,24 +583,37 @@ fn sysSchedYield(args: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i6
     return 0;
 }
 
-fn sysExit(args: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
-    _ = ctx;
+/// Ends the current process with `code` (a full wait(2) status word -- so
+/// a signal death passes `sig` in the low 7 bits, a normal exit passes
+/// `(code & 0xff) << 8`; callers here mostly pass the raw exit code and
+/// rely on wait4 to shift it, which is a small lie kept for simplicity).
+/// Never returns.
+fn terminateCurrent(code: i32) noreturn {
     const me = sched_if.current();
     if (me == 0) {
         sched_if.exit_current();
-        return 0;
+        unreachable;
     }
-    _ = process_if.set_exit_code(me, @truncate(@as(i64, @bitCast(args.arg[0]))));
+    _ = process_if.set_exit_code(me, code);
     _ = fd_if.clear_table(me);
+    signal_if.forget(me);
     reparentChildren(me, 0);
 
     var info: abi.ProcessInfo = .{};
-    if (process_if.get_info(me, &info) == 0 and info.parent != 0 and isWaiting(info.parent)) {
-        _ = sched_if.wake(info.parent);
+    if (process_if.get_info(me, &info) == 0 and info.parent != 0) {
+        // raiseSignal already wakes the parent if it is blocked (e.g. in
+        // wait4) -- do NOT also wake it here or it lands on the ready
+        // queue twice.
+        signal_if.raise(info.parent, 17); // SIGCHLD
     }
 
     sched_if.exit_current();
-    return 0; // not reached
+    unreachable;
+}
+
+fn sysExit(args: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
+    _ = ctx;
+    terminateCurrent(@truncate(@as(i64, @bitCast(args.arg[0]))));
 }
 
 fn sysClone(frame: *abi.TrapFrame, ctx: ?*anyopaque) callconv(.c) i64 {
@@ -621,6 +637,7 @@ fn sysClone(frame: *abi.TrapFrame, ctx: ?*anyopaque) callconv(.c) i64 {
     }
 
     _ = fd_if.fork_table(parent, child_pid);
+    signal_if.fork_inherit(parent, child_pid);
     _ = sched_if.admit(child_pid);
     return @intCast(child_pid); // parent gets the pid; the child's own context yields 0
 }
@@ -769,6 +786,7 @@ fn sysExecve(frame: *abi.TrapFrame, ctx: ?*anyopaque) callconv(.c) i64 {
     //    the whole address space is new -- drop and free the old
     //    process's anon mmap/brk frames (mmu.free won't).
     mmForget(me, true);
+    signal_if.forget(me);
     s_lock.lock();
     img.uroot = b.uroot;
     img.segs[0] = .{ .phys = b.img_phys, .pages = b.img_pages };
@@ -799,7 +817,7 @@ const MMAP_LIMIT: u64 = 0x0000_5800_0000_0000;
 const BRK_BASE: u64 = 0x0000_4800_0000_0000; // its own L0 slot
 const BRK_MAX: u64 = 256 * 1024 * 1024;
 
-const MAX_MM = 16; // concurrent user processes with anon mappings
+const MAX_MM = 8; // concurrent user processes with anon mappings
 const MAX_ANON = 32; // anon regions per process
 
 const AnonRec = struct {
@@ -1190,6 +1208,7 @@ fn sysPrlimit64(a: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
     return 0;
 }
 
+
 pub fn main(boot_info_ptr: *anyopaque) void {
     _ = boot_info_ptr;
     _ = mmu_if.get_user_ctx(&s_kernel_root); // kernel TTBR0 is still active here
@@ -1230,13 +1249,8 @@ pub fn main(boot_info_ptr: *anyopaque) void {
     _ = sc_if.register(abi.SYS_nanosleep, &sysZero, null); // TODO real sleep
     _ = sc_if.register(abi.SYS_clock_nanosleep, &sysZero, null);
 
-    // signals -- accepted and recorded-nowhere; real delivery is Layer 3
-    _ = sc_if.register(abi.SYS_rt_sigaction, &sysZero, null);
-    _ = sc_if.register(abi.SYS_rt_sigprocmask, &sysZero, null);
+    // signals: rt_sig* / kill / delivery hook live in hnsorens.sys.signal
     _ = sc_if.register(abi.SYS_set_robust_list, &sysZero, null);
-    _ = sc_if.register(abi.SYS_kill, &sysZero, null);
-    _ = sc_if.register(abi.SYS_tkill, &sysZero, null);
-    _ = sc_if.register(abi.SYS_tgkill, &sysZero, null);
 
     // session / pgrp -- accepted (no job control yet)
     _ = sc_if.register(abi.SYS_setpgid, &sysZero, null);

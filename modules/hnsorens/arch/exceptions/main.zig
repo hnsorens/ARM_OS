@@ -137,6 +137,9 @@ const Slot = struct {
 var s_handlers: [NUM_VECTORS]Slot = [_]Slot{.{}} ** NUM_VECTORS;
 var s_lock: spinlock.SpinLock = .{};
 
+/// Runs on every return to EL0 (see abi.UserReturnHook). One slot.
+var s_user_return_hook: ?abi.UserReturnHook = null;
+
 fn ecToVector(ec: u32) abi.ExceptionVector {
     return switch (ec) {
         0x15 => .sync_svc, // SVC from AArch64
@@ -172,12 +175,22 @@ export fn exc_dispatch(slot_index: u64, frame: *abi.TrapFrame) callconv(.c) void
 
     s_lock.lock();
     const slot = s_handlers[@intFromEnum(vector)];
+    const hook = s_user_return_hook;
     s_lock.unlock();
 
+    var handled = false;
     if (slot.cb) |cb| {
-        if (cb(frame, origin, slot.arg) == .handled) return;
+        if (cb(frame, origin, slot.arg) == .handled) handled = true;
     }
-    applyDefault(vector, frame, origin);
+    if (!handled) applyDefault(vector, frame, origin);
+
+    // On the way back to EL0, give the signal layer a chance to divert
+    // `eret` into a handler. Runs after both the vector callback and the
+    // default policy so a fault callback that raised SIGSEGV is delivered
+    // here rather than falling through to the halt in applyDefault.
+    if (origin == .lower_el_aarch64) {
+        if (hook) |h| h(frame);
+    }
 }
 
 fn applyDefault(vector: abi.ExceptionVector, frame: *abi.TrapFrame, origin: abi.ExceptionOrigin) void {
@@ -239,6 +252,13 @@ pub fn unregisterHandler(vector: abi.ExceptionVector) callconv(.c) c_int {
     return 0;
 }
 
+pub fn setUserReturnHook(hook: ?abi.UserReturnHook) callconv(.c) c_int {
+    s_lock.lock();
+    defer s_lock.unlock();
+    s_user_return_hook = hook;
+    return 0;
+}
+
 pub fn main(boot_info_ptr: *anyopaque) void {
     _ = boot_info_ptr;
     _ = initCore();
@@ -250,6 +270,7 @@ comptime {
         .init_core = initCore,
         .register_handler = registerHandler,
         .unregister_handler = unregisterHandler,
+        .set_user_return_hook = setUserReturnHook,
     });
 }
 

@@ -56,6 +56,7 @@ pub const ENODEV: c_int = 19;
 pub const ENOTTY: c_int = 25;
 pub const ERANGE: c_int = 34;
 pub const EPIPE: c_int = 32;
+pub const ESRCH: c_int = 3;
 pub const EDESTADDRREQ: c_int = 89;
 
 // --- Boot info passed to every module entry ---
@@ -486,6 +487,8 @@ pub const SYS_tkill: u32 = 130;
 pub const SYS_tgkill: u32 = 131;
 pub const SYS_rt_sigaction: u32 = 134;
 pub const SYS_rt_sigprocmask: u32 = 135;
+pub const SYS_rt_sigpending: u32 = 136;
+pub const SYS_rt_sigreturn: u32 = 139;
 pub const SYS_setpgid: u32 = 154;
 pub const SYS_getpgid: u32 = 155;
 pub const SYS_getsid: u32 = 156;
@@ -785,6 +788,25 @@ pub const ExceptionOutcome = enum(u32) {
 
 pub const ExceptionCallback = *const fn (frame: *TrapFrame, origin: ExceptionOrigin, arg: ?*anyopaque) callconv(.c) ExceptionOutcome;
 
+/// Called on every return to a lower EL (EL0), after the vector callback
+/// and default policy, with the about-to-be-restored `TrapFrame`. The
+/// signal layer uses this to divert `eret` into a signal handler.
+pub const UserReturnHook = *const fn (frame: *TrapFrame) callconv(.c) void;
+
+/// POSIX signals, exported by `hnsorens.sys.signal` (category "signal").
+/// The process layer calls these; the module itself owns the syscalls
+/// (rt_sigaction/procmask/pending/return, kill/tkill/tgkill), the
+/// return-to-EL0 delivery hook and the EL0 fault -> SIGSEGV path.
+pub const Signal = extern struct {
+    /// Make `sig` pending on `pid` (and wake it if blocked). No-op for an
+    /// unknown pid or sig outside 1..64.
+    raise: *const fn (pid: u32, sig: u32) callconv(.c) void,
+    /// Drop all per-process signal state for `pid` (exit / reap / execve).
+    forget: *const fn (pid: u32) callconv(.c) void,
+    /// Copy `parent`'s dispositions + blocked mask to `child` (fork).
+    fork_inherit: *const fn (parent: u32, child: u32) callconv(.c) void,
+};
+
 /// Exported by the exceptions module (category "exceptions").
 pub const Exceptions = extern struct {
     /// Install the vector table in VBAR_EL1 on the current core. The
@@ -796,6 +818,8 @@ pub const Exceptions = extern struct {
     /// Remove `vector`'s callback (idempotent -- removing an absent one
     /// still returns 0).
     unregister_handler: *const fn (vector: ExceptionVector) callconv(.c) c_int,
+    /// Set (or clear, with null) the sole return-to-EL0 hook.
+    set_user_return_hook: *const fn (hook: ?UserReturnHook) callconv(.c) c_int,
 };
 
 // --- VirtIO-MMIO bus, block device, GPT, ext2, VFS ---
