@@ -55,6 +55,22 @@ Legend: `[x]` done · `[~]` partial / stubbed · `[ ]` not started
       `AT_SYSINFO_EHDR` (no vDSO).
 - [ ] **`mmap` address space** — demand-zero anonymous pages in user
       TTBR0; per-process VMA list (start with a bump region ~96 GiB).
+      FIRST ATTEMPT REVERTED (anon mmap/munmap/mprotect/madvise/mremap +
+      brk bolted onto elf_loader, per-pid side table, `/mmtest`). With
+      the 6 handlers *registered*, `execve_replaces_image` leaked 2-3
+      pages and `fork_wait_end_to_end` hung/faulted (data abort on the
+      parent's user-stack `status` write => wrong TTBR0 active) — even
+      though no pre-existing test program calls mmap/brk. Commenting out
+      just the 6 `sc_if.register()` calls (keeping all the code) made
+      `execve` pass again, so the trigger is the handlers being
+      *dispatchable*, not the code path itself. Unresolved. Suspects:
+      `mmu.unmap`'s `pruneIfEmpty` freeing page-table structure that
+      `mmu.copy` shares from the kernel identity root; or a Zig
+      layout/`.data` effect from the non-zero-initialised side table
+      (`mmap_top`/`brk_cur` defaults). NEXT TIME: do it as a real
+      per-process VMA module, read `modules/hnsorens/memory/mmu/main.zig`
+      (`free`/`copy`/`unmap`/`pruneIfEmpty`) carefully first, and get a
+      faster test loop than the ~5-10 min full `qemu-test`.
 - [ ] **Per-process cwd** string in the PCB + `AT_FDCWD` / dirfd
       relative-path resolution in the vfs (today absolute-only).
 - [ ] **`struct kstat`** (aarch64 layout) translation from `Ext2Stat`.
