@@ -10,22 +10,34 @@ Numbers are the `asm-generic/unistd.h` (aarch64) ones — the same table
 
 Legend: `[x]` done · `[~]` partial / stubbed · `[ ]` not started
 
+## STATUS (qemu-test passed=392)
+
+Done: FP/SIMD + TPIDR_EL0 + auxv (Layer 0); anon mmap/munmap/mprotect +
+brk; the full coreutils syscall surface (stat family, getdents64, fcntl,
+ioctl, the `*at` family, writev/readv, time, id stubs, Tier C stubs);
+pipe2 + per-process cwd + `/dev` nodes; statfs/fstatfs/mknodat; and
+**Layer 3 core signals** (rt_sigaction/procmask/pending/return, delivery
+via the exceptions return-to-EL0 hook, kill family, SIGSEGV-from-fault,
+SIGCHLD, SIGPIPE, `^C`→SIGINT, default actions, fork inherit).
+
+Not done: real `nanosleep` (returns 0 now — no sleep queue); `O_CLOEXEC`
+across execve; job control + termios driving the tty; `rt_sigsuspend` /
+`sigaltstack` / SA_RESTART; event objects (epoll/timerfd/eventfd/
+pselect6); `statx`/`waitid` deliberately unregistered so musl falls back.
+
+~100 syscalls registered across `fd`, `elf_loader`, `signal`.
+
 ---
 
-## Already working (registered)
+## Layer 0 + first batch — DONE
 
-- [x] `read` 63, `write` 64, `openat` 56, `close` 57, `lseek` 62, `dup` 23
-- [x] `getpid` 172, `getppid` 173, `sched_yield` 124
-- [x] `exit` 93, `exit_group` 94, `wait4` 260
-- [x] `clone` 220 (== fork), `execve` 221
-
-## Numbered in abi_types.zig but NOT wired
-
-- [ ] `getcwd` 17        — needs per-process cwd
-- [ ] `chdir` 49         — needs per-process cwd
-- [ ] `getdents64` 61    — wrap `vfs.list_dir`
-- [ ] `fstat` 80         — wrap `vfs.stat` + `struct kstat`
-- [ ] `brk` 214          — stub: return current break
+- [x] `read`/`write`/`openat`/`close`/`lseek`/`dup`, `getpid`/`getppid`/
+      `sched_yield`, `exit`/`exit_group`/`wait4` (+WNOHANG),
+      `clone`(fork)/`execve`
+- [x] `getcwd` 17 / `chdir` 49 / `fchdir` 50 — per-process cwd in `FdTable`
+- [x] `getdents64` 61 — `vfs.list_dir`, real `d_type`
+- [x] `fstat` 80 / `newfstatat` 79 — `abi.KStat` from `Ext2Stat`
+- [x] `brk` 214 — grow real, shrink no-op (see the mmap note)
 
 ---
 
