@@ -80,6 +80,13 @@ fn startInit() void {
         Serial.failLog("Admitting /init");
         return;
     }
+
+    // Put the console in canonical + echo mode for the interactive shell
+    // (the tty module's own tests leave it in whatever state they last set).
+    if (g_registry.get("tty", "console")) |tty_di| {
+        const tty: *const shared.Tty = @ptrCast(@alignCast(tty_di.vtable_ptr));
+        tty.set_mode(true, true);
+    }
     Serial.okLog("Starting /init");
 
     // Console input arrives as a UART IRQ; unmask it at EL1 so this idle

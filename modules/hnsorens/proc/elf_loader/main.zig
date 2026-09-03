@@ -33,6 +33,7 @@ pub const pmm_if = abi.importInterface(abi.Pmm);
 pub const process_if = abi.importInterface(abi.Process);
 pub const sched_if = abi.importInterface(abi.Scheduler);
 pub const sc_if = abi.importInterface(abi.Syscalls);
+pub const fd_if = abi.importInterface(abi.Fd);
 pub const serial_if = abi.importInterface(abi.Serial);
 
 const PAGE_SIZE: u64 = 4096;
@@ -235,6 +236,8 @@ pub fn load(path: [*:0]const u8, out_pid: *u32) callconv(.c) c_int {
         .n_segs = n_segs,
         .segs = segs,
     };
+    // fresh process -> stdin/stdout/stderr on the console.
+    _ = fd_if.open_defaults(pid);
     out_pid.* = pid;
     return 0;
 }
@@ -252,26 +255,17 @@ pub fn unload(pid: u32) callconv(.c) c_int {
     const rc = process_if.destroy(pid);
     if (rc != 0) return rc; // EBUSY while running
 
+    _ = fd_if.clear_table(pid); // idempotent -- exit() may already have
     freeImageParts(img.uroot, img.segs[0..img.n_segs], img.stack_phys);
     img.* = .{};
     return 0;
 }
 
 // --- process syscalls -------------------------------------------
-
-fn sysWrite(args: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
-    _ = ctx;
-    const fd = args.arg[0];
-    const buf = args.arg[1];
-    const len = args.arg[2];
-    if (fd != 1 and fd != 2) return -@as(i64, abi.EBADF);
-    if (len == 0) return 0;
-    // The calling process's TTBR0 is still active here, so `buf` (a user
-    // VA) is dereferenceable; the identity-map copy keeps the UART MMIO
-    // reachable for serial_if.write.
-    _ = serial_if.write(@as([*]const u8, @ptrFromInt(buf)), len);
-    return @intCast(len);
-}
+//
+// read/write/openat/close/lseek/dup are the fd module's; fork/exec/wait
+// are the proc module's. What's left here is the minimal lifecycle set
+// this module already owns via `load`/`unload`.
 
 fn sysGetpid(args: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
     _ = args;
@@ -285,6 +279,7 @@ fn sysExit(args: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
     if (pid != 0) {
         const code: i32 = @truncate(@as(i64, @bitCast(args.arg[0])));
         _ = process_if.set_exit_code(pid, code);
+        _ = fd_if.clear_table(pid); // close all fds on exit
     }
     sched_if.exit_current();
     return 0; // not reached
@@ -299,12 +294,11 @@ fn sysSchedYield(args: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i6
 
 pub fn main(boot_info_ptr: *anyopaque) void {
     _ = boot_info_ptr;
-    _ = sc_if.register(abi.SYS_write, &sysWrite, null);
     _ = sc_if.register(abi.SYS_getpid, &sysGetpid, null);
     _ = sc_if.register(abi.SYS_exit, &sysExit, null);
     _ = sc_if.register(abi.SYS_exit_group, &sysExit, null);
     _ = sc_if.register(abi.SYS_sched_yield, &sysSchedYield, null);
-    kernel_fmt.print(serial_if, "[elf_loader] ready; process syscalls registered\n", .{});
+    kernel_fmt.print(serial_if, "[elf_loader] ready\n", .{});
 }
 
 comptime {
