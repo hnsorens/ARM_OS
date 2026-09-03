@@ -30,6 +30,7 @@ const Tcb = struct {
     in_use: bool = false,
     is_user: bool = false,
     pid: u32 = 0,
+    parent: u32 = 0,
     state: abi.ProcessState = .dead,
     priority: u32 = 0,
     exit_code: i32 = 0,
@@ -148,6 +149,69 @@ pub fn createUserProcess(name: [*:0]const u8, ttbr0: u64, user_entry: u64, user_
     return 0;
 }
 
+pub fn createForkedProcess(name: [*:0]const u8, ttbr0: u64, parent: u32, frame: *const abi.TrapFrame, kstack_pages: u32, priority: u32, out_pid: *u32) callconv(.c) c_int {
+    if (ttbr0 == 0 or kstack_pages == 0 or kstack_pages > KSTACK_MAX_PAGES) return abi.EINVAL;
+
+    s_lock.lock();
+    defer s_lock.unlock();
+
+    const slot = blk: {
+        for (&s_table) |*t| {
+            if (!t.in_use) break :blk t;
+        }
+        return abi.ENOMEM;
+    };
+
+    const order = orderForPages(kstack_pages);
+    var phys: u64 = undefined;
+    const st = pmm_if.alloc_page(order, &phys);
+    if (st != 0) return st;
+
+    const size = (@as(u64, 1) << @as(u6, @intCast(order))) * PAGE_SIZE;
+    const base = phys + abi.HHDM_OFFSET;
+    const top = base + size;
+
+    slot.* = .{
+        .in_use = true,
+        .is_user = true,
+        .pid = s_next_pid,
+        .parent = parent,
+        .state = .ready,
+        .priority = priority,
+        .address_space = ttbr0,
+        .kstack_phys = phys,
+        .kstack_base = base,
+        .kstack_size = size,
+    };
+    if (cs_if.init_forked_context(&slot.context, top, ttbr0, frame) != 0) {
+        _ = pmm_if.release(phys);
+        slot.* = .{};
+        return abi.EINVAL;
+    }
+
+    copyName(&slot.name, name);
+    out_pid.* = s_next_pid;
+    s_next_pid += 1;
+    return 0;
+}
+
+pub fn setAddressSpace(pid: u32, ttbr0: u64) callconv(.c) c_int {
+    s_lock.lock();
+    defer s_lock.unlock();
+    const slot = slotOf(pid) orelse return abi.EINVAL;
+    slot.address_space = ttbr0;
+    slot.context.ttbr0 = ttbr0;
+    return 0;
+}
+
+pub fn setParent(pid: u32, parent: u32) callconv(.c) c_int {
+    s_lock.lock();
+    defer s_lock.unlock();
+    const slot = slotOf(pid) orelse return abi.EINVAL;
+    slot.parent = parent;
+    return 0;
+}
+
 fn copyName(dst: *[32]u8, src: [*:0]const u8) void {
     var i: usize = 0;
     while (i < dst.len - 1 and src[i] != 0) : (i += 1) dst[i] = src[i];
@@ -188,6 +252,7 @@ pub fn getInfo(pid: u32, out: *abi.ProcessInfo) callconv(.c) c_int {
     const slot = slotOf(pid) orelse return abi.EINVAL;
     out.* = .{
         .pid = slot.pid,
+        .parent = slot.parent,
         .state = slot.state,
         .priority = slot.priority,
         .exit_code = slot.exit_code,
@@ -280,6 +345,9 @@ comptime {
     abi.exportInterface("table", abi.Process, .{
         .create_kernel_thread = createKernelThread,
         .create_user_process = createUserProcess,
+        .create_forked_process = createForkedProcess,
+        .set_address_space = setAddressSpace,
+        .set_parent = setParent,
         .destroy = destroy,
         .exists = exists,
         .context_of = contextOf,

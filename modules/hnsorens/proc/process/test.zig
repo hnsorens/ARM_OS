@@ -301,7 +301,47 @@ fn testListEnumeratesLivePids() callconv(.c) i32 {
     return t.result();
 }
 
+// --- forked-process TCB bookkeeping (no EL0 run) -----------------
+
+fn testForkedProcessTcb() callconv(.c) i32 {
+    var t = kernel_test.Tracker{ .serial = serial_if };
+    const std = @import("std");
+
+    var frame = std.mem.zeroes(abi.TrapFrame);
+    frame.elr = 0x1000_0000_0000;
+    frame.x[0] = 0xAAAA; // must be forced to 0 in the child's copy
+
+    const fake_ttbr0: u64 = (@as(u64, 5) << 48) | 0xDEAD000;
+    var pid: u32 = 0;
+    t.expectEqual(@src(), main.createForkedProcess("f", fake_ttbr0, 42, &frame, 4, 3, &pid), 0);
+    t.expectNotEqual(@src(), pid, 0);
+
+    var info: abi.ProcessInfo = .{};
+    t.expectEqual(@src(), main.getInfo(pid, &info), 0);
+    t.expectEqual(@src(), info.parent, 42);
+    t.expectTrue(@src(), info.is_user);
+    t.expectEqual(@src(), info.state, abi.ProcessState.ready);
+    t.expectEqual(@src(), info.address_space, fake_ttbr0);
+    t.expectEqual(@src(), info.priority, 3);
+
+    t.expectEqual(@src(), main.setParent(pid, 99), 0);
+    t.expectEqual(@src(), main.setAddressSpace(pid, 0x1234000), 0);
+    t.expectEqual(@src(), main.getInfo(pid, &info), 0);
+    t.expectEqual(@src(), info.parent, 99);
+    t.expectEqual(@src(), info.address_space, 0x1234000);
+
+    // Bad-arg guards.
+    var bad: u32 = 0;
+    t.expectNotEqual(@src(), main.createForkedProcess("x", 0, 1, &frame, 4, 0, &bad), 0); // null ttbr0
+    t.expectEqual(@src(), main.setParent(9_999_999, 1), abi.EINVAL);
+    t.expectEqual(@src(), main.setAddressSpace(9_999_999, 1), abi.EINVAL);
+
+    t.expectEqual(@src(), main.destroy(pid), 0);
+    return t.result();
+}
+
 comptime {
+    abi.kernelTest("forked_process_tcb", &testForkedProcessTcb);
     abi.kernelTest("create_query_destroy", &testCreateQueryDestroy);
     abi.kernelTest("created_thread_runs", &testCreatedThreadRuns);
     abi.kernelTest("table_fills_pids_unique", &testTableFillsPidsUnique);
