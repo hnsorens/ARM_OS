@@ -186,9 +186,35 @@ fn testExecveReplacesImage() callconv(.c) i32 {
     return t.result();
 }
 
+// --- the initial stack carries a well-formed argv + auxv --------------
+//
+// /auxvtest (userland/auxvtest.c) walks its own stack: argc, argv[0],
+// then the auxv after envp. It exits 44 only if AT_PAGESZ == 4096,
+// AT_ENTRY / AT_PHDR / AT_RANDOM are non-zero, AT_PHENT == 56, and the
+// AT_RANDOM pointer is readable -- i.e. buildUserStack laid the SysV
+// vector out correctly. musl's crt0 depends on exactly this shape.
+
+fn testAuxvPresent() callconv(.c) i32 {
+    var t = kernel_test.Tracker{ .serial = serial_if };
+
+    var pid: u32 = 0;
+    t.expectEqual(@src(), main.load("/auxvtest", &pid), 0);
+    t.expectEqual(@src(), sched_if.admit(pid), 0);
+    t.expectEqual(@src(), sched_if.run(), 0);
+
+    var info: abi.ProcessInfo = .{};
+    t.expectEqual(@src(), process_if.get_info(pid, &info), 0);
+    t.expectEqual(@src(), info.state, abi.ProcessState.zombie);
+    t.expectEqual(@src(), info.exit_code, @as(i32, 44));
+
+    t.expectEqual(@src(), main.unload(pid), 0);
+    return t.result();
+}
+
 comptime {
     abi.kernelTest("waiter_set", &testWaiterSet);
     abi.kernelTest("execve_replaces_image", &testExecveReplacesImage);
+    abi.kernelTest("auxv_present", &testAuxvPresent);
     abi.kernelTest("load_run_hello", &testLoadRunHello);
     abi.kernelTest("load_missing_path", &testLoadMissingPath);
     abi.kernelTest("load_non_elf", &testLoadNonElf);

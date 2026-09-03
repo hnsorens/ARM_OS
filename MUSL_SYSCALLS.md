@@ -43,13 +43,16 @@ Legend: `[x]` done · `[~]` partial / stubbed · `[ ]` not started
       `switch_to`/`jump_to`; `initForkedContext` captures the parent's.
       Tests: `tpidr_preserved_across_switch`,
       `forked_context_captures_tls_and_fp`.
-- [ ] **auxv** in the elf_loader initial stack (today only `AT_NULL`):
-  - [ ] `AT_PAGESZ = 4096` — **mandatory**, no musl fallback
-  - [ ] `AT_RANDOM` — 16 bytes, stack canary seed
-  - [ ] `AT_PHDR` / `AT_PHENT` / `AT_PHNUM` — needed for real `__thread`
-  - [ ] `AT_CLKTCK` 100, `AT_HWCAP`, `AT_UID/GID/EUID/EGID`,
-        `AT_SECURE=0`, `AT_EXECFN`, `AT_ENTRY`
-  - skip `AT_SYSINFO_EHDR` (no vDSO — musl uses direct syscalls)
+- [x] **auxv** in the elf_loader initial stack — `buildUserStack()` lays
+      the full SysV vector (argc/argv/NULL/envp/NULL/auxv/AT_NULL/strings/
+      rand16), written through the HHDM alias so it is TTBR0-independent;
+      shared by `load` and `execve`. Emits `AT_PHDR/PHENT/PHNUM`
+      (PT_PHDR or `lo + e_phoff`), `AT_PAGESZ=4096`, `AT_ENTRY`,
+      `AT_RANDOM` (xorshift, not real entropy yet), `AT_CLKTCK=100`,
+      `AT_HWCAP=0`, `AT_UID/EUID/GID/EGID=0`, `AT_SECURE=0`, `AT_EXECFN`.
+      User stack bumped 16 → 128 pages (512 KiB). Test: `auxv_present`
+      (`userland/auxvtest.c` walks its own stack). Skipped
+      `AT_SYSINFO_EHDR` (no vDSO).
 - [ ] **`mmap` address space** — demand-zero anonymous pages in user
       TTBR0; per-process VMA list (start with a bump region ~96 GiB).
 - [ ] **Per-process cwd** string in the PCB + `AT_FDCWD` / dirfd

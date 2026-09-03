@@ -40,8 +40,29 @@ const ROOT_MASK: u64 = 0x0000_FFFF_FFFF_F000; // strip the ASID bits off a TTBR0
 
 const PAGE_SIZE: u64 = 4096;
 const USER_STACK_BASE: u64 = 0x0000_2000_0000_0000; // 128 GiB
-const USER_STACK_PAGES: u64 = 16;
+const USER_STACK_PAGES: u64 = 128; // 512 KiB -- eager; demand-grown stack is a later fault-handler job
 const KSTACK_PAGES: u32 = 8;
+
+// auxv keys (AArch64/Linux) emitted onto the initial stack. musl reads
+// AT_PAGESZ (mandatory -- no fallback), AT_RANDOM (stack canary), and
+// AT_PHDR/PHENT/PHNUM (needed once a binary has real __thread state).
+const AT_NULL: u64 = 0;
+const AT_PHDR: u64 = 3;
+const AT_PHENT: u64 = 4;
+const AT_PHNUM: u64 = 5;
+const AT_PAGESZ: u64 = 6;
+const AT_BASE: u64 = 7;
+const AT_FLAGS: u64 = 8;
+const AT_ENTRY: u64 = 9;
+const AT_UID: u64 = 11;
+const AT_EUID: u64 = 12;
+const AT_GID: u64 = 13;
+const AT_EGID: u64 = 14;
+const AT_HWCAP: u64 = 16;
+const AT_CLKTCK: u64 = 17;
+const AT_SECURE: u64 = 23;
+const AT_RANDOM: u64 = 25;
+const AT_EXECFN: u64 = 31;
 
 const ET_EXEC: u16 = 2;
 const EM_AARCH64: u16 = 183;
@@ -115,7 +136,126 @@ const Built = struct {
     img_pages: u64 = 0,
     stack_phys: u64 = 0,
     stack_pages: u64 = 0,
+    // program-header location in the user image, for AT_PHDR/PHENT/PHNUM.
+    phdr: u64 = 0,
+    phent: u64 = 0,
+    phnum: u64 = 0,
 };
+
+// Tiny xorshift for AT_RANDOM's 16 bytes -- not a security boundary yet
+// (no getrandom, no real entropy), just enough that musl's stack canary
+// isn't a fixed constant across processes.
+var s_rng: u64 = 0x9E3779B97F4A7C15;
+
+fn fillRandom(dst: []u8) void {
+    var i: usize = 0;
+    while (i < dst.len) {
+        var x = s_rng;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        s_rng = x;
+        var j: usize = 0;
+        while (j < 8 and i < dst.len) : (j += 1) {
+            dst[i] = @truncate(x >> @as(u6, @intCast(j * 8)));
+            i += 1;
+        }
+    }
+}
+
+/// Builds the SysV/AArch64 initial process stack in `stack_phys` (written
+/// through the HHDM alias, so it is independent of which TTBR0 is live):
+///
+///   [argc][argv..][NULL][envp..][NULL][auxv pairs..][AT_NULL,0][strings][rand16]
+///
+/// `strbuf` is a packed run of NUL-terminated strings; `argv_off`/`envp_off`
+/// give each string's offset within it (their lengths are argc/envc).
+/// Returns the user-visible SP (16-aligned, pointing at argc), or 0 if it
+/// would not fit the mapped stack.
+fn buildUserStack(
+    stack_phys: u64,
+    b: *const Built,
+    strbuf: []const u8,
+    argv_off: []const u32,
+    envp_off: []const u32,
+    execfn_off: u32,
+) u64 {
+    const argc = argv_off.len;
+    const envc = envp_off.len;
+    const hh = hhdm(stack_phys);
+    const stack_bytes = USER_STACK_PAGES * PAGE_SIZE;
+
+    const writeAt = struct {
+        fn f(base: [*]u8, v_addr: u64, bytes: []const u8) void {
+            @memcpy(base[v_addr - USER_STACK_BASE ..][0..bytes.len], bytes);
+        }
+    }.f;
+
+    var sp = USER_SP_TOP;
+
+    // 16 random bytes for AT_RANDOM, at the very top.
+    sp -= 16;
+    const rand_v = sp;
+    var randbytes: [16]u8 = undefined;
+    fillRandom(&randbytes);
+    writeAt(hh, rand_v, &randbytes);
+
+    // The argv/envp/execfn strings.
+    if (strbuf.len + 512 > stack_bytes) return 0;
+    sp -= strbuf.len;
+    const strings_v = sp;
+    writeAt(hh, strings_v, strbuf);
+
+    const aux = [_][2]u64{
+        .{ AT_PHDR, b.phdr },
+        .{ AT_PHENT, b.phent },
+        .{ AT_PHNUM, b.phnum },
+        .{ AT_PAGESZ, PAGE_SIZE },
+        .{ AT_ENTRY, b.entry },
+        .{ AT_BASE, 0 },
+        .{ AT_FLAGS, 0 },
+        .{ AT_UID, 0 },
+        .{ AT_EUID, 0 },
+        .{ AT_GID, 0 },
+        .{ AT_EGID, 0 },
+        .{ AT_SECURE, 0 },
+        .{ AT_HWCAP, 0 },
+        .{ AT_CLKTCK, 100 },
+        .{ AT_RANDOM, rand_v },
+        .{ AT_EXECFN, strings_v + execfn_off },
+    };
+
+    const ptr_slots = 1 + argc + 1 + envc + 1 + (aux.len + 1) * 2;
+    sp = (sp - ptr_slots * 8) & ~@as(u64, 0xF);
+    if (USER_SP_TOP - sp + 16 > stack_bytes) return 0;
+
+    const vp: [*]u64 = @ptrCast(@alignCast(hh + (sp - USER_STACK_BASE)));
+    var k: usize = 0;
+    vp[k] = argc;
+    k += 1;
+    for (argv_off) |o| {
+        vp[k] = strings_v + o;
+        k += 1;
+    }
+    vp[k] = 0;
+    k += 1;
+    for (envp_off) |o| {
+        vp[k] = strings_v + o;
+        k += 1;
+    }
+    vp[k] = 0;
+    k += 1;
+    for (aux) |pair| {
+        vp[k] = pair[0];
+        k += 1;
+        vp[k] = pair[1];
+        k += 1;
+    }
+    vp[k] = AT_NULL;
+    k += 1;
+    vp[k] = 0;
+    return sp;
+}
 
 fn freeBuilt(b: *const Built) void {
     if (b.img_phys != 0) _ = pmm_if.release(b.img_phys);
@@ -175,9 +315,14 @@ fn buildImage(path: [*:0]const u8, out: *Built) c_int {
     var all_ro = true;
     var any_x = false;
     var have_load = false;
+    var phdr_v: u64 = 0;
     var pi: usize = 0;
     while (pi < ehdr.e_phnum) : (pi += 1) {
         const ph = phdrs[pi];
+        if (ph.p_type == std.elf.PT_PHDR) {
+            phdr_v = ph.p_vaddr;
+            continue;
+        }
         if (ph.p_type != std.elf.PT_LOAD or ph.p_memsz == 0) continue;
         if (ph.p_filesz > ph.p_memsz or ph.p_offset + ph.p_filesz > st.size) {
             freeImageParts(uroot, &.{}, 0);
@@ -234,6 +379,10 @@ fn buildImage(path: [*:0]const u8, out: *Built) c_int {
         return abi.ENOMEM;
     }
 
+    // Program headers: prefer PT_PHDR's vaddr; else they sit right after
+    // the ELF header in the first mapped page (lld's static layout).
+    if (phdr_v == 0 and ehdr.e_phoff < span) phdr_v = lo + ehdr.e_phoff;
+
     out.* = .{
         .uroot = uroot,
         .entry = ehdr.e_entry,
@@ -241,6 +390,9 @@ fn buildImage(path: [*:0]const u8, out: *Built) c_int {
         .img_pages = img_pages,
         .stack_phys = stack_phys,
         .stack_pages = stack_pages,
+        .phdr = phdr_v,
+        .phent = @sizeOf(std.elf.Elf64_Phdr),
+        .phnum = ehdr.e_phnum,
     };
     return 0;
 }
@@ -253,6 +405,22 @@ pub fn load(path: [*:0]const u8, out_pid: *u32) callconv(.c) c_int {
     var b: Built = .{};
     const rc = buildImage(path, &b);
     if (rc != 0) return rc;
+
+    // Initial stack: argv = [path], empty environment.
+    var strbuf: [ARG_BUF]u8 = undefined;
+    const pspan = std.mem.span(path);
+    if (pspan.len + 1 > strbuf.len) {
+        freeBuilt(&b);
+        return abi.ENOMEM;
+    }
+    @memcpy(strbuf[0..pspan.len], pspan);
+    strbuf[pspan.len] = 0;
+    const argv_off = [_]u32{0};
+    const user_sp = buildUserStack(b.stack_phys, &b, strbuf[0 .. pspan.len + 1], &argv_off, &[_]u32{}, 0);
+    if (user_sp == 0) {
+        freeBuilt(&b);
+        return abi.ENOMEM;
+    }
 
     s_lock.lock();
     const asid: u16 = blk: {
@@ -272,7 +440,7 @@ pub fn load(path: [*:0]const u8, out_pid: *u32) callconv(.c) c_int {
     const ttbr0 = (@as(u64, asid) << 48) | b.uroot;
 
     var pid: u32 = 0;
-    const rc2 = process_if.create_user_process("elf", ttbr0, b.entry, USER_SP_TOP, KSTACK_PAGES, 0, &pid);
+    const rc2 = process_if.create_user_process("elf", ttbr0, b.entry, user_sp, KSTACK_PAGES, 0, &pid);
     if (rc2 != 0) {
         freeBuilt(&b);
         return rc2;
@@ -569,48 +737,28 @@ fn sysExecve(frame: *abi.TrapFrame, ctx: ?*anyopaque) callconv(.c) i64 {
     const old_stack_phys = img.stack_phys;
     s_lock.unlock();
 
-    // 4. Install the new address space.
+    // 4. Build the new initial stack now, through the HHDM alias -- it is
+    //    TTBR0-independent, so a failure here still leaves the caller
+    //    completely intact (nothing has been committed yet).
+    const execfn_off: u32 = if (argc > 0) argv_off[0] else 0;
+    const user_sp = buildUserStack(b.stack_phys, &b, strbuf[0..strv_bytes], argv_off[0..argc], envp_off[0..envc], execfn_off);
+    if (user_sp == 0) {
+        freeBuilt(&b);
+        return -@as(i64, abi.ENOMEM);
+    }
+
+    // 5. Commit: install the new address space.
     const new_ttbr0 = (@as(u64, nextForkAsid()) << 48) | b.uroot;
     _ = process_if.set_address_space(me, new_ttbr0);
     asm volatile ("msr ttbr0_el1, %[v]\nisb"
         :
         : [v] "r" (new_ttbr0),
         : .{ .memory = true });
-    // The new address space is now active.
-
-    // 5. Build the SysV AArch64 initial stack:
-    //   [argc][argv...][NULL][envp...][NULL][auxv: AT_NULL, 0][strings]
-    var sp = USER_SP_TOP;
-    sp = (sp - strv_bytes) & ~@as(u64, 0xF);
-    const strings_base = sp;
-    @memcpy(@as([*]u8, @ptrFromInt(strings_base))[0..strv_bytes], strbuf[0..strv_bytes]);
-
-    const slots = 1 + argc + 1 + envc + 1 + 2;
-    sp = (sp - slots * 8) & ~@as(u64, 0xF);
-    const pv: [*]u64 = @ptrFromInt(sp);
-    var k: usize = 0;
-    pv[k] = argc;
-    k += 1;
-    for (0..argc) |i| {
-        pv[k] = strings_base + argv_off[i];
-        k += 1;
-    }
-    pv[k] = 0;
-    k += 1; // argv terminator
-    for (0..envc) |j| {
-        pv[k] = strings_base + envp_off[j];
-        k += 1;
-    }
-    pv[k] = 0;
-    k += 1; // envp terminator
-    pv[k] = 0;
-    k += 1; // auxv a_type = AT_NULL
-    pv[k] = 0; // auxv a_val
 
     // 6. Rewrite the trap frame so eret enters the new program.
     for (&frame.x) |*r| r.* = 0;
     frame.elr = b.entry;
-    frame.sp = sp; // exc_common restores SP_EL0 from here
+    frame.sp = user_sp; // exc_common restores SP_EL0 from here
 
     // 7. Adopt the new image; free the old one.
     s_lock.lock();
