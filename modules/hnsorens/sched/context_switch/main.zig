@@ -114,6 +114,37 @@ comptime {
         \\    mov x29, #0
         \\    mov x30, #0
         \\    eret
+        \\
+        \\// A forked child's first code. init_forked_context leaves SP
+        \\// pointing at a TrapFrame copy on the child's kernel stack (with
+        \\// x0 pre-forced to 0). Reload the full EL0 state from it and
+        \\// return to userspace at the parent's fork() call site.
+        \\.global ctxsw_forked_trampoline
+        \\ctxsw_forked_trampoline:
+        \\    ldr x0, [sp, #256]
+        \\    msr elr_el1, x0
+        \\    ldr x0, [sp, #264]
+        \\    msr spsr_el1, x0
+        \\    ldr x0, [sp, #248]
+        \\    msr sp_el0, x0
+        \\    ldp x2, x3,   [sp, #16]
+        \\    ldp x4, x5,   [sp, #32]
+        \\    ldp x6, x7,   [sp, #48]
+        \\    ldp x8, x9,   [sp, #64]
+        \\    ldp x10, x11, [sp, #80]
+        \\    ldp x12, x13, [sp, #96]
+        \\    ldp x14, x15, [sp, #112]
+        \\    ldp x16, x17, [sp, #128]
+        \\    ldp x18, x19, [sp, #144]
+        \\    ldp x20, x21, [sp, #160]
+        \\    ldp x22, x23, [sp, #176]
+        \\    ldp x24, x25, [sp, #192]
+        \\    ldp x26, x27, [sp, #208]
+        \\    ldp x28, x29, [sp, #224]
+        \\    ldr x30,      [sp, #240]
+        \\    ldp x0, x1,   [sp, #0]
+        \\    add sp, sp, #288
+        \\    eret
     );
 }
 
@@ -121,6 +152,7 @@ extern fn ctxsw_switch_to(save: *abi.TaskContext, restore: *const abi.TaskContex
 extern fn ctxsw_jump_to(restore: *const abi.TaskContext) callconv(.c) noreturn;
 extern var ctxsw_trampoline: u8;
 extern var ctxsw_user_trampoline: u8;
+extern var ctxsw_forked_trampoline: u8;
 
 /// Reached only if a task's entry function returns (a bug in this design
 /// -- kernel tasks are expected to loop or block forever, and userspace
@@ -164,6 +196,19 @@ pub fn initUserContext(ctx: *abi.TaskContext, kstack_top: u64, ttbr0: u64, user_
     return 0;
 }
 
+pub fn initForkedContext(ctx: *abi.TaskContext, kstack_top: u64, ttbr0: u64, frame: *const abi.TrapFrame) callconv(.c) c_int {
+    if (ttbr0 == 0 or kstack_top < MIN_STACK_BYTES) return abi.EINVAL;
+    const slot = (kstack_top - @sizeOf(abi.TrapFrame)) & ~@as(u64, 0xF);
+    const dst: *abi.TrapFrame = @ptrFromInt(slot);
+    dst.* = frame.*;
+    dst.x[0] = 0; // child's fork() returns 0
+    ctx.* = .{};
+    ctx.sp = slot;
+    ctx.lr = @intFromPtr(&ctxsw_forked_trampoline);
+    ctx.ttbr0 = ttbr0;
+    return 0;
+}
+
 pub fn main(boot_info_ptr: *anyopaque) void {
     _ = boot_info_ptr;
     kernel_fmt.print(serial_if, "[context_switch] ready\n", .{});
@@ -173,6 +218,7 @@ comptime {
     abi.exportInterface("aarch64", abi.ContextSwitch, .{
         .init_kernel_context = initKernelContext,
         .init_user_context = initUserContext,
+        .init_forked_context = initForkedContext,
         .switch_to = ctxsw_switch_to,
         .jump_to = ctxsw_jump_to,
     });

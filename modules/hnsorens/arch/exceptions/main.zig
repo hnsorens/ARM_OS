@@ -94,6 +94,12 @@ comptime {
         \\    msr elr_el1, x1
         \\    ldr x1, [sp, #264]
         \\    msr spsr_el1, x1
+        \\    // Restore SP_EL0. Essential for a lower-EL return: a task
+        \\    // that blocked in a syscall while another EL0 task ran must
+        \\    // get its own user SP back, not the other task's. Harmless
+        \\    // for a current-EL return (EL1h ignores SP_EL0).
+        \\    ldr x1, [sp, #248]
+        \\    msr sp_el0, x1
         \\    ldp x2, x3,   [sp, #16]
         \\    ldp x4, x5,   [sp, #32]
         \\    ldp x6, x7,   [sp, #48]
