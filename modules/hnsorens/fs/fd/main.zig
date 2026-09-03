@@ -17,6 +17,7 @@ pub const tty_if = abi.importInterface(abi.Tty);
 pub const vfs_if = abi.importInterface(abi.Vfs);
 pub const sched_if = abi.importInterface(abi.Scheduler);
 pub const sc_if = abi.importInterface(abi.Syscalls);
+pub const signal_if = abi.importInterface(abi.Signal);
 pub const serial_if = abi.importInterface(abi.Serial);
 
 const MAX_PROCESSES = 64;
@@ -290,6 +291,7 @@ fn pipeWrite(p: *Pipe, pid: u32, buf: [*]const u8, count: u64, nonblock: bool) i
         s_lock.lock();
         if (p.readers == 0) {
             s_lock.unlock();
+            if (done == 0) signal_if.raise(pid, 13); // SIGPIPE
             return if (done > 0) @intCast(done) else -@as(i64, abi.EPIPE);
         }
         var wrote_any = false;

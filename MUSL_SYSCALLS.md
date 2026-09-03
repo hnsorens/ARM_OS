@@ -201,8 +201,8 @@ end against the ext2 rootfs. qemu-test `passed=390`.
       STOP/TSTP. fork inherits dispositions + blocked mask; execve resets.
 - [~] `sigaltstack` 132 — not implemented (SA_ONSTACK ignored)
 - [ ] `rt_sigsuspend` 133, `rt_sigtimedwait` 137, `rt_sigqueueinfo` 138
-- [ ] `SIGPIPE` on write to a broken pipe (`pipeWrite` returns EPIPE but
-      doesn't raise the signal yet)
+- [x] `SIGPIPE` on write to a broken pipe (`pipeWrite` raises it before
+      returning `EPIPE`; default action terminates the writer)
 - [ ] no `SA_RESTART` — a signal that wakes a blocked syscall lets it
       return early (EINTR/short) rather than restarting
 
