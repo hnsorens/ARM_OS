@@ -238,11 +238,32 @@ fn testMmapBrkEndToEnd() callconv(.c) i32 {
     return t.result();
 }
 
+// --- the coreutils syscall batch, end to end at EL0 -----------------
+//
+// /systest (userland/systest.c) drives uname, getrandom, clock_gettime,
+// writev, mkdirat, openat+O_CREAT, write, ftruncate, fstat, getdents64,
+// unlinkat, getuid against the real ext2 rootfs. Exits 55 on full pass.
+
+fn testSyscallBatch() callconv(.c) i32 {
+    var t = kernel_test.Tracker{ .serial = serial_if };
+    var pid: u32 = 0;
+    t.expectEqual(@src(), main.load("/systest", &pid), 0);
+    t.expectEqual(@src(), sched_if.admit(pid), 0);
+    t.expectEqual(@src(), sched_if.run(), 0);
+    var info: abi.ProcessInfo = .{};
+    t.expectEqual(@src(), process_if.get_info(pid, &info), 0);
+    t.expectEqual(@src(), info.state, abi.ProcessState.zombie);
+    t.expectEqual(@src(), info.exit_code, @as(i32, 55));
+    t.expectEqual(@src(), main.unload(pid), 0);
+    return t.result();
+}
+
 comptime {
     abi.kernelTest("waiter_set", &testWaiterSet);
     abi.kernelTest("execve_replaces_image", &testExecveReplacesImage);
     abi.kernelTest("auxv_present", &testAuxvPresent);
     abi.kernelTest("mmap_brk_end_to_end", &testMmapBrkEndToEnd);
+    abi.kernelTest("syscall_batch", &testSyscallBatch);
     abi.kernelTest("load_run_hello", &testLoadRunHello);
     abi.kernelTest("load_missing_path", &testLoadMissingPath);
     abi.kernelTest("load_non_elf", &testLoadNonElf);

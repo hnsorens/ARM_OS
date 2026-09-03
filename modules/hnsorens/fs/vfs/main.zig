@@ -250,6 +250,15 @@ pub fn mkdir(path: [*:0]const u8, mode: u16) callconv(.c) c_int {
     return ext2_if.dir_create(g_fs, parent_inode, &leaf, mode, &new_inode);
 }
 
+pub fn truncate(path: [*:0]const u8, length: u64) callconv(.c) c_int {
+    var inode_num: u32 = 0;
+    var file_type: u8 = 0;
+    const rc = walkTo(path, &inode_num, &file_type);
+    if (rc != 0) return rc;
+    if (file_type != abi.EXT2_FT_REG_FILE) return abi.EISDIR;
+    return ext2_if.file_truncate(g_fs, inode_num, length);
+}
+
 pub fn remove(path: [*:0]const u8) callconv(.c) c_int {
     var parent_inode: u32 = 0;
     var leaf: [MAX_COMPONENT_LEN + 1:0]u8 = undefined;
@@ -355,6 +364,7 @@ comptime {
         .symlink = symlink,
         .readlink = readlink,
         .mknod = mknod,
+        .truncate = truncate,
     });
 }
 

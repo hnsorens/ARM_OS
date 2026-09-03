@@ -920,6 +920,71 @@ pub const Ext2Stat = extern struct {
     rdev: u32 = 0,
 };
 
+/// AArch64 Linux `struct stat` (== `struct kstat64`), 128 bytes. What
+/// `fstat`/`newfstatat` write into the caller's buffer; musl copies it
+/// verbatim into its own `struct stat`.
+pub const KStat = extern struct {
+    st_dev: u64 = 0,
+    st_ino: u64 = 0,
+    st_mode: u32 = 0,
+    st_nlink: u32 = 0,
+    st_uid: u32 = 0,
+    st_gid: u32 = 0,
+    st_rdev: u64 = 0,
+    __pad1: u64 = 0,
+    st_size: i64 = 0,
+    st_blksize: i32 = 0,
+    __pad2: i32 = 0,
+    st_blocks: i64 = 0,
+    st_atime: i64 = 0,
+    st_atime_nsec: i64 = 0,
+    st_mtime: i64 = 0,
+    st_mtime_nsec: i64 = 0,
+    st_ctime: i64 = 0,
+    st_ctime_nsec: i64 = 0,
+    __unused: [2]u32 = .{ 0, 0 },
+};
+
+/// Linux `struct utsname` -- six 65-byte NUL-padded fields.
+pub const UtsName = extern struct {
+    sysname: [65]u8 = [_]u8{0} ** 65,
+    nodename: [65]u8 = [_]u8{0} ** 65,
+    release: [65]u8 = [_]u8{0} ** 65,
+    version: [65]u8 = [_]u8{0} ** 65,
+    machine: [65]u8 = [_]u8{0} ** 65,
+    domainname: [65]u8 = [_]u8{0} ** 65,
+};
+
+// getdents64 d_type values (Linux DT_*).
+pub const DT_UNKNOWN: u8 = 0;
+pub const DT_FIFO: u8 = 1;
+pub const DT_CHR: u8 = 2;
+pub const DT_DIR: u8 = 4;
+pub const DT_BLK: u8 = 6;
+pub const DT_REG: u8 = 8;
+pub const DT_LNK: u8 = 10;
+pub const DT_SOCK: u8 = 12;
+
+// fcntl cmds
+pub const F_DUPFD: u64 = 0;
+pub const F_GETFD: u64 = 1;
+pub const F_SETFD: u64 = 2;
+pub const F_GETFL: u64 = 3;
+pub const F_SETFL: u64 = 4;
+pub const F_DUPFD_CLOEXEC: u64 = 1030;
+pub const FD_CLOEXEC: u64 = 1;
+
+// ioctl cmds musl needs for isatty / stdio line-buffering
+pub const TCGETS: u64 = 0x5401;
+pub const TCSETS: u64 = 0x5402;
+pub const TCSETSW: u64 = 0x5403;
+pub const TCSETSF: u64 = 0x5404;
+pub const TIOCGWINSZ: u64 = 0x5413;
+pub const TIOCSWINSZ: u64 = 0x5414;
+pub const TIOCGPGRP: u64 = 0x540F;
+pub const TIOCSPGRP: u64 = 0x5410;
+pub const FIONREAD: u64 = 0x541B;
+
 /// ext2 filesystem driver, exported by the ext2 module (category "ext2").
 /// `fs` is an opaque mount handle from `mount`. Every path-shaped
 /// operation here works in terms of `(dir_inode, name)` rather than a
@@ -1005,6 +1070,8 @@ pub const Vfs = extern struct {
     /// length to `len_out`. `EINVAL` if `path` isn't a symlink.
     readlink: *const fn (path: [*:0]const u8, buf: ?*anyopaque, buf_len: u64, len_out: *u64) callconv(.c) c_int,
     mknod: *const fn (path: [*:0]const u8, mode: u16, file_type: u8, dev: u32) callconv(.c) c_int,
+    /// Truncate (or zero-extend) the regular file at `path` to `length`.
+    truncate: *const fn (path: [*:0]const u8, length: u64) callconv(.c) c_int,
 };
 
 // --- Module metadata linking ---

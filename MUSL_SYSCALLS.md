@@ -78,87 +78,80 @@ Legend: `[x]` done · `[~]` partial / stubbed · `[ ]` not started
            mmap not brk, so a no-op shrink costs nothing.
       Gaps: partial munmap only frees a whole region (addr == base); no
       file-backed mmap; MAP_FIXED unchecked.
-- [ ] **Per-process cwd** string in the PCB + `AT_FDCWD` / dirfd
-      relative-path resolution in the vfs (today absolute-only).
-- [ ] **`struct kstat`** (aarch64 layout) translation from `Ext2Stat`.
+- [ ] **Per-process cwd** string in the PCB + real dirfd resolution.
+      Today `AT_FDCWD` / any relative path resolves against `/` (the fd
+      module prepends `/`). Enough for absolute-path tools; `cd` needs
+      the real thing.
+- [x] **`struct kstat`** — `abi.KStat` (128-byte aarch64 layout),
+      filled from `Ext2Stat` by `fd`'s `fillKStat`.
 - [ ] **`O_CLOEXEC`/`FD_CLOEXEC`** honored across `execve`;
-      `O_TRUNC`/`O_DIRECTORY`/`O_NONBLOCK`/`O_APPEND` in `openat`.
+      `O_TRUNC`/`O_NONBLOCK` in `openat` (`O_CREAT`/`O_APPEND`/`O_DIRECTORY`
+      already work; `fcntl` accepts `F_*` but does not track CLOEXEC).
 
 ---
 
-## Tier A — static hello world starts and prints
+## Tier A — static hello world starts and prints  — DONE
 
-- [ ] `writev` 66            — loop over `fd.write`; **no stdio output without it**
-- [ ] `set_tid_address` 96   — stub, store & return fake tid (= pid)
-- [~] `ioctl` 29             — `TCGETS` + `TIOCGWINSZ` on the tty; `ENOTTY` for files
+- [x] `writev` 66 / `readv` 65 — `fd` module, iovec loop over `fdWrite`/`fdRead`
+- [x] `set_tid_address` 96 — returns pid
+- [x] `ioctl` 29 — `TCGETS`/`TCSETS*`/`TIOCGWINSZ` (80x24)/`TIOCGPGRP` on a
+      tty fd; `ENOTTY` otherwise
 
 ---
 
 ## Tier B — malloc, real coreutils, non-interactive shell
 
-### Memory
-- [ ] `mmap` 222       — `MAP_ANONYMOUS|MAP_PRIVATE`, `MAP_FIXED`, demand-zero
-- [ ] `munmap` 215
-- [ ] `mprotect` 226
-- [ ] `madvise` 233    — stub → 0
-- [ ] `mremap` 216     — may `-ENOSYS` (realloc falls back)
-- [ ] `brk` 214        — stub → current break
+### Memory  — DONE (see the mmap prereq above)
+- [x] `mmap` 222 / `munmap` 215 / `mprotect` 226 / `madvise` 233 (→0) /
+      `mremap` 216 (→ENOSYS) / `brk` 214 (grow real, shrink no-op)
 
-### Time
-- [ ] `clock_gettime` 113
-- [ ] `gettimeofday` 169
-- [ ] `nanosleep` 101
-- [ ] `clock_nanosleep` 115
-- [ ] `clock_getres` 114        — canned
-- [ ] `getrandom` 278           — stub-fill for now
+### Time  — DONE (monotonic only)
+- [x] `clock_gettime` 113 / `gettimeofday` 169 / `clock_getres` 114 —
+      from `cntvct_el0`/`cntfrq_el0`, CLOCK_MONOTONIC semantics only
+      (no wall clock)
+- [~] `nanosleep` 101 / `clock_nanosleep` 115 — **return 0 immediately**
+      (no sleep queue yet; `sleep` is instant). TODO: real timer sleep.
 
-### Signals (accept + record; real delivery = Layer 3)
-- [ ] `rt_sigaction` 134
-- [ ] `rt_sigprocmask` 135
-- [ ] `kill` 129
-- [ ] `tgkill` 131             — `abort()` path
-- [ ] `set_robust_list` 99     — stub → 0
+### Signals  — accepted, not delivered (Layer 3)
+- [~] `rt_sigaction` 134 / `rt_sigprocmask` 135 / `kill` 129 / `tkill` 130
+      / `tgkill` 131 / `set_robust_list` 99 — all accepted → 0, no effect.
+      `abort()` will not actually raise yet.
 
-### Identity / info (stub-able)
-- [ ] `getuid` 174, `geteuid` 175, `getgid` 176, `getegid` 177  → 0
-- [ ] `gettid` 178            → pid
-- [ ] `uname` 160            — fill struct
-- [ ] `getgroups` 158        → 0
-- [ ] `umask` 166            — per-process umask
-- [ ] `prctl` 167           — stub → 0
-- [ ] `sysinfo` 179, `prlimit64` 261, `getrlimit` 163  — canned
-- [ ] `sched_getaffinity` 123  → 1-CPU mask
+### Identity / info  — DONE
+- [x] `getuid`/`geteuid`/`getgid`/`getegid` → 0, `gettid` 178 → pid,
+      `uname` 160 (Linux/aarch64/arm-os), `umask` 166 (per-module, one
+      global), `prctl` 167 → 0, `sysinfo` 179 / `prlimit64` 261 (canned,
+      8 MiB stack / RLIM_INFINITY), `sched_getaffinity` 123 → 1 CPU,
+      `getrandom` 278 (xorshift fill)
 
-### Filesystem (wrap existing `vfs.*` — ext2 write path already exists)
-- [ ] `newfstatat` 79   — `vfs.stat`/`vfs.lstat` → `struct kstat`
-- [ ] `fstat` 80        — via fd
-- [ ] `getdents64` 61   — `vfs.list_dir`
-- [ ] `getcwd` 17       — per-process cwd
-- [ ] `chdir` 49, `fchdir` 50
-- [ ] `faccessat` 48, `faccessat2` 439
-- [ ] `mkdirat` 34      — `vfs.mkdir`
-- [ ] `unlinkat` 35     — `vfs.remove` (+ `AT_REMOVEDIR`)
-- [ ] `renameat` 38, `renameat2` 276  — `vfs.rename`
-- [ ] `symlinkat` 36    — `vfs.symlink`
-- [ ] `readlinkat` 78   — `vfs.readlink`
-- [ ] `truncate` 45, `ftruncate` 46   — `ext2.fileTruncate`
-- [ ] `mknodat` 33      — `vfs.mknod` (for `/dev`)
-- [ ] `fchmodat` 53     — real-ish; `fchownat` 54, `utimensat` 88 → stub 0
-- [ ] `fsync` 82, `fdatasync` 83, `sync` 81  — stub → 0 / flush
-- [ ] `statfs` 43, `fstatfs` 44   — canned
+### Filesystem  — DONE (`fd` module, wrapping `vfs.*`)
+- [x] `newfstatat` 79 (+ `AT_EMPTY_PATH`, `AT_SYMLINK_NOFOLLOW`) /
+      `fstat` 80 (tty → canned char-dev stat) / `getdents64` 61
+      (`vfs.list_dir`, cursor in `OpenFile.offset`, real `d_type`) /
+      `faccessat` 48 / `faccessat2` 439 / `mkdirat` 34 / `unlinkat` 35
+      (+ `AT_REMOVEDIR`) / `renameat` 38 / `symlinkat` 36 /
+      `readlinkat` 78 / `ftruncate` 46 (new `vfs.truncate` → `ext2.file_truncate`)
+- [x] `fsync` 82 / `fchmodat` 53 / `fchownat` 54 / `utimensat` 88 → 0
+- [ ] `getcwd` 17 / `chdir` 49 / `fchdir` 50 — need per-process cwd
+- [ ] `statfs` 43 / `fstatfs` 44 / `mknodat` 33 (for `/dev`) / `statx` 291
+      (musl falls back to `newfstatat` on ENOSYS, fine)
 
 ### Fds / pipes / process
-- [ ] `fcntl` 25       — `F_DUPFD(_CLOEXEC)`, `F_GETFD/SETFD`, `F_GETFL/SETFL`
-- [ ] `dup3` 24        — musl `dup2`; redirection
-- [ ] `pipe2` 59       — new in-kernel pipe object in `fd`
-- [ ] `readv` 65       — mirror `writev`
-- [ ] `ppoll` 73       — musl `poll`; start: ready fds return immediately
-- [ ] `wait4` 260      — extend with `WNOHANG`
-- [ ] `waitid` 95      — route to wait4 logic
-- [ ] `setpgid` 154, `getpgid` 155, `setsid` 157, `getsid` 156  — accept
+- [x] `fcntl` 25 (`F_DUPFD(_CLOEXEC)`, `F_GET/SETFD` no-op, `F_GET/SETFL`)
+- [x] `dup3` 24
+- [~] `ppoll` 73 → 0 (treated as "nothing ready / timed out")
+- [x] `setpgid` 154 → 0, `getpgid`/`getsid`/`setsid` → pid
+- [~] `futex` 98 → 0 (single-thread; musl static locks are uncontended)
+- [ ] `pipe2` 59 — needs an in-kernel pipe object (shell pipelines)
+- [ ] `wait4` `WNOHANG` / `waitid` 95
 
-### `/dev` nodes (via `mknodat` into rootfs or a devfs shim)
+### `/dev` nodes
 - [ ] `/dev/null`, `/dev/zero`, `/dev/tty`, `/dev/console`, `/dev/urandom`
+
+Coverage: `userland/systest.c` + `syscall_batch` kernelTest exercise
+uname / getrandom / clock_gettime / writev / mkdirat / openat+O_CREAT /
+write / ftruncate / fstat / getdents64 / unlinkat / getuid end to end
+against the ext2 rootfs. qemu-test `passed=389`.
 
 ---
 

@@ -130,6 +130,7 @@ pub fn build(b: *std.Build) void {
         .{ .src = "userland/exectest.c", .dest = "exectest" },
         .{ .src = "userland/auxvtest.c", .dest = "auxvtest" },
         .{ .src = "userland/mmtest.c", .dest = "mmtest" },
+        .{ .src = "userland/systest.c", .dest = "systest" },
     };
 
     var user_dep: *std.Build.Step = &debugfs_write_hello.step;

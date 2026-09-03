@@ -1019,6 +1019,148 @@ fn sysBrk(a: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
     return @bitCast(want);
 }
 
+// --- misc process / system syscalls musl's crt0 + coreutils touch -----
+//
+// Mostly stubs: enough that startup, malloc, and simple tools run. Real
+// signal delivery, a sleep queue, and job control are later work.
+
+var s_umask: u32 = 0o022;
+
+fn cntNs() u64 {
+    const cnt = asm volatile ("mrs %[v], cntvct_el0"
+        : [v] "=r" (-> u64),
+    );
+    const frq = asm volatile ("mrs %[v], cntfrq_el0"
+        : [v] "=r" (-> u64),
+    );
+    if (frq == 0) return 0;
+    // ns = cnt * 1e9 / frq, done in two steps to limit overflow.
+    const secs = cnt / frq;
+    const rem = cnt % frq;
+    return secs * 1_000_000_000 + (rem * 1_000_000_000) / frq;
+}
+
+fn sysZero(a: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
+    _ = a;
+    _ = ctx;
+    return 0;
+}
+
+fn sysEnosys(a: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
+    _ = a;
+    _ = ctx;
+    return -@as(i64, abi.ENOSYS);
+}
+
+fn sysGettid(a: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
+    _ = a;
+    _ = ctx;
+    return @intCast(sched_if.current());
+}
+
+fn sysSetTidAddress(a: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
+    _ = a;
+    _ = ctx;
+    return @intCast(sched_if.current()); // musl stores this as its tid
+}
+
+fn sysUname(a: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
+    _ = ctx;
+    if (a.arg[0] == 0) return -@as(i64, abi.EFAULT);
+    const u: *abi.UtsName = @ptrFromInt(a.arg[0]);
+    u.* = .{};
+    const set = struct {
+        fn f(dst: *[65]u8, s: []const u8) void {
+            @memcpy(dst[0..s.len], s);
+        }
+    }.f;
+    set(&u.sysname, "Linux");
+    set(&u.nodename, "arm-os");
+    set(&u.release, "6.1.0-arm-os");
+    set(&u.version, "#1 ARM_OS");
+    set(&u.machine, "aarch64");
+    return 0;
+}
+
+fn sysGetrandom(a: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
+    _ = ctx;
+    if (a.arg[0] == 0) return 0;
+    const buf: [*]u8 = @ptrFromInt(a.arg[0]);
+    const n: usize = @intCast(a.arg[1]);
+    fillRandom(buf[0..n]);
+    return @intCast(n);
+}
+
+fn sysClockGettime(a: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
+    _ = ctx;
+    if (a.arg[1] == 0) return -@as(i64, abi.EFAULT);
+    const ts: [*]i64 = @ptrFromInt(a.arg[1]);
+    const ns = cntNs();
+    ts[0] = @intCast(ns / 1_000_000_000);
+    ts[1] = @intCast(ns % 1_000_000_000);
+    return 0;
+}
+
+fn sysGettimeofday(a: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
+    _ = ctx;
+    if (a.arg[0] == 0) return 0;
+    const tv: [*]i64 = @ptrFromInt(a.arg[0]);
+    const ns = cntNs();
+    tv[0] = @intCast(ns / 1_000_000_000);
+    tv[1] = @intCast((ns % 1_000_000_000) / 1000); // usec
+    return 0;
+}
+
+fn sysClockGetres(a: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
+    _ = ctx;
+    if (a.arg[1] != 0) {
+        const ts: [*]i64 = @ptrFromInt(a.arg[1]);
+        ts[0] = 0;
+        ts[1] = 1;
+    }
+    return 0;
+}
+
+fn sysUmask(a: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
+    _ = ctx;
+    const old = s_umask;
+    s_umask = @truncate(a.arg[0] & 0o777);
+    return @intCast(old);
+}
+
+fn sysSchedGetaffinity(a: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
+    _ = ctx;
+    const len: usize = @intCast(a.arg[1]);
+    if (a.arg[2] != 0 and len >= 8) {
+        const p: [*]u8 = @ptrFromInt(a.arg[2]);
+        p[0] = 1; // CPU 0 only
+        var i: usize = 1;
+        while (i < 8) : (i += 1) p[i] = 0;
+    }
+    return 8; // bytes of the mask written
+}
+
+fn sysSysinfo(a: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
+    _ = ctx;
+    if (a.arg[0] != 0) {
+        const p: [*]u8 = @ptrFromInt(a.arg[0]);
+        var i: usize = 0;
+        while (i < 112) : (i += 1) p[i] = 0;
+    }
+    return 0;
+}
+
+fn sysPrlimit64(a: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
+    _ = ctx;
+    // arg2 = new limit (ignored), arg3 = old limit out
+    if (a.arg[3] != 0) {
+        const p: [*]u64 = @ptrFromInt(a.arg[3]);
+        p[0] = 8 * 1024 * 1024; // rlim_cur
+        p[1] = ~@as(u64, 0); // rlim_max = RLIM_INFINITY
+    }
+    return 0;
+}
+
 pub fn main(boot_info_ptr: *anyopaque) void {
     _ = boot_info_ptr;
     _ = mmu_if.get_user_ctx(&s_kernel_root); // kernel TTBR0 is still active here
@@ -1036,7 +1178,48 @@ pub fn main(boot_info_ptr: *anyopaque) void {
     _ = sc_if.register(abi.SYS_mprotect, &sysMprotect, null);
     _ = sc_if.register(abi.SYS_madvise, &sysMadvise, null);
     _ = sc_if.register(abi.SYS_mremap, &sysMremap, null);
-    kernel_fmt.print(serial_if, "[elf_loader] ready; process syscalls + tree + anon mmap/brk\n", .{});
+
+    // identity / info -- single-user, uid 0
+    _ = sc_if.register(abi.SYS_getuid, &sysZero, null);
+    _ = sc_if.register(abi.SYS_geteuid, &sysZero, null);
+    _ = sc_if.register(abi.SYS_getgid, &sysZero, null);
+    _ = sc_if.register(abi.SYS_getegid, &sysZero, null);
+    _ = sc_if.register(abi.SYS_gettid, &sysGettid, null);
+    _ = sc_if.register(abi.SYS_set_tid_address, &sysSetTidAddress, null);
+    _ = sc_if.register(abi.SYS_uname, &sysUname, null);
+    _ = sc_if.register(abi.SYS_umask, &sysUmask, null);
+    _ = sc_if.register(abi.SYS_getrandom, &sysGetrandom, null);
+    _ = sc_if.register(abi.SYS_sysinfo, &sysSysinfo, null);
+    _ = sc_if.register(abi.SYS_prlimit64, &sysPrlimit64, null);
+    _ = sc_if.register(abi.SYS_sched_getaffinity, &sysSchedGetaffinity, null);
+    _ = sc_if.register(abi.SYS_prctl, &sysZero, null);
+
+    // time -- monotonic from the generic timer; no wall clock, no sleep queue
+    _ = sc_if.register(abi.SYS_clock_gettime, &sysClockGettime, null);
+    _ = sc_if.register(abi.SYS_gettimeofday, &sysGettimeofday, null);
+    _ = sc_if.register(abi.SYS_clock_getres, &sysClockGetres, null);
+    _ = sc_if.register(abi.SYS_nanosleep, &sysZero, null); // TODO real sleep
+    _ = sc_if.register(abi.SYS_clock_nanosleep, &sysZero, null);
+
+    // signals -- accepted and recorded-nowhere; real delivery is Layer 3
+    _ = sc_if.register(abi.SYS_rt_sigaction, &sysZero, null);
+    _ = sc_if.register(abi.SYS_rt_sigprocmask, &sysZero, null);
+    _ = sc_if.register(abi.SYS_set_robust_list, &sysZero, null);
+    _ = sc_if.register(abi.SYS_kill, &sysZero, null);
+    _ = sc_if.register(abi.SYS_tkill, &sysZero, null);
+    _ = sc_if.register(abi.SYS_tgkill, &sysZero, null);
+
+    // session / pgrp -- accepted (no job control yet)
+    _ = sc_if.register(abi.SYS_setpgid, &sysZero, null);
+    _ = sc_if.register(abi.SYS_getpgid, &sysGettid, null);
+    _ = sc_if.register(abi.SYS_setsid, &sysGettid, null);
+    _ = sc_if.register(abi.SYS_getsid, &sysGettid, null);
+
+    // threads -- single-thread, no real futex
+    _ = sc_if.register(abi.SYS_futex, &sysZero, null);
+    _ = sc_if.register(abi.SYS_ppoll, &sysZero, null);
+
+    kernel_fmt.print(serial_if, "[elf_loader] process + tree + anon mmap/brk + misc syscalls\n", .{});
 }
 
 comptime {

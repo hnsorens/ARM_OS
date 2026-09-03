@@ -50,10 +50,14 @@ void _start(void)
     for (;;) {
         char c;
         long r = syscall3(SYS_read, 0, (long)&c, 1);
-        if (r <= 0)
+        if (r == 0) { /* EOF: ^D on an empty line (tty returns 0, no byte) */
+            put("\nbye\n");
+            syscall3(SYS_exit, 0, 0, 0);
+        }
+        if (r < 0)
             continue;
 
-        if (c == 4) { /* ^D */
+        if (c == 4) { /* ^D delivered as a raw byte (raw mode) */
             put("\nbye\n");
             syscall3(SYS_exit, 0, 0, 0);
         }
