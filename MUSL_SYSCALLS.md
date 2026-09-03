@@ -53,24 +53,31 @@ Legend: `[x]` done · `[~]` partial / stubbed · `[ ]` not started
       User stack bumped 16 → 128 pages (512 KiB). Test: `auxv_present`
       (`userland/auxvtest.c` walks its own stack). Skipped
       `AT_SYSINFO_EHDR` (no vDSO).
-- [ ] **`mmap` address space** — demand-zero anonymous pages in user
-      TTBR0; per-process VMA list (start with a bump region ~96 GiB).
-      FIRST ATTEMPT REVERTED (anon mmap/munmap/mprotect/madvise/mremap +
-      brk bolted onto elf_loader, per-pid side table, `/mmtest`). With
-      the 6 handlers *registered*, `execve_replaces_image` leaked 2-3
-      pages and `fork_wait_end_to_end` hung/faulted (data abort on the
-      parent's user-stack `status` write => wrong TTBR0 active) — even
-      though no pre-existing test program calls mmap/brk. Commenting out
-      just the 6 `sc_if.register()` calls (keeping all the code) made
-      `execve` pass again, so the trigger is the handlers being
-      *dispatchable*, not the code path itself. Unresolved. Suspects:
-      `mmu.unmap`'s `pruneIfEmpty` freeing page-table structure that
-      `mmu.copy` shares from the kernel identity root; or a Zig
-      layout/`.data` effect from the non-zero-initialised side table
-      (`mmap_top`/`brk_cur` defaults). NEXT TIME: do it as a real
-      per-process VMA module, read `modules/hnsorens/memory/mmu/main.zig`
-      (`free`/`copy`/`unmap`/`pruneIfEmpty`) carefully first, and get a
-      faster test loop than the ~5-10 min full `qemu-test`.
+- [x] **`mmap` address space** — anon `mmap`/`munmap`/`mprotect` +
+      `brk` in `elf_loader` (per-pid `s_mm` side table, eager: every page
+      a real zeroed frame). `mmap` region at 80 TiB (its own L0 slot so
+      `mmu.unmap` prunes the whole L1/L2/L3 chain cleanly); `brk` arena
+      at 72 TiB. `mmForget(pid, ..)` on the 3 teardown paths (unload /
+      reapChild / execve). Test: `mmap_brk_end_to_end` + `userland/mmtest.c`.
+      TWO landmines found the hard way:
+        1. **`s_mm` MUST be `.bss` (all-zero defaults).** A `MmState`
+           array with non-zero field defaults (`mmap_top`/`brk_cur`)
+           lands in `.data`; a ~13 KB+ `.data` section in `elf_loader`
+           (the last-loaded module) is loaded/relocated *wrong* by the
+           bootloader module loader and corrupts nearby globals
+           (execve/fork leak or fault). Kept zero-default, seeded in
+           `mmStateLocked`. The module-loader `.data` bug itself is
+           unfixed — avoid large non-zero module globals.
+        2. **`brk` shrink is a no-op** (pages stay mapped till teardown).
+           `mmu.unmap` on the shrink path -> `pruneIfEmpty` frees L3+L2+L1
+           and clears the L0 entry; in the full boot this corrupts
+           pmm/mmu state (a full `tlbi vmalle1is` did NOT fix it, so it's
+           a data-structure issue in the pruneIfEmpty/buddy interaction,
+           not TLB). `sysMunmap`'s identical prune of a *different* L0
+           slot is fine, so it's order/timing-specific. mallocng uses
+           mmap not brk, so a no-op shrink costs nothing.
+      Gaps: partial munmap only frees a whole region (addr == base); no
+      file-backed mmap; MAP_FIXED unchecked.
 - [ ] **Per-process cwd** string in the PCB + `AT_FDCWD` / dirfd
       relative-path resolution in the vfs (today absolute-only).
 - [ ] **`struct kstat`** (aarch64 layout) translation from `Ext2Stat`.

@@ -46,6 +46,16 @@ pub const ENOSPC: c_int = 28;
 pub const ENOTEMPTY: c_int = 39;
 pub const ELOOP: c_int = 40;
 pub const ENAMETOOLONG: c_int = 36;
+pub const EPERM: c_int = 1;
+pub const EINTR: c_int = 4;
+pub const ENXIO: c_int = 6;
+pub const E2BIG: c_int = 7;
+pub const EAGAIN: c_int = 11;
+pub const EACCES: c_int = 13;
+pub const ENODEV: c_int = 19;
+pub const ENOTTY: c_int = 25;
+pub const ERANGE: c_int = 34;
+pub const EDESTADDRREQ: c_int = 89;
 
 // --- Boot info passed to every module entry ---
 pub const MemoryType = enum(u32) {
@@ -425,26 +435,98 @@ pub const Process = extern struct {
 // slot a module registers a handler at; there is no remap/mask layer yet.
 pub const SYSCALL_TABLE_SIZE = 512;
 
-// Numbers match Linux/aarch64 where an equivalent exists.
+// Numbers match Linux/aarch64 (asm-generic/unistd.h) where an equivalent exists.
 pub const SYS_getcwd: u32 = 17;
 pub const SYS_dup: u32 = 23;
+pub const SYS_dup3: u32 = 24;
+pub const SYS_fcntl: u32 = 25;
+pub const SYS_ioctl: u32 = 29;
+pub const SYS_mkdirat: u32 = 34;
+pub const SYS_unlinkat: u32 = 35;
+pub const SYS_symlinkat: u32 = 36;
+pub const SYS_linkat: u32 = 37;
+pub const SYS_renameat: u32 = 38;
+pub const SYS_ftruncate: u32 = 46;
+pub const SYS_faccessat: u32 = 48;
 pub const SYS_chdir: u32 = 49;
+pub const SYS_fchmodat: u32 = 53;
+pub const SYS_fchownat: u32 = 54;
 pub const SYS_openat: u32 = 56;
 pub const SYS_close: u32 = 57;
+pub const SYS_pipe2: u32 = 59;
 pub const SYS_getdents64: u32 = 61;
 pub const SYS_lseek: u32 = 62;
 pub const SYS_read: u32 = 63;
 pub const SYS_write: u32 = 64;
+pub const SYS_readv: u32 = 65;
+pub const SYS_writev: u32 = 66;
+pub const SYS_pread64: u32 = 67;
+pub const SYS_pwrite64: u32 = 68;
+pub const SYS_ppoll: u32 = 73;
+pub const SYS_readlinkat: u32 = 78;
+pub const SYS_newfstatat: u32 = 79;
 pub const SYS_fstat: u32 = 80;
+pub const SYS_fsync: u32 = 82;
+pub const SYS_utimensat: u32 = 88;
 pub const SYS_exit: u32 = 93;
 pub const SYS_exit_group: u32 = 94;
+pub const SYS_set_tid_address: u32 = 96;
+pub const SYS_futex: u32 = 98;
+pub const SYS_set_robust_list: u32 = 99;
+pub const SYS_nanosleep: u32 = 101;
+pub const SYS_clock_gettime: u32 = 113;
+pub const SYS_clock_getres: u32 = 114;
+pub const SYS_clock_nanosleep: u32 = 115;
 pub const SYS_sched_yield: u32 = 124;
+pub const SYS_sched_getaffinity: u32 = 123;
+pub const SYS_kill: u32 = 129;
+pub const SYS_tkill: u32 = 130;
+pub const SYS_tgkill: u32 = 131;
+pub const SYS_rt_sigaction: u32 = 134;
+pub const SYS_rt_sigprocmask: u32 = 135;
+pub const SYS_setpgid: u32 = 154;
+pub const SYS_getpgid: u32 = 155;
+pub const SYS_getsid: u32 = 156;
+pub const SYS_setsid: u32 = 157;
+pub const SYS_uname: u32 = 160;
+pub const SYS_umask: u32 = 166;
+pub const SYS_prctl: u32 = 167;
+pub const SYS_gettimeofday: u32 = 169;
 pub const SYS_getpid: u32 = 172;
 pub const SYS_getppid: u32 = 173;
+pub const SYS_getuid: u32 = 174;
+pub const SYS_geteuid: u32 = 175;
+pub const SYS_getgid: u32 = 176;
+pub const SYS_getegid: u32 = 177;
+pub const SYS_gettid: u32 = 178;
+pub const SYS_sysinfo: u32 = 179;
 pub const SYS_brk: u32 = 214;
+pub const SYS_munmap: u32 = 215;
+pub const SYS_mremap: u32 = 216;
 pub const SYS_clone: u32 = 220;
 pub const SYS_execve: u32 = 221;
+pub const SYS_mmap: u32 = 222;
+pub const SYS_mprotect: u32 = 226;
+pub const SYS_madvise: u32 = 233;
 pub const SYS_wait4: u32 = 260;
+pub const SYS_prlimit64: u32 = 261;
+pub const SYS_getrandom: u32 = 278;
+pub const SYS_statx: u32 = 291;
+pub const SYS_faccessat2: u32 = 439;
+
+// mmap(2) prot/flags
+pub const PROT_NONE: u64 = 0;
+pub const PROT_READ: u64 = 1;
+pub const PROT_WRITE: u64 = 2;
+pub const PROT_EXEC: u64 = 4;
+pub const MAP_PRIVATE: u64 = 0x02;
+pub const MAP_FIXED: u64 = 0x10;
+pub const MAP_ANONYMOUS: u64 = 0x20;
+
+// *at() dirfd sentinel + unlinkat flag
+pub const AT_REMOVEDIR: u64 = 0x200;
+pub const AT_SYMLINK_NOFOLLOW: u64 = 0x100;
+pub const AT_EMPTY_PATH: u64 = 0x1000;
 
 // open() flags and lseek() whence (generic Linux values).
 pub const O_RDONLY: u32 = 0;

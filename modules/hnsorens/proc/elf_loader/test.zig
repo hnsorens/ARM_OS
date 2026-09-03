@@ -211,10 +211,38 @@ fn testAuxvPresent() callconv(.c) i32 {
     return t.result();
 }
 
+// --- anon mmap / munmap / mprotect / brk end to end at EL0 -----------
+//
+// /mmtest (userland/mmtest.c): mmaps an anon region (must read back
+// zeroed + be writable), a distinct second mapping, munmaps, grows and
+// shrinks brk writing into the new space, mprotects RO then RW. Exits 40.
+// After teardown every anon frame must be back and pmm balanced.
+
+fn testMmapBrkEndToEnd() callconv(.c) i32 {
+    var t = kernel_test.Tracker{ .serial = serial_if };
+    const before = pmm_if.get_free_memory();
+
+    var pid: u32 = 0;
+    t.expectEqual(@src(), main.load("/mmtest", &pid), 0);
+    t.expectEqual(@src(), sched_if.admit(pid), 0);
+    t.expectEqual(@src(), sched_if.run(), 0);
+
+    var info: abi.ProcessInfo = .{};
+    t.expectEqual(@src(), process_if.get_info(pid, &info), 0);
+    t.expectEqual(@src(), info.state, abi.ProcessState.zombie);
+    t.expectEqual(@src(), info.exit_code, @as(i32, 40));
+
+    t.expectEqual(@src(), main.unload(pid), 0);
+    t.expectEqual(@src(), main.mmRegionCount(pid), @as(u32, 0));
+    t.expectEqual(@src(), pmm_if.get_free_memory(), before);
+    return t.result();
+}
+
 comptime {
     abi.kernelTest("waiter_set", &testWaiterSet);
     abi.kernelTest("execve_replaces_image", &testExecveReplacesImage);
     abi.kernelTest("auxv_present", &testAuxvPresent);
+    abi.kernelTest("mmap_brk_end_to_end", &testMmapBrkEndToEnd);
     abi.kernelTest("load_run_hello", &testLoadRunHello);
     abi.kernelTest("load_missing_path", &testLoadMissingPath);
     abi.kernelTest("load_non_elf", &testLoadNonElf);

@@ -474,6 +474,7 @@ pub fn unload(pid: u32) callconv(.c) c_int {
     if (rc != 0) return rc; // EBUSY while running
 
     _ = fd_if.clear_table(pid); // idempotent -- exit() may already have
+    mmForget(pid, true); // mmu.free below won't touch anon leaf frames
     freeImageParts(img.uroot, img.segs[0..img.n_segs], img.stack_phys);
     img.* = .{};
     return 0;
@@ -552,6 +553,7 @@ fn reapChild(pid: u32) void {
     var info: abi.ProcessInfo = .{};
     if (process_if.get_info(pid, &info) == 0) {
         _ = fd_if.clear_table(pid);
+        mmForget(pid, false); // free_all frees every leaf; just drop bookkeeping
         if (info.address_space != 0) _ = mmu_if.free_all(info.address_space & ROOT_MASK);
     }
     _ = process_if.destroy(pid);
@@ -760,7 +762,10 @@ fn sysExecve(frame: *abi.TrapFrame, ctx: ?*anyopaque) callconv(.c) i64 {
     frame.elr = b.entry;
     frame.sp = user_sp; // exc_common restores SP_EL0 from here
 
-    // 7. Adopt the new image; free the old one.
+    // 7. Adopt the new image; free the old one. execve keeps the pid but
+    //    the whole address space is new -- drop and free the old
+    //    process's anon mmap/brk frames (mmu.free won't).
+    mmForget(me, true);
     s_lock.lock();
     img.uroot = b.uroot;
     img.segs[0] = .{ .phys = b.img_phys, .pages = b.img_pages };
@@ -774,6 +779,246 @@ fn sysExecve(frame: *abi.TrapFrame, ctx: ?*anyopaque) callconv(.c) i64 {
     return 0;
 }
 
+// --- anonymous mmap + brk (per-pid, eager, own L0 slots) -------------
+//
+// mallocng (musl's allocator) gets its heap from mmap, not brk. Regions
+// live in their own top-level (L0) slots so mmu.unmap prunes the whole
+// L1/L2/L3 chain back cleanly (verified pmm-balanced); the image and
+// stack keep their existing slots. brk is a private arena, also its own
+// L0 slot.
+//
+// Known gaps (deferred to a real per-process VMA tree):
+//   * munmap only releases a region unmapped whole (addr == its base).
+//   * MAP_FIXED does no overlap check; no file-backed mmap.
+
+const MMAP_BASE: u64 = 0x0000_5000_0000_0000; // 80 TiB, grows up (its own L0 slot)
+const MMAP_LIMIT: u64 = 0x0000_5800_0000_0000;
+const BRK_BASE: u64 = 0x0000_4800_0000_0000; // its own L0 slot
+const BRK_MAX: u64 = 256 * 1024 * 1024;
+
+const MAX_MM = 16; // concurrent user processes with anon mappings
+const MAX_ANON = 32; // anon regions per process
+
+const AnonRec = struct {
+    in_use: bool = false,
+    va: u64 = 0,
+    phys: u64 = 0,
+    pages: u64 = 0,
+};
+
+const MmState = struct {
+    in_use: bool = false,
+    pid: u32 = 0,
+    // 0 == "not yet initialised"; mmStateLocked seeds these to
+    // MMAP_BASE/BRK_BASE. Kept zero-default so `s_mm` lands in .bss.
+    mmap_top: u64 = 0,
+    brk_cur: u64 = 0,
+    anon: [MAX_ANON]AnonRec = [_]AnonRec{.{}} ** MAX_ANON,
+};
+
+var s_mm: [MAX_MM]MmState = [_]MmState{.{}} ** MAX_MM;
+var s_mm_lock: spinlock.SpinLock = .{};
+
+fn userRootOf(pid: u32) u64 {
+    var info: abi.ProcessInfo = .{};
+    if (process_if.get_info(pid, &info) != 0) return 0;
+    return info.address_space & ROOT_MASK;
+}
+
+fn mmStateLocked(pid: u32) ?*MmState {
+    for (&s_mm) |*m| {
+        if (m.in_use and m.pid == pid) return m;
+    }
+    for (&s_mm) |*m| {
+        if (!m.in_use) {
+            m.* = .{ .in_use = true, .pid = pid, .mmap_top = MMAP_BASE, .brk_cur = BRK_BASE };
+            return m;
+        }
+    }
+    return null;
+}
+
+fn protToMmuFlags(prot: u64) u64 {
+    var f: u64 = abi.MMU_USER;
+    if (prot & abi.PROT_WRITE == 0) f |= abi.MMU_RO;
+    if (prot & abi.PROT_EXEC == 0) f |= abi.MMU_NO_EXEC;
+    return f;
+}
+
+/// Free (free_frames=true) or just drop (false) a pid's anon bookkeeping.
+/// true on teardown paths that use mmu.free (leaves leaf frames to us);
+/// false where mmu.free_all already frees every leaf (fork/reap).
+pub fn mmForget(pid: u32, free_frames: bool) void {
+    s_mm_lock.lock();
+    defer s_mm_lock.unlock();
+    for (&s_mm) |*m| {
+        if (!m.in_use or m.pid != pid) continue;
+        if (free_frames) {
+            for (&m.anon) |*r| {
+                if (r.in_use) _ = pmm_if.release(r.phys);
+            }
+        }
+        m.* = .{};
+        return;
+    }
+}
+
+pub fn mmRegionCount(pid: u32) u32 {
+    s_mm_lock.lock();
+    defer s_mm_lock.unlock();
+    for (&s_mm) |*m| {
+        if (!m.in_use or m.pid != pid) continue;
+        var n: u32 = 0;
+        for (m.anon) |r| {
+            if (r.in_use) n += 1;
+        }
+        return n;
+    }
+    return 0;
+}
+
+fn sysMmap(a: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
+    _ = ctx;
+    const length = a.arg[1];
+    const prot = a.arg[2];
+    const flags = a.arg[3];
+    const fd: i64 = @bitCast(a.arg[4]);
+    const addr = a.arg[0];
+
+    if (length == 0 or length > 512 * 1024 * 1024) return -@as(i64, abi.EINVAL);
+    if (flags & abi.MAP_ANONYMOUS == 0 and fd >= 0) return -@as(i64, abi.ENODEV);
+
+    const pid = sched_if.current();
+    if (pid == 0) return -@as(i64, abi.EINVAL);
+    const root = userRootOf(pid);
+    if (root == 0) return -@as(i64, abi.EINVAL);
+
+    const pages = (length + PAGE_SIZE - 1) / PAGE_SIZE;
+
+    s_mm_lock.lock();
+    defer s_mm_lock.unlock();
+    const st = mmStateLocked(pid) orelse return -@as(i64, abi.ENOMEM);
+
+    var va: u64 = 0;
+    if (flags & abi.MAP_FIXED != 0) {
+        if (addr == 0 or addr & (PAGE_SIZE - 1) != 0) return -@as(i64, abi.EINVAL);
+        va = addr;
+    } else {
+        va = st.mmap_top;
+        if (va + pages * PAGE_SIZE > MMAP_LIMIT) return -@as(i64, abi.ENOMEM);
+        st.mmap_top = (va + pages * PAGE_SIZE + 0xFFFF) & ~@as(u64, 0xFFFF);
+    }
+
+    const rec = for (&st.anon) |*r| {
+        if (!r.in_use) break r;
+    } else return -@as(i64, abi.ENOMEM);
+
+    const order = orderForBytes(pages * PAGE_SIZE);
+    var phys: u64 = 0;
+    if (pmm_if.alloc_page(order, &phys) != 0) return -@as(i64, abi.ENOMEM);
+    @memset(hhdm(phys)[0 .. pages * PAGE_SIZE], 0);
+
+    if (mmu_if.map(root, va, phys, pages, .ps_4kb, protToMmuFlags(prot)) != 0) {
+        _ = pmm_if.release(phys);
+        return -@as(i64, abi.ENOMEM);
+    }
+
+    rec.* = .{ .in_use = true, .va = va, .phys = phys, .pages = pages };
+    return @bitCast(va);
+}
+
+fn sysMunmap(a: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
+    _ = ctx;
+    const addr = a.arg[0];
+    const pid = sched_if.current();
+    if (pid == 0) return 0;
+    const root = userRootOf(pid);
+
+    s_mm_lock.lock();
+    defer s_mm_lock.unlock();
+    const st = mmStateLocked(pid) orelse return 0;
+    for (&st.anon) |*r| {
+        if (r.in_use and r.va == addr) {
+            if (root != 0) _ = mmu_if.unmap(root, r.va, r.pages, .ps_4kb);
+            _ = pmm_if.release(r.phys);
+            r.* = .{};
+            return 0;
+        }
+    }
+    return 0;
+}
+
+fn sysMprotect(a: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
+    _ = ctx;
+    const addr = a.arg[0];
+    const length = a.arg[1];
+    const prot = a.arg[2];
+    if (addr & (PAGE_SIZE - 1) != 0) return -@as(i64, abi.EINVAL);
+    const pages = (length + PAGE_SIZE - 1) / PAGE_SIZE;
+    if (pages == 0) return 0;
+    const pid = sched_if.current();
+    if (pid == 0) return -@as(i64, abi.EINVAL);
+    const root = userRootOf(pid);
+    if (root == 0) return -@as(i64, abi.EINVAL);
+    if (mmu_if.protect(root, addr, pages, .ps_4kb, protToMmuFlags(prot)) != 0) return -@as(i64, abi.EINVAL);
+    return 0;
+}
+
+fn sysMadvise(a: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
+    _ = a;
+    _ = ctx;
+    return 0;
+}
+
+fn sysMremap(a: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
+    _ = a;
+    _ = ctx;
+    return -@as(i64, abi.ENOSYS);
+}
+
+fn sysBrk(a: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
+    _ = ctx;
+    const want = a.arg[0];
+    const pid = sched_if.current();
+    if (pid == 0) return @bitCast(BRK_BASE);
+    const root = userRootOf(pid);
+
+    s_mm_lock.lock();
+    defer s_mm_lock.unlock();
+    const st = mmStateLocked(pid) orelse return @bitCast(BRK_BASE);
+
+    if (want == 0 or root == 0) return @bitCast(st.brk_cur);
+    if (want < BRK_BASE or want > BRK_BASE + BRK_MAX) return @bitCast(st.brk_cur);
+
+    const cur_pg = (st.brk_cur + PAGE_SIZE - 1) & ~@as(u64, PAGE_SIZE - 1);
+    const want_pg = (want + PAGE_SIZE - 1) & ~@as(u64, PAGE_SIZE - 1);
+
+    if (want_pg > cur_pg) {
+        var v = cur_pg;
+        while (v < want_pg) : (v += PAGE_SIZE) {
+            const rec = for (&st.anon) |*r| {
+                if (!r.in_use) break r;
+            } else return @bitCast(st.brk_cur);
+            var phys: u64 = 0;
+            if (pmm_if.alloc_page(0, &phys) != 0) return @bitCast(st.brk_cur);
+            @memset(hhdm(phys)[0..PAGE_SIZE], 0);
+            if (mmu_if.map(root, v, phys, 1, .ps_4kb, abi.MMU_USER | abi.MMU_NO_EXEC) != 0) {
+                _ = pmm_if.release(phys);
+                return @bitCast(st.brk_cur);
+            }
+            rec.* = .{ .in_use = true, .va = v, .phys = phys, .pages = 1 };
+        }
+    }
+    // Shrinking `brk` only lowers the logical break -- the pages stay
+    // mapped and are reclaimed at process teardown (mmForget + mmu.free).
+    // Calling mmu.unmap here corrupts pmm/mmu state in the full boot (an
+    // unresolved interaction between pruneIfEmpty's table recycling and
+    // the buddy allocator; see MUSL_SYSCALLS.md). mallocng uses mmap, not
+    // brk, so this costs nothing in practice.
+    st.brk_cur = want;
+    return @bitCast(want);
+}
+
 pub fn main(boot_info_ptr: *anyopaque) void {
     _ = boot_info_ptr;
     _ = mmu_if.get_user_ctx(&s_kernel_root); // kernel TTBR0 is still active here
@@ -785,7 +1030,13 @@ pub fn main(boot_info_ptr: *anyopaque) void {
     _ = sc_if.register(abi.SYS_wait4, &sysWait4, null);
     _ = sc_if.register_raw(abi.SYS_clone, &sysClone, null);
     _ = sc_if.register_raw(abi.SYS_execve, &sysExecve, null);
-    kernel_fmt.print(serial_if, "[elf_loader] ready; process syscalls + tree\n", .{});
+    _ = sc_if.register(abi.SYS_brk, &sysBrk, null);
+    _ = sc_if.register(abi.SYS_mmap, &sysMmap, null);
+    _ = sc_if.register(abi.SYS_munmap, &sysMunmap, null);
+    _ = sc_if.register(abi.SYS_mprotect, &sysMprotect, null);
+    _ = sc_if.register(abi.SYS_madvise, &sysMadvise, null);
+    _ = sc_if.register(abi.SYS_mremap, &sysMremap, null);
+    kernel_fmt.print(serial_if, "[elf_loader] ready; process syscalls + tree + anon mmap/brk\n", .{});
 }
 
 comptime {
