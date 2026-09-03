@@ -25,7 +25,13 @@ const Slot = struct {
     ctx: ?*anyopaque = null,
 };
 
+const RawSlot = struct {
+    handler: ?abi.RawSyscallHandler = null,
+    ctx: ?*anyopaque = null,
+};
+
 var s_table: [TABLE_SIZE]Slot = [_]Slot{.{}} ** TABLE_SIZE;
+var s_raw: [TABLE_SIZE]RawSlot = [_]RawSlot{.{}} ** TABLE_SIZE;
 var s_lock: spinlock.SpinLock = .{};
 
 fn dispatch(nr: u64, args: *const abi.SyscallArgs) i64 {
@@ -42,13 +48,43 @@ fn dispatch(nr: u64, args: *const abi.SyscallArgs) i64 {
 fn svcCallback(frame: *abi.TrapFrame, origin: abi.ExceptionOrigin, arg: ?*anyopaque) callconv(.c) abi.ExceptionOutcome {
     _ = origin;
     _ = arg;
+    const nr = frame.x[8];
+
+    if (nr < TABLE_SIZE) {
+        s_lock.lock();
+        const raw = s_raw[@intCast(nr)];
+        s_lock.unlock();
+        if (raw.handler) |rh| {
+            const ret = rh(frame, raw.ctx);
+            frame.x[0] = @bitCast(ret);
+            return .handled;
+        }
+    }
+
     const args = abi.SyscallArgs{
-        .nr = frame.x[8],
+        .nr = nr,
         .arg = .{ frame.x[0], frame.x[1], frame.x[2], frame.x[3], frame.x[4], frame.x[5] },
     };
-    const ret = dispatch(args.nr, &args);
+    const ret = dispatch(nr, &args);
     frame.x[0] = @bitCast(ret);
     return .handled;
+}
+
+pub fn registerRaw(nr: u32, handler: ?abi.RawSyscallHandler, ctx: ?*anyopaque) callconv(.c) c_int {
+    if (nr >= TABLE_SIZE or handler == null) return abi.EINVAL;
+    s_lock.lock();
+    defer s_lock.unlock();
+    if (s_raw[nr].handler != null) return abi.EBUSY;
+    s_raw[nr] = .{ .handler = handler, .ctx = ctx };
+    return 0;
+}
+
+pub fn unregisterRaw(nr: u32) callconv(.c) c_int {
+    if (nr >= TABLE_SIZE) return abi.EINVAL;
+    s_lock.lock();
+    defer s_lock.unlock();
+    s_raw[nr] = .{};
+    return 0;
 }
 
 // --- exported vtable ------------------------------------------------
@@ -105,6 +141,8 @@ comptime {
         .is_registered = isRegistered,
         .count = count,
         .invoke = invoke,
+        .register_raw = registerRaw,
+        .unregister_raw = unregisterRaw,
     });
 }
 

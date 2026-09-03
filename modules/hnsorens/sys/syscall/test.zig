@@ -235,7 +235,44 @@ fn testCountTracksRegistrations() callconv(.c) i32 {
     return t.result();
 }
 
+// --- 11. a raw handler sees the trap frame + wins over a plain one ---
+
+var g_raw_nr: u64 = 0;
+var g_raw_x0: u64 = 0;
+
+fn rawHandler(frame: *abi.TrapFrame, ctx: ?*anyopaque) callconv(.c) i64 {
+    _ = ctx;
+    g_raw_nr = frame.x[8];
+    g_raw_x0 = frame.x[0];
+    return @as(i64, @intCast(frame.x[0])) * 2; // return -> x0 on eret
+}
+
+fn testRawHandlerSeesFrame() callconv(.c) i32 {
+    var t = kernel_test.Tracker{ .serial = serial_if };
+    g_raw_nr = 0;
+    g_raw_x0 = 0;
+    t.expectEqual(@src(), main.registerRaw(420, &rawHandler, null), 0);
+    t.expectEqual(@src(), main.register(420, &sumHandler, null), 0); // plain also set
+
+    const ret = asm volatile (
+        \\ mov x8, #420
+        \\ mov x0, #21
+        \\ svc #0
+        : [r] "={x0}" (-> u64),
+        :
+        : .{ .x8 = true, .memory = true });
+
+    t.expectEqual(@src(), g_raw_nr, 420); // raw handler ran (not the plain sum)
+    t.expectEqual(@src(), g_raw_x0, 21); // it saw the frame's x0
+    t.expectEqual(@src(), ret, 42); // its return (21*2) reached x0
+
+    t.expectEqual(@src(), main.unregisterRaw(420), 0);
+    t.expectEqual(@src(), main.unregister(420), 0);
+    return t.result();
+}
+
 comptime {
+    abi.kernelTest("raw_handler_sees_frame", &testRawHandlerSeesFrame);
     abi.kernelTest("register_and_invoke", &testRegisterAndInvoke);
     abi.kernelTest("invoke_unregistered_enosys", &testInvokeUnregisteredEnosys);
     abi.kernelTest("svc_path_dispatches", &testSvcPathDispatches);
