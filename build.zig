@@ -122,7 +122,10 @@ pub fn build(b: *std.Build) void {
     // zig cc's linker wrapper rejects -Ttext / -z / -N, so the load
     // address is set with --image-base; the loader itself copes with
     // lld's default sub-page-tight AArch64 segment packing.
-    const UserProg = struct { src: []const u8, dest: []const u8 };
+    // `libc = true` links the real static musl libc (crt0 + malloc +
+    // stdio + TLS setup); otherwise it's a freestanding `_start` blob
+    // that issues raw `svc`s. Both land at the same 64 GiB image base.
+    const UserProg = struct { src: []const u8, dest: []const u8, libc: bool = false };
     const user_progs = [_]UserProg{
         .{ .src = "userland/hello.c", .dest = "hello" },
         .{ .src = "userland/init.c", .dest = "init" },
@@ -133,11 +136,32 @@ pub fn build(b: *std.Build) void {
         .{ .src = "userland/systest.c", .dest = "systest" },
         .{ .src = "userland/pipetest.c", .dest = "pipetest" },
         .{ .src = "userland/sigtest.c", .dest = "sigtest" },
+        .{ .src = "userland/sleeptest.c", .dest = "sleeptest" },
+        .{ .src = "userland/pgidtest.c", .dest = "pgidtest" },
+        .{ .src = "userland/jobtest.c", .dest = "jobtest" },
+        .{ .src = "userland/polltest.c", .dest = "polltest" },
+        .{ .src = "userland/restarttest.c", .dest = "restarttest" },
+        .{ .src = "userland/musltest.c", .dest = "musltest", .libc = true },
+        .{ .src = "userland/musltest2.c", .dest = "musltest2", .libc = true },
+        .{ .src = "userland/musltest3.c", .dest = "musltest3", .libc = true },
+        .{ .src = "userland/shtest.c", .dest = "shtest" },
+        .{ .src = "userland/bashtest.c", .dest = "bashtest" },
     };
 
     var user_dep: *std.Build.Step = &debugfs_write_hello.step;
     for (user_progs) |prog| {
-        const cc = b.addSystemCommand(&.{
+        const cc = if (prog.libc) b.addSystemCommand(&.{
+            "zig",      "cc",
+            "-target",  "aarch64-linux-musl",
+            "-static",  "-no-pie",
+            "-fno-pie", "-fno-stack-protector",
+            "-O2",      "-Wall",
+            // Real musl libc + crt1; userland/crt0.c only supplies a
+            // dummy `_DYNAMIC` so crt1's self-reloc ADRP is in range at
+            // the 64 GiB image base.
+            "-Wl,--image-base=0x1000000000",
+            "-o",
+        }) else b.addSystemCommand(&.{
             "zig",            "cc",
             "-target",        "aarch64-linux-musl",
             "-nostdlib",      "-static",
@@ -149,6 +173,7 @@ pub fn build(b: *std.Build) void {
         });
         const elf = cc.addOutputFileArg(b.fmt("{s}.elf", .{prog.dest}));
         cc.addFileArg(b.path(prog.src));
+        if (prog.libc) cc.addFileArg(b.path("userland/crt0.c"));
 
         const inject = b.addSystemCommand(&.{
             "sh", "-c", b.fmt("debugfs -w -R \"write $1 {s}\" \"$2\"", .{prog.dest}), "sh",
@@ -158,6 +183,40 @@ pub fn build(b: *std.Build) void {
         inject.step.dependOn(user_dep);
         user_dep = &inject.step;
     }
+
+    // Prebuilt static-musl BusyBox -> /bin/busybox (built once with
+    // `zig cc -target aarch64-linux-musl`, --image-base 0x1000000000; see
+    // userland/prebuilt/README). /shtest execs `/bin/busybox sh -c ...`.
+    const bb_mkbin = b.addSystemCommand(&.{
+        "sh", "-c", "debugfs -w -R 'mkdir /bin' \"$1\" 2>/dev/null; true", "sh", rootfs_name,
+    });
+    bb_mkbin.step.dependOn(user_dep);
+    const bb_inject = b.addSystemCommand(&.{
+        "sh", "-c",
+        \\set -e
+        \\debugfs -w -R "write $1 /bin/busybox" "$2"
+        \\# hardlinks (not symlinks): the vfs path walk doesn't follow
+        \\# symlinks on exec, and busybox dispatches on argv[0]'s basename.
+        \\for a in sh ash cat ls echo rev wc head tail true false rm mkdir \
+        \\         pwd env printf test sleep grep sort uniq cut tr sed date \
+        \\         basename dirname mv cp touch id uname yes seq xargs find; do
+        \\  debugfs -w -R "ln /bin/busybox /bin/$a" "$2" 2>/dev/null || true
+        \\done
+        ,
+        "sh",
+    });
+    bb_inject.addFileArg(b.path("userland/prebuilt/busybox")); // $1
+    bb_inject.addArg(rootfs_name); // $2
+    bb_inject.step.dependOn(&bb_mkbin.step);
+
+    // Prebuilt static-musl GNU bash 5.2 -> /bin/bash (see prebuilt/README).
+    const bash_inject = b.addSystemCommand(&.{
+        "sh", "-c", "debugfs -w -R \"write $1 /bin/bash\" \"$2\"", "sh",
+    });
+    bash_inject.addFileArg(b.path("userland/prebuilt/bash")); // $1
+    bash_inject.addArg(rootfs_name); // $2
+    bash_inject.step.dependOn(&bb_inject.step);
+    user_dep = &bash_inject.step;
 
     const dd_rootfs = b.addSystemCommand(&.{
         "dd", b.fmt("if={s}", .{rootfs_name}), b.fmt("of={s}", .{img_name}),

@@ -296,7 +296,7 @@ pub fn routeToCore(vector: u32, mpidr: u64) callconv(.c) c_int {
     if (vector < 32 or vector >= MAX_INTERRUPT_VECTORS) return abi.EINVAL;
 
     var found = false;
-    for (s_core_topology) |core| {
+    for (&s_core_topology) |*core| {
         if (core.allocated and core.mpidr == mpidr) {
             found = true;
             break;

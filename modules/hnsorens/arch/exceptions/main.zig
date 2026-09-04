@@ -23,6 +23,14 @@ pub const serial_if = abi.importInterface(abi.Serial);
 // TrapFrame is 36 packed u64s = 288 bytes (16-aligned). Field offsets:
 //   x0..x30 -> 0,8,...,240   sp -> 248   elr -> 256
 //   spsr -> 264   esr -> 272   far -> 280
+// The carved frame is 816 bytes: the 288-byte TrapFrame the handler
+// sees, then a private FP/SIMD save area the handler never touches:
+//   q0..q31 -> 288 .. 800 (16 stp-pair slots, 32-byte stride)
+//   fpsr -> 800   fpcr -> 808
+// EL1 kernel code uses NEON (memcpy/memset/fmt), so a handler will
+// clobber q0..q31; without saving them here an EL0 caller that keeps a
+// value in a vector register across an `svc` (any -O2 libc) gets it
+// corrupted.
 // Each of the 16 vector slots is 128 bytes; the stub there just carves
 // the frame, stashes x0/x1 (scratch), loads its slot index into x0, and
 // branches to the common path.
@@ -30,7 +38,7 @@ comptime {
     asm (
         \\.macro VEC_ENTRY idx
         \\.balign 0x80
-        \\    sub sp, sp, #288
+        \\    sub sp, sp, #816
         \\    stp x0, x1, [sp, #0]
         \\    mov x0, #\idx
         \\    b exc_common
@@ -73,10 +81,31 @@ comptime {
         \\    stp x26, x27, [sp, #208]
         \\    stp x28, x29, [sp, #224]
         \\    str x30,      [sp, #240]
+        \\    // FP/SIMD: q0..q31 + fpsr/fpcr into the private save area.
+        \\    stp q0,  q1,  [sp, #288]
+        \\    stp q2,  q3,  [sp, #320]
+        \\    stp q4,  q5,  [sp, #352]
+        \\    stp q6,  q7,  [sp, #384]
+        \\    stp q8,  q9,  [sp, #416]
+        \\    stp q10, q11, [sp, #448]
+        \\    stp q12, q13, [sp, #480]
+        \\    stp q14, q15, [sp, #512]
+        \\    stp q16, q17, [sp, #544]
+        \\    stp q18, q19, [sp, #576]
+        \\    stp q20, q21, [sp, #608]
+        \\    stp q22, q23, [sp, #640]
+        \\    stp q24, q25, [sp, #672]
+        \\    stp q26, q27, [sp, #704]
+        \\    stp q28, q29, [sp, #736]
+        \\    stp q30, q31, [sp, #768]
+        \\    mrs x1, fpsr
+        \\    str x1, [sp, #800]
+        \\    mrs x1, fpcr
+        \\    str x1, [sp, #808]
         \\    // interrupted SP: SP_EL0 for a lower-EL trap (idx >= 8),
         \\    // else the SP from just before this frame was carved.
         \\    mrs x1, sp_el0
-        \\    add x2, sp, #288
+        \\    add x2, sp, #816
         \\    cmp x0, #8
         \\    csel x1, x1, x2, ge
         \\    str x1, [sp, #248]
@@ -94,12 +123,40 @@ comptime {
         \\    msr elr_el1, x1
         \\    ldr x1, [sp, #264]
         \\    msr spsr_el1, x1
-        \\    // Restore SP_EL0. Essential for a lower-EL return: a task
-        \\    // that blocked in a syscall while another EL0 task ran must
-        \\    // get its own user SP back, not the other task's. Harmless
-        \\    // for a current-EL return (EL1h ignores SP_EL0).
+        \\    // Restore SP_EL0 ONLY when returning to EL0 (SPSR.M[3:0]==0):
+        \\    // a task that blocked in a syscall while another EL0 task ran
+        \\    // must get its own user SP back. For a current-EL (EL1->EL1)
+        \\    // return -- e.g. an IRQ that hit a long-running syscall --
+        \\    // [sp,#248] holds the interrupted *kernel* SP, and writing
+        \\    // that into SP_EL0 would corrupt the interrupted task's user
+        \\    // stack pointer, which it still needs on its eventual return
+        \\    // to EL0.
+        \\    tst x1, #0xf
+        \\    b.ne 1f
         \\    ldr x1, [sp, #248]
         \\    msr sp_el0, x1
+        \\    1:
+        \\    // Restore FP/SIMD.
+        \\    ldr x1, [sp, #800]
+        \\    msr fpsr, x1
+        \\    ldr x1, [sp, #808]
+        \\    msr fpcr, x1
+        \\    ldp q0,  q1,  [sp, #288]
+        \\    ldp q2,  q3,  [sp, #320]
+        \\    ldp q4,  q5,  [sp, #352]
+        \\    ldp q6,  q7,  [sp, #384]
+        \\    ldp q8,  q9,  [sp, #416]
+        \\    ldp q10, q11, [sp, #448]
+        \\    ldp q12, q13, [sp, #480]
+        \\    ldp q14, q15, [sp, #512]
+        \\    ldp q16, q17, [sp, #544]
+        \\    ldp q18, q19, [sp, #576]
+        \\    ldp q20, q21, [sp, #608]
+        \\    ldp q22, q23, [sp, #640]
+        \\    ldp q24, q25, [sp, #672]
+        \\    ldp q26, q27, [sp, #704]
+        \\    ldp q28, q29, [sp, #736]
+        \\    ldp q30, q31, [sp, #768]
         \\    ldp x2, x3,   [sp, #16]
         \\    ldp x4, x5,   [sp, #32]
         \\    ldp x6, x7,   [sp, #48]
@@ -116,7 +173,7 @@ comptime {
         \\    ldp x28, x29, [sp, #224]
         \\    ldr x30,      [sp, #240]
         \\    ldp x0, x1,   [sp, #0]
-        \\    add sp, sp, #288
+        \\    add sp, sp, #816
         \\    eret
     );
 }

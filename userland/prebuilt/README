@@ -1,0 +1,16 @@
+Prebuilt static userland binaries for the ext2 rootfs.
+
+busybox  -- BusyBox 1.36.1, static, linked against musl via zig cc.
+  cd busybox-1.36.1
+  make defconfig
+  # .config: CONFIG_STATIC=y ; disable CONFIG_TC
+  # scripts/trylink: make INFO_OPTS() a no-op (zig cc rejects
+  #   -Wl,--warn-common / -Wl,-Map / -Wl,--verbose)
+  # bbcrt.o = weak dummy DT_NULL _DYNAMIC so musl crt1's self-reloc
+  #   'adrp _DYNAMIC' is in range at the 0x1000000000 image base:
+  #     __asm__(".pushsection .data.rel.ro,\"aw\",@progbits\n"
+  #             ".balign 8\n.weak _DYNAMIC\n.hidden _DYNAMIC\n"
+  #             "_DYNAMIC:\n.quad 0\n.quad 0\n.popsection\n");
+  CONFIG_EXTRA_LDFLAGS="-Wl,--image-base=0x1000000000 /abs/path/bbcrt.o"
+  CONFIG_EXTRA_CFLAGS="-fno-pie -fno-stack-protector -Wno-error"
+  make -j$(nproc) ARCH=arm64 CC="zig cc -target aarch64-linux-musl" HOSTCC=cc SKIP_STRIP=y

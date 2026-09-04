@@ -12,6 +12,7 @@
 //! read `scheduler.block()`s the caller and the keyboard ISR path
 //! (`ttyRxByte`) `scheduler.wake()`s it once a line is ready. This is the
 //! standard tty layering HendOS's `vcon.c` did in one lump.
+const std = @import("std");
 const abi = @import("abi");
 const kernel_fmt = @import("kernel_fmt");
 const spinlock = @import("spinlock");
@@ -32,9 +33,24 @@ const CTRL_BACKSLASH: u8 = 0x1C;
 const CTRL_U: u8 = 0x15;
 const CTRL_W: u8 = 0x17;
 const CTRL_D: u8 = 0x04;
+const CTRL_Z: u8 = 0x1A;
 
 var s_canonical: bool = true;
 var s_echo: bool = true;
+
+// The kernel `struct termios` (abi.KTERMIOS_SIZE == 36 bytes). Defaults:
+// c_iflag ICRNL(0o400)|IXON(0o2000); c_oflag OPOST(1)|ONLCR(4); c_cflag
+// B38400|CS8|CREAD(0o0277); c_lflag ISIG|ICANON|ECHO|ECHOE|ECHOK|IEXTEN.
+var s_termios: [36]u8 = blk: {
+    var t = [_]u8{0} ** 36;
+    std.mem.writeInt(u32, t[0..4], 0o002400, .little); // c_iflag
+    std.mem.writeInt(u32, t[4..8], 0o000005, .little); // c_oflag
+    std.mem.writeInt(u32, t[8..12], 0o000277, .little); // c_cflag
+    std.mem.writeInt(u32, t[12..16], 0o105073, .little); // c_lflag
+    break :blk t;
+};
+
+var s_fg_pgrp: u32 = 0;
 
 var s_line: [LINE_MAX]u8 = undefined;
 var s_line_len: usize = 0;
@@ -103,12 +119,27 @@ pub fn ttyRxByte(byte: u8) callconv(.c) void {
 
     switch (b) {
         CTRL_C, CTRL_BACKSLASH => {
-            // No foreground process group yet: signal whatever user
-            // process is currently running. Discard the pending line.
-            if (s_echo) out("^C\r\n");
+            if (s_echo) out(if (b == CTRL_C) "^C\r\n" else "^\\\r\n");
             s_line_len = 0;
-            const cur = sched_if.current();
-            if (cur != 0) signal_if.raise(cur, if (b == CTRL_C) 2 else 3); // SIGINT / SIGQUIT
+            // Signal the foreground process group; fall back to the
+            // running process if no group has claimed the tty yet.
+            const sig: u32 = if (b == CTRL_C) 2 else 3; // SIGINT / SIGQUIT
+            if (s_fg_pgrp != 0) {
+                signal_if.raise_group(s_fg_pgrp, sig);
+            } else {
+                const cur = sched_if.current();
+                if (cur != 0) signal_if.raise(cur, sig);
+            }
+        },
+        CTRL_Z => {
+            if (s_echo) out("^Z\r\n");
+            s_line_len = 0;
+            if (s_fg_pgrp != 0) {
+                signal_if.raise_group(s_fg_pgrp, 20); // SIGTSTP
+            } else {
+                const cur = sched_if.current();
+                if (cur != 0) signal_if.raise(cur, 20);
+            }
         },
         '\n' => {
             if (s_echo) out("\r\n");
@@ -194,6 +225,40 @@ pub fn setMode(canonical: bool, echo: bool) callconv(.c) void {
     s_canonical = canonical;
     s_echo = echo;
     s_line_len = 0; // discard any half-typed line on a mode change
+    var lflag = std.mem.readInt(u32, s_termios[12..16], .little);
+    lflag = if (canonical) lflag | abi.ICANON else lflag & ~abi.ICANON;
+    lflag = if (echo) lflag | abi.ECHO else lflag & ~abi.ECHO;
+    std.mem.writeInt(u32, s_termios[12..16], lflag, .little);
+}
+
+pub fn tcgets(dst: [*]u8) callconv(.c) void {
+    s_lock.lock();
+    defer s_lock.unlock();
+    @memcpy(dst[0..s_termios.len], &s_termios);
+}
+
+pub fn tcsets(src: [*]const u8) callconv(.c) void {
+    s_lock.lock();
+    defer s_lock.unlock();
+    @memcpy(&s_termios, src[0..s_termios.len]);
+    const lflag = std.mem.readInt(u32, s_termios[12..16], .little);
+    s_canonical = (lflag & abi.ICANON) != 0;
+    s_echo = (lflag & abi.ECHO) != 0;
+    s_line_len = 0;
+}
+
+pub fn getFgPgrp() callconv(.c) u32 {
+    return s_fg_pgrp;
+}
+
+pub fn readable() callconv(.c) u8 {
+    s_lock.lock();
+    defer s_lock.unlock();
+    return @intFromBool(s_ck_count > 0 or s_eof);
+}
+
+pub fn setFgPgrp(pgid: u32) callconv(.c) void {
+    s_fg_pgrp = pgid;
 }
 
 /// Test-only: clear all discipline state back to defaults (canonical,
@@ -208,6 +273,7 @@ pub fn testReset() void {
     s_ck_count = 0;
     s_eof = false;
     s_blocked_reader = 0;
+    s_fg_pgrp = 0;
 }
 
 /// Test-only: whether an EOF is queued (set by ^D on an empty line,
@@ -227,6 +293,11 @@ comptime {
         .read = read,
         .write = write,
         .set_mode = setMode,
+        .tcgets = tcgets,
+        .tcsets = tcsets,
+        .get_fg_pgrp = getFgPgrp,
+        .set_fg_pgrp = setFgPgrp,
+        .readable = readable,
     });
 }
 

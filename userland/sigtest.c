@@ -96,6 +96,20 @@ void _start(void)
     /* delivered on the way out of the unblock syscall */
     if (g_hits != 2) exit_(77);
 
+    /* 2.5. sigsuspend: SIGUSR1 blocked + pending, suspend with an empty
+     * mask -> handler runs, syscall returns -EINTR, old mask restored. */
+    g_hits = 0;
+    sc6(SYS_rt_sigprocmask, SIG_BLOCK, (long)&set, 0, 8, 0, 0);
+    sc6(SYS_kill, pid, SIGUSR1, 0, 0, 0, 0);
+    if (g_hits != 0) exit_(80);
+    unsigned long empty = 0;
+    if (sc6(133 /*rt_sigsuspend*/, (long)&empty, 8, 0, 0, 0, 0) != -4) exit_(81);
+    if (g_hits != 1) exit_(82);
+    sc6(SYS_kill, pid, SIGUSR1, 0, 0, 0, 0); /* still blocked -> pending */
+    if (g_hits != 1) exit_(83);
+    sc6(SYS_rt_sigprocmask, SIG_UNBLOCK, (long)&set, 0, 8, 0, 0);
+    if (g_hits != 2) exit_(84);
+
     /* 3. SIGSEGV from a bad store -> segv_handler -> exit(88) */
     if (install(SIGSEGV, segv_handler) != 0) exit_(78);
     *(volatile int *)0x1 = 0x1234;

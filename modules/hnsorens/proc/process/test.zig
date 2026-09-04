@@ -301,6 +301,92 @@ fn testListEnumeratesLivePids() callconv(.c) i32 {
     return t.result();
 }
 
+// --- 12. list()/count() must not copy the TCB table onto the stack -----
+//
+// Regression: `for (s_table) |t|` iterated the 64-entry table *by value*,
+// so each call spilled a ~48 KiB copy of the whole table as a loop temp.
+// `list()` runs from `sysWait4` on an 8-page (32 KiB) syscall stack, so
+// the copy overflowed the stack straight into whatever the pmm had put
+// physically below it -- for /forktest that was the parent's own L1 page
+// table, which got zeroed, faulting the parent the instant it called
+// wait4() after fork(). This test drives both functions on a dedicated
+// stack painted with a sentinel and asserts they touch < 4 KiB of it.
+
+const STACK_PAINT: u64 = 0xA5A5A5A5A5A5A5A5;
+
+var g_su_ctx: ?*anyopaque = null;
+var g_su_main: abi.TaskContext = .{};
+var g_su_base: u64 = 0;
+var g_su_top: u64 = 0;
+var g_su_used: u64 = 0;
+var g_su_list_rc: c_int = 1;
+var g_su_n: u32 = 0;
+
+fn stackUseRunner(arg: usize) callconv(.c) void {
+    _ = arg;
+    const sp = asm volatile ("mov %[o], sp"
+        : [o] "=r" (-> u64),
+    );
+    // Paint the free span between the stack base and our own frame, run
+    // the functions under test, then find how far down the paint was
+    // trampled.
+    const lo = (g_su_base + 256 + 7) & ~@as(u64, 7);
+    const hi = (sp - 512) & ~@as(u64, 7);
+    var p = lo;
+    while (p < hi) : (p += 8) @as(*volatile u64, @ptrFromInt(p)).* = STACK_PAINT;
+
+    var buf: [main.MAX_PROCESSES]u32 = undefined;
+    var i: u32 = 0;
+    while (i < 16) : (i += 1) {
+        _ = main.count();
+        g_su_list_rc = main.list(&buf, buf.len, &g_su_n);
+    }
+
+    var deepest = hi;
+    p = lo;
+    while (p < hi) : (p += 8) {
+        if (@as(*volatile u64, @ptrFromInt(p)).* != STACK_PAINT) {
+            deepest = p;
+            break;
+        }
+    }
+    g_su_used = g_su_top - deepest;
+    cs_if.switch_to(@ptrCast(@alignCast(g_su_ctx.?)), &g_su_main);
+    while (true) {}
+}
+
+fn testListDoesNotCopyTableToStack() callconv(.c) i32 {
+    var t = kernel_test.Tracker{ .serial = serial_if };
+    g_su_main = .{};
+    g_su_used = 0;
+    g_su_list_rc = 1;
+
+    const filler = mkThread(&t, "su", @intFromPtr(&idleEntry), 2, 0);
+
+    // 64-page (256 KiB) stack: big enough that even the ~48 KiB buggy
+    // copy stays inside it -- so an unfixed build gets a clean FAIL here
+    // rather than corrupting the kernel and taking the whole run down.
+    const pid = mkThread(&t, "stackuse", @intFromPtr(&stackUseRunner), 64, 0);
+    t.expectEqual(@src(), main.contextOf(pid, &g_su_ctx), 0);
+
+    var info: abi.ProcessInfo = .{};
+    t.expectEqual(@src(), main.getInfo(pid, &info), 0);
+    g_su_base = info.kstack_base;
+    g_su_top = info.kstack_base + info.kstack_size;
+
+    const rctx: *abi.TaskContext = @ptrCast(@alignCast(g_su_ctx.?));
+    cs_if.switch_to(&g_su_main, rctx);
+
+    t.expectEqual(@src(), g_su_list_rc, 0);
+    t.expectEqual(@src(), g_su_n, main.count());
+    // Fixed: both functions touch a few hundred bytes. Buggy: ~48 KiB.
+    t.expectTrue(@src(), g_su_used < 4096);
+
+    t.expectEqual(@src(), main.destroy(pid), 0);
+    t.expectEqual(@src(), main.destroy(filler), 0);
+    return t.result();
+}
+
 // --- forked-process TCB bookkeeping (no EL0 run) -----------------
 
 fn testForkedProcessTcb() callconv(.c) i32 {
@@ -353,4 +439,5 @@ comptime {
     abi.kernelTest("create_rejects_bad_args", &testCreateRejectsBadArgs);
     abi.kernelTest("slot_reused_after_destroy", &testSlotReusedAfterDestroy);
     abi.kernelTest("list_enumerates_live_pids", &testListEnumeratesLivePids);
+    abi.kernelTest("list_does_not_copy_table_to_stack", &testListDoesNotCopyTableToStack);
 }

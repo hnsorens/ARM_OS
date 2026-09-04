@@ -48,6 +48,10 @@ pub const ELOOP: c_int = 40;
 pub const ENAMETOOLONG: c_int = 36;
 pub const EPERM: c_int = 1;
 pub const EINTR: c_int = 4;
+/// Internal-only: a blocking syscall returns `-ERESTARTSYS` (never seen
+/// by userspace) to ask the signal-delivery hook to either rewind the
+/// `svc` (SA_RESTART handler / spurious wake) or rewrite it to `-EINTR`.
+pub const ERESTARTSYS: c_int = 512;
 pub const ENXIO: c_int = 6;
 pub const E2BIG: c_int = 7;
 pub const EAGAIN: c_int = 11;
@@ -356,6 +360,9 @@ pub const ProcessState = enum(u32) {
     blocked = 4,
     /// Exited; TCB kept until reaped for its exit code.
     zombie = 5,
+    /// Job-control stopped (SIGSTOP/SIGTSTP/...); resumed by SIGCONT.
+    /// Not runnable; `Scheduler.wake` also accepts this state.
+    stopped = 6,
     _,
 };
 
@@ -378,6 +385,10 @@ pub const ProcessInfo = extern struct {
     /// in its own address space); false for a kernel thread.
     is_user: bool = false,
     name: [32]u8 = [_]u8{0} ** 32,
+    /// Process group / session ids (`= pid` at create, inherited on
+    /// fork, changed by `setpgid` / `setsid`).
+    pgid: u32 = 0,
+    sid: u32 = 0,
 };
 
 pub const Process = extern struct {
@@ -425,6 +436,16 @@ pub const Process = extern struct {
     /// the count to `n_out`. `EOVERFLOW` if there are more than `max`
     /// (the first `max` are still written).
     list: *const fn (out_pids: [*]u32, max: u32, n_out: *u32) callconv(.c) c_int,
+    /// Set `pid`'s process group (`pgid == 0` means "= pid"). `EINVAL`
+    /// for an unknown pid.
+    set_pgid: *const fn (pid: u32, pgid: u32) callconv(.c) c_int,
+    /// `pid`'s process group id, or 0 if the pid is unknown.
+    get_pgid: *const fn (pid: u32) callconv(.c) u32,
+    /// Start a new session: `sid = pgid = pid`. Returns the new sid, or 0
+    /// for an unknown pid.
+    set_sid: *const fn (pid: u32) callconv(.c) u32,
+    /// `pid`'s session id, or 0 if the pid is unknown.
+    get_sid: *const fn (pid: u32) callconv(.c) u32,
 };
 
 // --- Syscall dispatch (fixed table) ---
@@ -468,6 +489,7 @@ pub const SYS_readv: u32 = 65;
 pub const SYS_writev: u32 = 66;
 pub const SYS_pread64: u32 = 67;
 pub const SYS_pwrite64: u32 = 68;
+pub const SYS_pselect6: u32 = 72;
 pub const SYS_ppoll: u32 = 73;
 pub const SYS_readlinkat: u32 = 78;
 pub const SYS_newfstatat: u32 = 79;
@@ -488,6 +510,8 @@ pub const SYS_sched_getaffinity: u32 = 123;
 pub const SYS_kill: u32 = 129;
 pub const SYS_tkill: u32 = 130;
 pub const SYS_tgkill: u32 = 131;
+pub const SYS_sigaltstack: u32 = 132;
+pub const SYS_rt_sigsuspend: u32 = 133;
 pub const SYS_rt_sigaction: u32 = 134;
 pub const SYS_rt_sigprocmask: u32 = 135;
 pub const SYS_rt_sigpending: u32 = 136;
@@ -558,6 +582,7 @@ pub const O_CREAT: u32 = 0o100;
 pub const O_TRUNC: u32 = 0o1000;
 pub const O_APPEND: u32 = 0o2000;
 pub const O_DIRECTORY: u32 = 0o200000;
+pub const O_CLOEXEC: u32 = 0o2000000;
 pub const AT_FDCWD: i32 = -100;
 pub const SEEK_SET: u32 = 0;
 pub const SEEK_CUR: u32 = 1;
@@ -635,9 +660,12 @@ pub const Scheduler = extern struct {
     /// until `wake`. Returns (once rescheduled). `EINVAL` if called with
     /// no running task.
     block: *const fn () callconv(.c) c_int,
-    /// Move a blocked task back to ready and re-queue it. `EINVAL` if the
-    /// pid isn't currently blocked.
+    /// Move a blocked or job-control-stopped task back to ready and
+    /// re-queue it. `EINVAL` if the pid isn't blocked/stopped.
     wake: *const fn (pid: u32) callconv(.c) c_int,
+    /// Like `block`, but the running task enters `stopped` (job control).
+    /// Only `wake` (i.e. SIGCONT) resumes it.
+    stop: *const fn () callconv(.c) c_int,
     /// Set the running task to `zombie`, drop it from rotation, and
     /// switch away. Does NOT return to the calling task.
     exit_current: *const fn () callconv(.c) void,
@@ -683,6 +711,17 @@ pub const Tty = extern struct {
     write: *const fn (buf: [*]const u8, len: u64) callconv(.c) u64,
     /// `canonical` = line-buffered + editing; `echo` = echo keystrokes.
     set_mode: *const fn (canonical: bool, echo: bool) callconv(.c) void,
+    /// Copy the current `struct termios` out / in (`KTERMIOS_SIZE` bytes).
+    /// `tcsets` re-derives canonical/echo from `c_lflag` (ICANON / ECHO).
+    tcgets: *const fn (dst: [*]u8) callconv(.c) void,
+    tcsets: *const fn (src: [*]const u8) callconv(.c) void,
+    /// Foreground process group id: get / set (`tcgetpgrp`/`tcsetpgrp`,
+    /// and where `^C` etc. send their signal).
+    get_fg_pgrp: *const fn () callconv(.c) u32,
+    set_fg_pgrp: *const fn (pgid: u32) callconv(.c) void,
+    /// 1 if a `read` would return without blocking (data queued or EOF).
+    /// For `poll`.
+    readable: *const fn () callconv(.c) u8,
 };
 
 // --- File descriptors / open-file table ---
@@ -703,6 +742,8 @@ pub const Fd = extern struct {
     /// Close every fd and release `pid`'s table (idempotent-ish: `EINVAL`
     /// if `pid` has no table).
     clear_table: *const fn (pid: u32) callconv(.c) c_int,
+    /// Close only the fds flagged FD_CLOEXEC (execve semantics).
+    on_execve: *const fn (pid: u32) callconv(.c) c_int,
 };
 
 // --- Userspace ELF loading ---
@@ -808,6 +849,19 @@ pub const Signal = extern struct {
     forget: *const fn (pid: u32) callconv(.c) void,
     /// Copy `parent`'s dispositions + blocked mask to `child` (fork).
     fork_inherit: *const fn (parent: u32, child: u32) callconv(.c) void,
+    /// 1 if `pid` has a deliverable (pending & not blocked) signal, else 0.
+    /// Lets a blocking syscall (e.g. `nanosleep`) bail with `EINTR`.
+    has_pending: *const fn (pid: u32) callconv(.c) u8,
+    /// Raise `sig` on every live process whose `pgid` matches (job
+    /// control: `^C` -> foreground group, `kill(-pgid, sig)`).
+    raise_group: *const fn (pgid: u32, sig: u32) callconv(.c) void,
+    /// 1 if `pid` is job-control stopped (parked in `Scheduler.stop`).
+    /// For `wait4(WUNTRACED)`.
+    is_stopped: *const fn (pid: u32) callconv(.c) u8,
+    /// A blocking syscall that is about to return `-ERESTARTSYS` records
+    /// its `svc`'s original x0 here so the delivery hook can restore it
+    /// when it rewinds the `svc` (SA_RESTART).
+    mark_restart: *const fn (pid: u32, saved_x0: u64) callconv(.c) void,
 };
 
 /// Exported by the exceptions module (category "exceptions").
@@ -1026,7 +1080,26 @@ pub const TIOCGWINSZ: u64 = 0x5413;
 pub const TIOCSWINSZ: u64 = 0x5414;
 pub const TIOCGPGRP: u64 = 0x540F;
 pub const TIOCSPGRP: u64 = 0x5410;
+pub const TIOCSCTTY: u64 = 0x540E;
 pub const FIONREAD: u64 = 0x541B;
+
+/// The kernel `struct termios` TCGETS/TCSETS exchange (36 bytes on
+/// aarch64): c_iflag/c_oflag/c_cflag/c_lflag (u32 each), c_line (u8),
+/// c_cc[19]. musl's userspace struct is larger (c_cc[32] + speeds); the
+/// kernel only ever touches these 36 bytes.
+pub const KTERMIOS_SIZE: usize = 36;
+/// c_lflag bits.
+pub const ISIG: u32 = 0o000001;
+pub const ICANON: u32 = 0o000002;
+pub const ECHO: u32 = 0o000010;
+
+/// poll(2) event bits (`struct pollfd { i32 fd; i16 events; i16 revents; }`).
+pub const POLLIN: i16 = 0x001;
+pub const POLLPRI: i16 = 0x002;
+pub const POLLOUT: i16 = 0x004;
+pub const POLLERR: i16 = 0x008;
+pub const POLLHUP: i16 = 0x010;
+pub const POLLNVAL: i16 = 0x020;
 
 /// ext2 filesystem driver, exported by the ext2 module (category "ext2").
 /// `fs` is an opaque mount handle from `mount`. Every path-shaped

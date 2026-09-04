@@ -10,22 +10,110 @@ Numbers are the `asm-generic/unistd.h` (aarch64) ones — the same table
 
 Legend: `[x]` done · `[~]` partial / stubbed · `[ ]` not started
 
-## STATUS (qemu-test passed=392)
+## Real musl / BusyBox / bash run (qemu-test passed=404)
+
+**GNU bash 5.2.37 and BusyBox 1.36.1, static-musl, run on the kernel** —
+as kernelTests (`bash -c` / `busybox sh -c` scripts) and interactively:
+a booted image drops to `arm-os:/# ` and `/init` execs `/bin/bash`.
+
+Verified end to end:
+- `/musltest{,2,3}` — musl libc from `_start`: crt0 → `__libc_start_main`
+  → `__init_libc` / `__init_tls` / stack canary / `.init_array` → `main`;
+  TLS `errno`; stdio (`fstat`/`ioctl(TCGETS)` + `writev` + `printf`);
+  `malloc` (small + 256 KiB → `mmap`); `sigaction`+`kill`+catch; buffered
+  file I/O on ext2; `opendir`/`readdir`; **`fork`+`execve`+`waitpid`**;
+  `pipe`+`dup2` pipelines; custom `environ` across `execve`.
+- `/shtest` — `/bin/busybox` + 38 hardlinked applets: a for-loop,
+  arithmetic, `echo x | rev`, redirect + `cat` readback + `rm`,
+  `ls /bin | wc -l`, `&&`/`||`, `test -d`, a 3-stage `tr | sort -r |
+  head` pipeline.
+- `/bashtest` — GNU bash: arrays + `${#a[@]}`/negative slices, `{1..5}`,
+  arithmetic loops, functions, `$()` + nested `$((...))`, a 3-process
+  pipeline, `${s:2:3}`/`${s^^}`, `[[ -eq && -d ]]`, `case`, a `<<EOF`
+  heredoc, `read x y <<<`, `trap ... USR1` + `kill -USR1 $$`,
+  `( ... ) & wait` (background job + reap), `grep`/`wc -l < file`.
+- Interactive bash (piped console input, real UART RX IRQ): prompt +
+  line editing, `pwd`/`id`, `$((...))`, `for` loops, `ls /bin | wc -l`,
+  `echo x | rev`, `exit` → `logout`.
+
+Build notes (see `userland/prebuilt/README`): `zig cc -target
+aarch64-linux-musl` cross, `--image-base=0x1000000000`. `userland/crt0.c`
+supplies a dummy DT_NULL `_DYNAMIC` so musl's stock crt1 self-reloc
+`adrp _DYNAMIC` is in range at the 64 GiB base. busybox needs
+`scripts/trylink`'s `INFO_OPTS` no-op'd (zig cc rejects
+`-Wl,--warn-common`/`-Map`/`--verbose`); bash needs the cross
+config-cache + `CFLAGS_FOR_BUILD=-std=gnu17` for its K&R host tools.
+
+Kernel bugs found and fixed getting here:
+- `clone()` child had no `elf_loader` image record → `execve` from it
+  returned EINVAL (every shell command) (`0ae4979`).
+- forked child's anon-mmap allocator didn't inherit `mmap_top`/`brk_cur`
+  → post-fork `malloc` re-`mmap`'d an occupied VA → NULL →
+  "bash: xmalloc: cannot allocate 2048 bytes" (`4831073`).
+- syscall handlers run with IRQs masked (SVC entry), so `ppoll(tty)`
+  from readline spun forever — the UART RX IRQ could never fire.
+  SpinLock made IRQ-safe; busy-wait syscalls re-enable IRQ in their
+  spin (`b8c110b`).
+
+## STATUS (qemu-test passed=404)
 
 Done: FP/SIMD + TPIDR_EL0 + auxv (Layer 0); anon mmap/munmap/mprotect +
 brk; the full coreutils syscall surface (stat family, getdents64, fcntl,
 ioctl, the `*at` family, writev/readv, time, id stubs, Tier C stubs);
-pipe2 + per-process cwd + `/dev` nodes; statfs/fstatfs/mknodat; and
-**Layer 3 core signals** (rt_sigaction/procmask/pending/return, delivery
-via the exceptions return-to-EL0 hook, kill family, SIGSEGV-from-fault,
-SIGCHLD, SIGPIPE, `^C`→SIGINT, default actions, fork inherit).
+pipe2 + per-process cwd + `/dev` nodes; statfs/fstatfs/mknodat;
+**`O_CLOEXEC`/`FD_CLOEXEC` across execve** (`9a30f53`); **real
+`nanosleep`/`clock_nanosleep`** (`e5ec6ed`); **Layer 3 signals**
+(rt_sigaction/procmask/pending/**suspend**/return, `sigaltstack`
+store-only, delivery via the exceptions return-to-EL0 hook, kill family,
+SIGSEGV-from-fault, SIGCHLD, SIGPIPE, default actions, fork inherit); and
+**job control** — real pgid/sid, termios driving the tty, foreground
+process group, and `SIGSTOP`/`SIGTSTP`/`SIGCONT` stop/continue with
+`wait4(WUNTRACED)`.
 
-Not done: real `nanosleep` (returns 0 now — no sleep queue); `O_CLOEXEC`
-across execve; job control + termios driving the tty; `rt_sigsuspend` /
-`sigaltstack` / SA_RESTART; event objects (epoll/timerfd/eventfd/
-pselect6); `statx`/`waitid` deliberately unregistered so musl falls back.
+The layout heisenbug that gated all of this is **fixed** (`e223534`):
+`process.count()`/`list()` iterated the 64-entry TCB table by value,
+spilling a ~48 KiB copy onto the caller's 32 KiB syscall stack, which
+overflowed into a live page table. Regression test
+`process:list_does_not_copy_table_to_stack`.
 
-~100 syscalls registered across `fd`, `elf_loader`, `signal`.
+Two exception-path bugs found chasing `nanosleep` and fixed (`9332353`):
+`exc_common` did not save/restore **q0..q31 / fpsr / fpcr**, so any EL0
+caller holding a value in a vector register across `svc` (every -O2
+libc: struct copies, printf) got it silently corrupted; and it restored
+**SP_EL0** unconditionally, clobbering the interrupted task's user SP
+when an IRQ landed in a long-running syscall (now gated on
+`SPSR.M[3:0]==0`).
+
+Also landed since: **`ppoll`** + **`pselect6`** real (pipe/tty/file
+readiness, blocking with a cntvct deadline); **`SA_RESTART`** (blocking
+syscall → internal `-ERESTARTSYS`; the delivery hook rewinds the `svc`
+for an SA_RESTART handler / spurious wake, else rewrites x0 → `-EINTR`);
+wired for `ppoll`/`pselect6`/`wait4`.
+
+Not done: `rt_sigtimedwait` / `rt_sigqueueinfo`; `epoll`/`timerfd`/
+`eventfd` (no threads/async here — `futex` is a 0-stub that works
+single-threaded); `SIGTTIN`/`SIGTTOU` when a background pgrp touches the
+tty (needs an error return on `tty.read`); `wait4` `WCONTINUED`;
+`statx`/`waitid` deliberately unregistered so musl falls back;
+`sigaltstack` round-trips but delivery never switches stacks; no wall
+clock (CLOCK_REALTIME == CLOCK_MONOTONIC).
+
+Static busybox / coreutils / `sh -c` and line-edited interactive shells
+should run on what's landed; the remaining gaps are ENOSYS-/degradation-
+tolerant.
+
+~110 syscalls registered across `fd`, `elf_loader`, `process`, `signal`,
+`tty`.
+
+### `nanosleep` implementation notes
+
+Spin-to-deadline against `cntvct_el0` (`e5ec6ed`) — no sleep queue yet,
+the task busy-waits with a `yield` hint, bailing `EINTR` (+ remainder)
+if `signal.has_pending(pid)`. Fine for `sleep`/retry loops; wastes a
+core for the sleep duration when it is the only runnable task. A real
+sleep queue (`sched.block()` + one-shot timer `wake()`) also needs the
+scheduler run-loop to survive a drained queue (today `run()` just
+returns), so it is deferred until there is a persistent idle task.
 
 ---
 
@@ -41,29 +129,55 @@ pselect6); `statx`/`waitid` deliberately unregistered so musl falls back.
 
 ---
 
-## BLOCKER: bootloader module-loader layout fragility
+## RESOLVED: the layout-sensitive "heisenbug"
 
-Recurring all session: when a module's on-disk size/section layout
-shifts, an **adjacent** module (usually the next one loaded) gets
-corrupted — symptom is a Zig panic or an EL0 SIGSEGV / pmm leak in a
-test that the change doesn't touch, and the symptom *moves* when
-unrelated code (e.g. a `pub const panic` handler) is added. Confirmed
-triggers this session:
-  * `s_mm` as a large non-zero `.data` array in `elf_loader` (fixed by
-    forcing it to `.bss` — zero defaults)
-  * the ~250-line signal block in `elf_loader` (fixed by splitting it
-    into `hnsorens.sys.signal`)
-  * adding `on_execve` to the `Fd` vtable + `cloexec: u32` to `FdTable`
-    (`O_CLOEXEC` work) → `/forktest` SIGSEGVs, +22-page leak
-  * `nanosleep` real (grows `elf_loader`) → same `/forktest` failure
+All session, growing any module by a bit made an *unrelated* test crash
+(Zig panic / EL0 SIGSEGV / pmm leak), and the crash *moved* when debug
+prints were added. Two independent causes, both now fixed:
 
-`elfSpan`/`computeSegmentMapping`/`linkElfModule` all *look* right
-(`p_memsz` used, whole segment `@memset`-zeroed, no relocs land in
-`.bss`). The real cause is unfound. **This gates further growth of
-`fd` / `elf_loader`** — the remaining syscalls (real `nanosleep`,
-`O_CLOEXEC`, job control) need it fixed or need to land in fresh small
-modules. Start by dumping every loaded module's final [phys, virt] page
-ranges at boot and checking for overlap / a wrong relocation delta.
+### Cause 1 — per-segment mapping overlap (`f254d7b`)
+
+`loadElf` allocated + mapped each PT_LOAD segment separately, rounding
+`[p_vaddr, p_vaddr+p_memsz)` out to 4 KiB pages. lld only guarantees
+`p_vaddr ≡ p_offset (mod p_align)` (64 KiB), so two segments routinely
+share a 4 KiB page; the second segment's `mapMemory` then repointed the
+shared page's PTE at its own fresh frame and dropped the first segment's
+bytes. Fixed: one contiguous physical region for the whole
+`[target, target+span)`, mapped once. `computeSegmentMapping` deleted.
+
+### Cause 2 — TCB table copied onto the syscall stack (`e223534`)
+
+`process.count()` and `list()` did `for (s_table) |t|` — iterating the
+64-entry `[64]Tcb` table (~48 KiB) **by value**, so every call spilled a
+48 KiB copy onto the caller's stack as a loop temp. `list()` is called
+from `sysWait4` on an 8-page (32 KiB) kernel stack, so the copy
+overflowed the stack into whatever the pmm had placed physically below
+it. For `/forktest` that was the forking parent's own L1 page table:
+
+```
+[SVC] ELR 0x1000010410                       ← /forktest calls clone()
+Exception return → EL0 PC 0x10000102e4       ← parent resumes
+[Prefetch Abort] ESR 0x82000005 (IFSC 0x5 = translation fault, LEVEL 1)
+  FAR 0x10000102e4                            ← parent can't fetch its own code
+```
+
+Found with a **gdb hardware watchpoint** on the parent's `L1[64]` entry
+(via `-S -gdb tcp::1234`, `add-symbol-file <ko> -o <load addr>` computed
+from `elfSpan` + `kernel.ini` order):
+
+```
+memcpyFast(dest=<kstack>, src=main.s_table, len=48128)
+  ← main.list  (process/main.zig:326)
+  ← main.sysWait4  (elf_loader/main.zig:658)
+```
+
+Fix: `for (&s_table) |*t|` (by pointer). Same class fixed in
+`syscall.count()`, `timer`, `gic_v3`, `fd.testOpenFileCount()`.
+Regression test `process:list_does_not_copy_table_to_stack` drives the
+functions on a sentinel-painted 256 KiB stack and asserts < 4 KiB used.
+The `PAGE_MASK` vs `PTE_ADDR_MASK` sloppiness in the mmu free paths was
+audited and is currently harmless (nothing sets table-descriptor bits
+48-63), but worth tidying.
 
 ---
 
@@ -122,9 +236,12 @@ ranges at boot and checking for overlap / a wrong relocation delta.
       the real thing.
 - [x] **`struct kstat`** — `abi.KStat` (128-byte aarch64 layout),
       filled from `Ext2Stat` by `fd`'s `fillKStat`.
-- [ ] **`O_CLOEXEC`/`FD_CLOEXEC`** honored across `execve`;
-      `O_TRUNC`/`O_NONBLOCK` in `openat` (`O_CREAT`/`O_APPEND`/`O_DIRECTORY`
-      already work; `fcntl` accepts `F_*` but does not track CLOEXEC).
+- [x] **`O_CLOEXEC`/`FD_CLOEXEC`** honored across `execve` (`9a30f53`):
+      `FdTable.cloexec` bitmask; openat/pipe2/dup3/`F_DUPFD_CLOEXEC` set it,
+      `F_GETFD`/`F_SETFD` read/write it, plain dup clears it, fork copies
+      it, `Fd.on_execve` closes flagged fds from `sysExecve`.
+      `O_TRUNC` in `openat` truncates a writable regular file to 0;
+      `O_NONBLOCK` works for pipes.
 
 ---
 
@@ -147,8 +264,11 @@ ranges at boot and checking for overlap / a wrong relocation delta.
 - [x] `clock_gettime` 113 / `gettimeofday` 169 / `clock_getres` 114 —
       from `cntvct_el0`/`cntfrq_el0`, CLOCK_MONOTONIC semantics only
       (no wall clock)
-- [~] `nanosleep` 101 / `clock_nanosleep` 115 — **return 0 immediately**
-      (no sleep queue yet; `sleep` is instant). TODO: real timer sleep.
+- [x] `nanosleep` 101 / `clock_nanosleep` 115 (`e5ec6ed`) — spin to a
+      `cntvct_el0` deadline, `EINTR` (+ remainder) on a pending signal.
+      `TIMER_ABSTIME` honoured. No sleep queue: busy-waits, so it burns a
+      core for the sleep when it is the only runnable task. Test
+      `loader:nanosleep_waits` (/sleeptest).
 
 ### Signals  — accepted, not delivered (Layer 3)
 - [~] `rt_sigaction` 134 / `rt_sigprocmask` 135 / `kill` 129 / `tkill` 130
@@ -181,8 +301,11 @@ ranges at boot and checking for overlap / a wrong relocation delta.
 ### Fds / pipes / process
 - [x] `fcntl` 25 (`F_DUPFD(_CLOEXEC)`, `F_GET/SETFD` no-op, `F_GET/SETFL`)
 - [x] `dup3` 24
-- [~] `ppoll` 73 → 0 (treated as "nothing ready / timed out")
-- [x] `setpgid` 154 → 0, `getpgid`/`getsid`/`setsid` → pid
+- [x] `ppoll` 73 (`700451b`) / `pselect6` 72 (`14d8330`) — real pipe /
+      tty / regular-file readiness (`readyMask`), blocking with a cntvct
+      deadline (`{0,0}` = non-blocking), `-ERESTARTSYS`/`EINTR` on a signal
+- [x] `setpgid` 154 / `getpgid` 155 / `getsid` 156 / `setsid` 157
+      (`143eaab`) — real pgid/sid in the Tcb, inherited on fork
 - [~] `futex` 98 → 0 (single-thread; musl static locks are uncontended)
 - [x] `pipe2` 59 — real in-kernel `Pipe` (4 KiB ring, reader/writer
       refcounts, cooperative block/wake via `scheduler`, `O_NONBLOCK` →
@@ -216,8 +339,10 @@ end against the ext2 rootfs. qemu-test `passed=390`.
 - [ ] `statx` 291 — left **unregistered** on purpose (→ ENOSYS → musl
       falls back to `newfstatat`; a no-op stub would hand back a garbage
       stat). Same reasoning keeps `waitid` 95 unregistered.
-- [ ] `pselect6` 72, `epoll_create1`/`ctl`/`pwait` 20-22, `eventfd2` 19,
-      `timerfd_*` 85-87 — need real event objects; most tools don't
+- [x] `pselect6` 72 / `ppoll` 73 — real (see "Fds / pipes / process")
+- [ ] `epoll_create1`/`ctl`/`pwait` 20-22, `eventfd2` 19, `timerfd_*`
+      85-87 — need real kernel event objects; nothing in the target set
+      (busybox / coreutils / shells) uses them
 - socket family (198+) — skip unless networking
 
 ---
@@ -230,28 +355,51 @@ end against the ext2 rootfs. qemu-test `passed=390`.
       `exceptions.set_user_return_hook` run on every EL0 return.
 - [x] `rt_sigaction` 134 (real handler/flags/restorer/mask),
       `rt_sigprocmask` 135, `rt_sigpending` 136
-- [x] Sources: `SIGCHLD` on child exit; `SIGSEGV` from the EL0 fault
-      handler (`.sync_data_abort`/`.sync_instruction_abort` → raise +
-      `.handled` so the kernel doesn't halt; EL1 faults still halt);
-      `SIGINT`/`SIGQUIT` from the tty on `^C`/`^\` (no fg pgrp yet →
-      signals the running process); `kill`/`tkill`/`tgkill`
-- [x] Default actions: fatal → `exit(sig)`; ignore CHLD/CONT/WINCH/URG/
-      STOP/TSTP. fork inherits dispositions + blocked mask; execve resets.
-- [~] `sigaltstack` 132 — not implemented (SA_ONSTACK ignored)
-- [ ] `rt_sigsuspend` 133, `rt_sigtimedwait` 137, `rt_sigqueueinfo` 138
+- [x] Sources: `SIGCHLD` on child exit + child stop; `SIGSEGV` from the
+      EL0 fault handler (`.sync_data_abort`/`.sync_instruction_abort` →
+      raise + `.handled` so the kernel doesn't halt; EL1 faults still
+      halt); `SIGINT`/`SIGQUIT`/`SIGTSTP` from the tty on `^C`/`^\`/`^Z`
+      to the **foreground process group** (`signal.raise_group`), falling
+      back to the running process if no group claimed the tty;
+      `kill`/`tkill`/`tgkill`, and `kill(-pgid)` / `kill(0)`.
+- [x] Default actions: fatal → `exit(sig)`; ignore CHLD/CONT/WINCH/URG;
+      **stop** for STOP/TSTP/TTIN/TTOU (`sched.stop()` / SIGCONT resumes).
+      fork inherits dispositions + blocked mask; execve resets.
+- [~] `sigaltstack` 132 (`bbee50f`) — per-process `stack_t` stored /
+      returned; delivery never switches stacks (SA_ONSTACK ignored)
+- [x] `rt_sigsuspend` 133 (`879e734`) — suspend mask spin; pre-suspend
+      mask restored via the delivered frame's uc_sigmask
+- [ ] `rt_sigtimedwait` 137, `rt_sigqueueinfo` 138
 - [x] `SIGPIPE` on write to a broken pipe (`pipeWrite` raises it before
       returning `EPIPE`; default action terminates the writer)
-- [ ] no `SA_RESTART` — a signal that wakes a blocked syscall lets it
-      return early (EINTR/short) rather than restarting
+- [x] `SA_RESTART` (`b41adb0`) — a blocking syscall returns internal
+      `-ERESTARTSYS`; `deliver()` rewinds the `svc` (restoring x0 via
+      `signal.mark_restart`) for an SA_RESTART handler or a spurious
+      wake, else rewrites x0 → `-EINTR`. Wired for `ppoll`/`pselect6`/
+      `wait4`; `nanosleep` keeps `EINTR` + remainder by design.
 
-## Layer 3 — interactive bash (job control, later)
+## Layer 3 — job control  — DONE
 
-- [ ] termios in the tty — `TCSETS/TCSETSW/TCSETSF` actually driving
-      `set_mode` (readline raw/canonical); `ioctl` currently accepts them
-      and no-ops
-- [ ] job control — foreground pgrp, `TIOCSPGRP/TIOCGPGRP`, `TIOCSCTTY`,
-      `SIGTSTP/CONT/TTIN/TTOU`, `tcsetpgrp`. `^C` currently signals the
-      running process, not the fg pgrp.
+1. **pgid / sid** (`143eaab`) — `Tcb.pgid`/`sid` (`= pid` at create,
+   inherited on fork, `setsid` starts a new session). `abi.Process`
+   `set_pgid`/`get_pgid`/`set_sid`/`get_sid`; `ProcessInfo` carries them.
+   `kill()` does POSIX `pid <= 0` group semantics via `signal.raise_group`.
+2. **termios** (`8723f40`) — tty owns a real 36-byte kernel `struct
+   termios`; `TCGETS`/`TCSETS(W/F)` copy it in/out and re-derive
+   canonical/echo from `c_lflag` (ICANON/ECHO). Raw mode for readline.
+3. **foreground pgrp** (`8723f40`) — tty holds a fg pgid; `TIOCGPGRP` /
+   `TIOCSPGRP` (`tcgetpgrp`/`tcsetpgrp`) / `TIOCSCTTY`. `^C`/`^\`/`^Z`
+   signal it.
+4. **stop / continue** (`f5a22f4`) — `ProcessState.stopped` +
+   `Scheduler.stop()`; `wake()` also resumes `.stopped`. `deliver()`
+   parks on a stop signal and raises SIGCHLD; SIGCONT clears + wakes.
+   `wait4(WUNTRACED)` reports a stopped child (`W_STOPPED | SIGSTOP<<8`).
+   Tests: `loader:pgid_sid`, `tty:termios_drives_mode`,
+   `loader:job_control_stop_cont`.
+
+Not yet: `SIGTTIN`/`SIGTTOU` when a background pgrp touches the tty (the
+tty read/write path doesn't check the caller's pgid vs the fg pgid yet);
+`wait4` `WCONTINUED`.
 
 ---
 

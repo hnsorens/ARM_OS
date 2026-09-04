@@ -56,8 +56,16 @@ const FdTable = struct {
     in_use: bool = false,
     pid: u32 = 0,
     cwd: [PATH_MAX]u8 = [_]u8{0} ** PATH_MAX, // "" == "/"
+    cloexec: u32 = 0, // bit i set => close fd i on execve
     fds: [MAX_FDS]?*OpenFile = [_]?*OpenFile{null} ** MAX_FDS,
 };
+
+fn ceBit(fd: u32) u32 {
+    return @as(u32, 1) << @intCast(fd);
+}
+fn setCloexec(tbl: *FdTable, fd: u32, on: bool) void {
+    if (on) tbl.cloexec |= ceBit(fd) else tbl.cloexec &= ~ceBit(fd);
+}
 
 var s_open: [MAX_OPEN_FILES]OpenFile = [_]OpenFile{.{}} ** MAX_OPEN_FILES;
 var s_tables: [MAX_PROCESSES]FdTable = [_]FdTable{.{}} ** MAX_PROCESSES;
@@ -168,6 +176,7 @@ pub fn forkTable(parent: u32, child: u32) callconv(.c) c_int {
 
     dst.* = .{ .in_use = true, .pid = child };
     @memcpy(&dst.cwd, &src.cwd);
+    dst.cloexec = src.cloexec;
     for (src.fds, 0..) |slot, i| {
         if (slot) |of| {
             of.refcount += 1;
@@ -187,6 +196,21 @@ pub fn clearTable(pid: u32) callconv(.c) c_int {
         slot.* = null;
     }
     tbl.* = .{};
+    return 0;
+}
+
+/// execve: close every fd flagged FD_CLOEXEC, keep the rest.
+pub fn onExecve(pid: u32) callconv(.c) c_int {
+    s_lock.lock();
+    defer s_lock.unlock();
+    const tbl = tableOf(pid) orelse return abi.EINVAL;
+    var fd: u32 = 0;
+    while (fd < MAX_FDS) : (fd += 1) {
+        if (tbl.cloexec & ceBit(fd) == 0) continue;
+        if (tbl.fds[fd]) |of| releaseOpen(of);
+        tbl.fds[fd] = null;
+    }
+    tbl.cloexec = 0;
     return 0;
 }
 
@@ -443,6 +467,7 @@ pub fn fdOpenat(pid: u32, path: [*:0]const u8, flags: u32, mode: u16) i64 {
         copyPath(&of.path, zp);
     }
     tbl.fds[slot] = of;
+    setCloexec(tbl, slot, flags & abi.O_CLOEXEC != 0);
     return @intCast(slot);
 }
 
@@ -453,6 +478,7 @@ pub fn fdClose(pid: u32, fd: u32) i64 {
     if (fd >= MAX_FDS or tbl.fds[fd] == null) return -@as(i64, abi.EBADF);
     releaseOpen(tbl.fds[fd].?);
     tbl.fds[fd] = null;
+    setCloexec(tbl, fd, false);
     return 0;
 }
 
@@ -497,6 +523,7 @@ pub fn fdDup(pid: u32, fd: u32) i64 {
     const of = tbl.fds[fd].?;
     of.refcount += 1;
     tbl.fds[slot] = of;
+    setCloexec(tbl, slot, false); // dup never carries FD_CLOEXEC
     return @intCast(slot);
 }
 
@@ -755,13 +782,17 @@ fn sysFcntl(args: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
                 if (tbl.fds[i] == null) {
                     of.refcount += 1;
                     tbl.fds[i] = of;
+                    setCloexec(tbl, i, cmd == abi.F_DUPFD_CLOEXEC);
                     return @intCast(i);
                 }
             }
             return -@as(i64, abi.EMFILE);
         },
-        abi.F_GETFD => return 0, // FD_CLOEXEC not tracked yet
-        abi.F_SETFD => return 0,
+        abi.F_GETFD => return @intCast((tbl.cloexec >> @intCast(fd)) & 1),
+        abi.F_SETFD => {
+            setCloexec(tbl, fd, args.arg[2] & abi.FD_CLOEXEC != 0);
+            return 0;
+        },
         abi.F_GETFL => return @intCast(of.flags),
         abi.F_SETFL => {
             of.flags = @truncate(args.arg[2]);
@@ -786,6 +817,7 @@ fn sysDup3(args: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
     const of = tbl.fds[oldfd].?;
     of.refcount += 1;
     tbl.fds[newfd] = of;
+    setCloexec(tbl, newfd, args.arg[2] & abi.O_CLOEXEC != 0);
     return @intCast(newfd);
 }
 
@@ -828,21 +860,13 @@ fn sysIoctl(args: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
 
     switch (req) {
         abi.TCGETS => {
-            // struct termios: c_iflag,c_oflag,c_cflag,c_lflag (4x u32),
-            // c_line (u8), c_cc[19], then speeds. Zero it; enough for
-            // musl's isatty (it only checks the syscall succeeds).
-            if (argp != 0) {
-                const p: [*]u8 = @ptrFromInt(argp);
-                var i: usize = 0;
-                while (i < 60) : (i += 1) p[i] = 0;
-                std.mem.writeInt(u32, p[0..4], 0o000005, .little); // c_iflag ICRNL|BRKINT-ish
-                std.mem.writeInt(u32, p[4..8], 0o000005, .little); // c_oflag OPOST|ONLCR-ish
-                std.mem.writeInt(u32, p[8..12], 0o000277, .little); // c_cflag
-                std.mem.writeInt(u32, p[12..16], 0o105073, .little); // c_lflag ICANON|ECHO|...
-            }
+            if (argp != 0) tty_if.tcgets(@ptrFromInt(argp));
             return 0;
         },
-        abi.TCSETS, abi.TCSETSW, abi.TCSETSF => return 0, // accept, ignore
+        abi.TCSETS, abi.TCSETSW, abi.TCSETSF => {
+            if (argp != 0) tty_if.tcsets(@ptrFromInt(argp));
+            return 0;
+        },
         abi.TIOCGWINSZ => {
             if (argp != 0) {
                 const p: [*]u8 = @ptrFromInt(argp);
@@ -853,12 +877,198 @@ fn sysIoctl(args: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
             }
             return 0;
         },
-        abi.TIOCSWINSZ, abi.TIOCSPGRP => return 0,
+        abi.TIOCSWINSZ => return 0,
         abi.TIOCGPGRP => {
-            if (argp != 0) std.mem.writeInt(u32, @as([*]u8, @ptrFromInt(argp))[0..4], sched_if.current(), .little);
+            if (argp != 0) {
+                const g = tty_if.get_fg_pgrp();
+                const v: u32 = if (g != 0) g else sched_if.current();
+                std.mem.writeInt(u32, @as([*]u8, @ptrFromInt(argp))[0..4], v, .little);
+            }
+            return 0;
+        },
+        abi.TIOCSPGRP => {
+            if (argp != 0) tty_if.set_fg_pgrp(std.mem.readInt(u32, @as([*]const u8, @ptrFromInt(argp))[0..4], .little));
+            return 0;
+        },
+        abi.TIOCSCTTY => {
+            // Claim the tty for the caller's group. The caller is a
+            // session leader (just did setsid), so pgid == pid == current.
+            tty_if.set_fg_pgrp(sched_if.current());
             return 0;
         },
         else => return -@as(i64, abi.ENOTTY),
+    }
+}
+
+// --- ppoll -----------------------------------------------------
+
+fn cntVct() u64 {
+    return asm volatile ("mrs %[v], cntvct_el0"
+        : [v] "=r" (-> u64),
+    );
+}
+fn cntFrq() u64 {
+    return asm volatile ("mrs %[v], cntfrq_el0"
+        : [v] "=r" (-> u64),
+    );
+}
+
+/// Raw readiness bits (POLLIN/POLLOUT/POLLHUP, or POLLNVAL for a bad fd)
+/// for one fd, before masking by a caller's interest set.
+fn readyMask(tbl: *FdTable, fd: i32) i16 {
+    if (fd < 0 or fd >= MAX_FDS or tbl.fds[@intCast(fd)] == null) return abi.POLLNVAL;
+    const of = tbl.fds[@intCast(fd)].?;
+    var r: i16 = 0;
+    switch (of.backing) {
+        .tty => {
+            if (tty_if.readable() != 0) r |= abi.POLLIN;
+            r |= abi.POLLOUT; // serial is always writable
+        },
+        .pipe => {
+            const p = &s_pipes[@intCast(of.offset)];
+            if (p.count > 0 or p.writers == 0) r |= abi.POLLIN;
+            if (p.count < PIPE_BUF or p.readers == 0) r |= abi.POLLOUT;
+            if (p.writers == 0) r |= abi.POLLHUP;
+        },
+        .file, .dev => r |= abi.POLLIN | abi.POLLOUT,
+        .none => return abi.POLLNVAL,
+    }
+    return r;
+}
+
+/// revents for pollfd `i` (8 bytes each: i32 fd, i16 events, i16 revents).
+fn pollOne(tbl: *FdTable, pfd: [*]u8, i: usize) i16 {
+    const off = i * 8;
+    const fd = std.mem.readInt(i32, pfd[off..][0..4], .little);
+    if (fd < 0) return 0;
+    const events = std.mem.readInt(i16, pfd[off + 4 ..][0..2], .little);
+    const r = readyMask(tbl, fd);
+    if (r == abi.POLLNVAL) return abi.POLLNVAL;
+    return r & (events | abi.POLLERR | abi.POLLHUP | abi.POLLNVAL);
+}
+
+fn sysPpoll(args: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
+    _ = ctx;
+    const ufds = args.arg[0];
+    const nfds: usize = @intCast(args.arg[1]);
+    const tsp = args.arg[2];
+    if (nfds > 128) return -@as(i64, abi.EINVAL);
+    if (nfds != 0 and ufds == 0) return -@as(i64, abi.EFAULT);
+
+    const pid = sched_if.current();
+    const pfd: [*]u8 = @ptrFromInt(ufds);
+
+    const timed = tsp != 0;
+    var deadline: u128 = 0;
+    if (timed) {
+        const ts: [*]const i64 = @ptrFromInt(tsp);
+        const frq = cntFrq();
+        const ns: u128 = @as(u128, @intCast(@max(ts[0], 0))) * 1_000_000_000 + @as(u128, @intCast(@max(ts[1], 0)));
+        deadline = @as(u128, cntVct()) + (if (frq != 0) ns * frq / 1_000_000_000 else 0);
+    }
+
+    while (true) {
+        // The SVC entry masked IRQs; unmask so the event we're polling
+        // for (a UART RX byte -> tty, a timer tick) can actually arrive.
+        asm volatile ("msr daifclr, #3" ::: .{ .memory = true });
+        s_lock.lock();
+        const tbl = tableOf(pid);
+        var count: i64 = 0;
+        var i: usize = 0;
+        while (i < nfds) : (i += 1) {
+            const re: i16 = if (tbl) |t| pollOne(t, pfd, i) else abi.POLLNVAL;
+            std.mem.writeInt(i16, pfd[i * 8 + 6 ..][0..2], re, .little);
+            if (re != 0) count += 1;
+        }
+        s_lock.unlock();
+
+        if (count > 0) return count;
+        if (timed and cntVct() >= deadline) return 0; // includes {0,0} -> non-blocking
+        if (signal_if.has_pending(pid) != 0) {
+            signal_if.mark_restart(pid, ufds); // orig x0 = &fds
+            return -@as(i64, abi.ERESTARTSYS);
+        }
+        sched_if.yield();
+    }
+}
+
+fn fdsBitGet(base: u64, i: usize) bool {
+    if (base == 0) return false;
+    const p: [*]const u8 = @ptrFromInt(base);
+    return (p[i >> 3] >> @as(u3, @intCast(i & 7))) & 1 != 0;
+}
+
+/// pselect6(nfds, r, w, e, timespec*, sigmask). fd_sets are bit arrays;
+/// nfds is capped at MAX_FDS. Result overwrites the caller's sets (first
+/// 16 bytes) with only the ready bits; count is total bits across sets.
+fn sysPselect6(args: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
+    _ = ctx;
+    const nfds_i: i64 = @bitCast(args.arg[0]);
+    if (nfds_i < 0) return -@as(i64, abi.EINVAL);
+    var nfds: usize = @intCast(nfds_i);
+    if (nfds > MAX_FDS) nfds = MAX_FDS;
+    const urf = args.arg[1];
+    const uwf = args.arg[2];
+    const uef = args.arg[3];
+    const tsp = args.arg[4];
+    const pid = sched_if.current();
+
+    const timed = tsp != 0;
+    var deadline: u128 = 0;
+    if (timed) {
+        const ts: [*]const i64 = @ptrFromInt(tsp);
+        const frq = cntFrq();
+        const ns: u128 = @as(u128, @intCast(@max(ts[0], 0))) * 1_000_000_000 + @as(u128, @intCast(@max(ts[1], 0)));
+        deadline = @as(u128, cntVct()) + (if (frq != 0) ns * frq / 1_000_000_000 else 0);
+    }
+
+    while (true) {
+        asm volatile ("msr daifclr, #3" ::: .{ .memory = true }); // see sysPpoll
+        s_lock.lock();
+        const tbl = tableOf(pid);
+        var out_r = [_]u8{0} ** 16;
+        var out_w = [_]u8{0} ** 16;
+        var count: i64 = 0;
+        var bad = false;
+        var fd: usize = 0;
+        while (fd < nfds) : (fd += 1) {
+            const wr = fdsBitGet(urf, fd);
+            const ww = fdsBitGet(uwf, fd);
+            if (!wr and !ww and !fdsBitGet(uef, fd)) continue;
+            const m = if (tbl) |t| readyMask(t, @intCast(fd)) else abi.POLLNVAL;
+            if (m == abi.POLLNVAL) {
+                bad = true;
+                break;
+            }
+            if (wr and (m & abi.POLLIN) != 0) {
+                out_r[fd >> 3] |= (@as(u8, 1) << @as(u3, @intCast(fd & 7)));
+                count += 1;
+            }
+            if (ww and (m & abi.POLLOUT) != 0) {
+                out_w[fd >> 3] |= (@as(u8, 1) << @as(u3, @intCast(fd & 7)));
+                count += 1;
+            }
+        }
+        s_lock.unlock();
+
+        if (bad) return -@as(i64, abi.EBADF);
+        if (count > 0) {
+            if (urf != 0) @memcpy(@as([*]u8, @ptrFromInt(urf))[0..16], &out_r);
+            if (uwf != 0) @memcpy(@as([*]u8, @ptrFromInt(uwf))[0..16], &out_w);
+            if (uef != 0) @memset(@as([*]u8, @ptrFromInt(uef))[0..16], 0);
+            return count;
+        }
+        if (timed and cntVct() >= deadline) {
+            if (urf != 0) @memset(@as([*]u8, @ptrFromInt(urf))[0..16], 0);
+            if (uwf != 0) @memset(@as([*]u8, @ptrFromInt(uwf))[0..16], 0);
+            if (uef != 0) @memset(@as([*]u8, @ptrFromInt(uef))[0..16], 0);
+            return 0;
+        }
+        if (signal_if.has_pending(pid) != 0) {
+            signal_if.mark_restart(pid, args.arg[0]);
+            return -@as(i64, abi.ERESTARTSYS);
+        }
+        sched_if.yield();
     }
 }
 
@@ -1092,6 +1302,10 @@ fn sysPipe2(args: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
         return -@as(i64, abi.EMFILE);
     };
     tbl.fds[s1] = wr;
+    if (flags & abi.O_CLOEXEC != 0) {
+        setCloexec(tbl, s0, true);
+        setCloexec(tbl, s1, true);
+    }
 
     ufds[0] = @intCast(s0);
     ufds[1] = @intCast(s1);
@@ -1130,6 +1344,8 @@ pub fn main(boot_info_ptr: *anyopaque) void {
     _ = sc_if.register(abi.SYS_chdir, &sysChdir, null);
     _ = sc_if.register(abi.SYS_fchdir, &sysFchdir, null);
     _ = sc_if.register(abi.SYS_pipe2, &sysPipe2, null);
+    _ = sc_if.register(abi.SYS_ppoll, &sysPpoll, null);
+    _ = sc_if.register(abi.SYS_pselect6, &sysPselect6, null);
     _ = sc_if.register(abi.SYS_statfs, &sysStatfs, null);
     _ = sc_if.register(abi.SYS_fstatfs, &sysFstatfs, null);
     _ = sc_if.register(abi.SYS_mknodat, &sysMknodat, null);
@@ -1140,7 +1356,7 @@ pub fn main(boot_info_ptr: *anyopaque) void {
 
 pub fn testOpenFileCount() u32 {
     var n: u32 = 0;
-    for (s_open) |of| {
+    for (&s_open) |*of| {
         if (of.backing != .none) n += 1;
     }
     return n;
@@ -1158,6 +1374,7 @@ comptime {
         .open_defaults = openDefaults,
         .fork_table = forkTable,
         .clear_table = clearTable,
+        .on_execve = onExecve,
     });
 }
 

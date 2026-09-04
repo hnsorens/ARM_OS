@@ -117,7 +117,7 @@ pub fn count() callconv(.c) u32 {
     s_lock.lock();
     defer s_lock.unlock();
     var n: u32 = 0;
-    for (s_table) |slot| {
+    for (&s_table) |*slot| {
         if (slot.handler != null) n += 1;
     }
     return n;

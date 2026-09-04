@@ -82,6 +82,10 @@ const Image = struct {
     stack_phys: u64 = 0,
     n_segs: usize = 0,
     segs: [MAX_SEGS]SegRec = [_]SegRec{.{}} ** MAX_SEGS,
+    /// True for a `clone()` child whose address space is a `mmu.fork`
+    /// deep copy (freed with `free_all`, no discrete seg/stack records).
+    /// Cleared once `execve` rebuilds it as a `map`-built image.
+    forked: bool = false,
 };
 
 var s_images: [MAX_IMAGES]Image = [_]Image{.{}} ** MAX_IMAGES;
@@ -553,11 +557,36 @@ fn reparentChildren(ppid: u32, new_parent: u32) void {
 
 fn reapChild(pid: u32) void {
     var info: abi.ProcessInfo = .{};
-    if (process_if.get_info(pid, &info) == 0) {
+    const ok = process_if.get_info(pid, &info) == 0;
+    if (ok) {
         _ = fd_if.clear_table(pid);
-        mmForget(pid, false); // free_all frees every leaf; just drop bookkeeping
         signal_if.forget(pid);
-        if (info.address_space != 0) _ = mmu_if.free_all(info.address_space & ROOT_MASK);
+    }
+
+    // Free the address space the right way for how it was built.
+    s_lock.lock();
+    const img: ?*Image = for (&s_images) |*im| {
+        if (im.in_use and im.pid == pid) break im;
+    } else null;
+    if (img) |im| {
+        const forked = im.forked;
+        const uroot = im.uroot;
+        const segs = im.segs;
+        const nseg = im.n_segs;
+        const stk = im.stack_phys;
+        im.* = .{};
+        s_lock.unlock();
+        if (forked) {
+            mmForget(pid, false); // free_all frees the anon leaves too
+            if (uroot != 0) _ = mmu_if.free_all(uroot & ROOT_MASK);
+        } else {
+            mmForget(pid, true); // mmu.free leaves the anon frames to us
+            freeImageParts(uroot, segs[0..nseg], stk);
+        }
+    } else {
+        s_lock.unlock();
+        mmForget(pid, false);
+        if (ok and info.address_space != 0) _ = mmu_if.free_all(info.address_space & ROOT_MASK);
     }
     _ = process_if.destroy(pid);
 }
@@ -638,6 +667,19 @@ fn sysClone(frame: *abi.TrapFrame, ctx: ?*anyopaque) callconv(.c) i64 {
 
     _ = fd_if.fork_table(parent, child_pid);
     signal_if.fork_inherit(parent, child_pid);
+    mmForkInherit(parent, child_pid);
+
+    // Record the child so execve() can find and swap its image, and
+    // teardown knows the space is a fork copy (free_all, not per-seg).
+    s_lock.lock();
+    for (&s_images) |*im| {
+        if (!im.in_use) {
+            im.* = .{ .in_use = true, .pid = child_pid, .uroot = child_root, .forked = true };
+            break;
+        }
+    }
+    s_lock.unlock();
+
     _ = sched_if.admit(child_pid);
     return @intCast(child_pid); // parent gets the pid; the child's own context yields 0
 }
@@ -650,6 +692,7 @@ fn sysWait4(args: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
     const wpid: i64 = @bitCast(args.arg[0]);
     const status_ptr = args.arg[1];
     const WNOHANG: u64 = 1;
+    const WUNTRACED: u64 = 2;
     const options = args.arg[2];
 
     while (true) {
@@ -659,6 +702,7 @@ fn sysWait4(args: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
 
         var any_child = false;
         var zombie: u32 = 0;
+        var stopped: u32 = 0;
         for (pids[0..n]) |p| {
             var info: abi.ProcessInfo = .{};
             if (process_if.get_info(p, &info) != 0 or info.parent != me) continue;
@@ -668,6 +712,7 @@ fn sysWait4(args: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
                 zombie = p;
                 break;
             }
+            if (stopped == 0 and signal_if.is_stopped(p) != 0) stopped = p;
         }
 
         if (zombie != 0) {
@@ -680,9 +725,20 @@ fn sysWait4(args: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
             reapChild(zombie);
             return @intCast(zombie);
         }
+        if (stopped != 0 and options & WUNTRACED != 0) {
+            // W_STOPCODE(SIGSTOP): 0x7f in the low byte, sig in the next.
+            if (status_ptr != 0) @as(*i32, @ptrFromInt(status_ptr)).* = (19 << 8) | 0x7f;
+            return @intCast(stopped); // reported, not reaped
+        }
         if (!any_child) return -@as(i64, abi.ECHILD);
         if (options & WNOHANG != 0) return 0; // no reapable child right now
 
+        // A pending signal breaks the wait: -ERESTARTSYS so the delivery
+        // hook restarts wait4 for an SA_RESTART handler, else -EINTR.
+        if (signal_if.has_pending(me) != 0) {
+            signal_if.mark_restart(me, args.arg[0]);
+            return -@as(i64, abi.ERESTARTSYS);
+        }
         addWaiter(me);
         _ = sched_if.block();
         removeWaiter(me);
@@ -757,6 +813,7 @@ fn sysExecve(frame: *abi.TrapFrame, ctx: ?*anyopaque) callconv(.c) i64 {
     const old_uroot = img.uroot;
     const old_img_phys = img.segs[0].phys;
     const old_stack_phys = img.stack_phys;
+    const old_forked = img.forked;
     s_lock.unlock();
 
     // 4. Build the new initial stack now, through the HHDM alias -- it is
@@ -787,15 +844,23 @@ fn sysExecve(frame: *abi.TrapFrame, ctx: ?*anyopaque) callconv(.c) i64 {
     //    process's anon mmap/brk frames (mmu.free won't).
     mmForget(me, true);
     signal_if.forget(me);
+    _ = fd_if.on_execve(me); // close FD_CLOEXEC fds
     s_lock.lock();
     img.uroot = b.uroot;
     img.segs[0] = .{ .phys = b.img_phys, .pages = b.img_pages };
     img.stack_phys = b.stack_phys;
     img.n_segs = 1;
+    img.forked = false; // now a map-built image
     s_lock.unlock();
-    _ = pmm_if.release(old_img_phys);
-    _ = pmm_if.release(old_stack_phys);
-    _ = mmu_if.free(old_uroot);
+    if (old_forked) {
+        // The old space was a fork deep-copy: free_all (leaves + tables),
+        // no discrete seg/stack frames to release.
+        _ = mmu_if.free_all(old_uroot & ROOT_MASK);
+    } else {
+        _ = pmm_if.release(old_img_phys);
+        _ = pmm_if.release(old_stack_phys);
+        _ = mmu_if.free(old_uroot);
+    }
 
     return 0;
 }
@@ -857,6 +922,28 @@ fn mmStateLocked(pid: u32) ?*MmState {
         }
     }
     return null;
+}
+
+/// fork: the child's address space is a `mmu.fork` deep-copy, so it
+/// already contains the parent's anon mmap regions + brk arena at the
+/// same VAs. Carry over the parent's `mmap_top` / `brk_cur` so the
+/// child's allocator hands out fresh addresses past them (otherwise a
+/// post-fork `malloc` that grows the heap re-`mmap`s an occupied VA and
+/// gets EEXIST -> NULL). The per-region `anon[]` records are left to the
+/// child to rebuild for its own new mmaps; teardown of a forked child
+/// goes through `free_all`, which frees the copied leaves regardless.
+pub fn mmForkInherit(parent: u32, child: u32) void {
+    s_mm_lock.lock();
+    defer s_mm_lock.unlock();
+    const p = for (&s_mm) |*m| {
+        if (m.in_use and m.pid == parent) break m;
+    } else return; // parent never used mmap/brk
+    for (&s_mm) |*m| {
+        if (!m.in_use) {
+            m.* = .{ .in_use = true, .pid = child, .mmap_top = p.mmap_top, .brk_cur = p.brk_cur };
+            return;
+        }
+    }
 }
 
 fn protToMmuFlags(prot: u64) u64 {
@@ -1061,6 +1148,67 @@ fn cntNs() u64 {
     return secs * 1_000_000_000 + (rem * 1_000_000_000) / frq;
 }
 
+fn cntVct() u64 {
+    return asm volatile ("mrs %[v], cntvct_el0"
+        : [v] "=r" (-> u64),
+    );
+}
+
+fn cntFrq() u64 {
+    return asm volatile ("mrs %[v], cntfrq_el0"
+        : [v] "=r" (-> u64),
+    );
+}
+
+/// Cooperative spin-sleep. No sleep queue yet: the task busy-waits (with
+/// a `yield` CPU hint) until the deadline, bailing early with `EINTR`
+/// (and writing the remainder) if a signal comes pending. IRQs stay
+/// enabled -- a timer IRQ mid-spin is fine since the exceptions module
+/// preserves SP_EL0 across a current-EL trap. Shared by `nanosleep`
+/// (relative) and `clock_nanosleep` (relative + `TIMER_ABSTIME`); with
+/// no wall clock, an absolute CLOCK_REALTIME request behaves like
+/// CLOCK_MONOTONIC.
+fn doSleep(req_ptr: u64, rem_ptr: u64, abs: bool) i64 {
+    if (req_ptr == 0) return -@as(i64, abi.EFAULT);
+    const req: [*]const i64 = @ptrFromInt(req_ptr);
+    const sec = req[0];
+    const nsec = req[1];
+    if (sec < 0 or nsec < 0 or nsec >= 1_000_000_000) return -@as(i64, abi.EINVAL);
+
+    const frq = cntFrq();
+    if (frq == 0) return 0;
+    const want_ns: u128 = @as(u128, @intCast(sec)) * 1_000_000_000 + @as(u128, @intCast(nsec));
+    const want_ticks: u128 = want_ns * frq / 1_000_000_000;
+    const deadline: u128 = if (abs) want_ticks else @as(u128, cntVct()) + want_ticks;
+
+    const pid = sched_if.current();
+    while (true) {
+        asm volatile ("msr daifclr, #3" ::: .{ .memory = true }); // stay interruptible / tick
+        const now: u128 = cntVct();
+        if (now >= deadline) return 0;
+        if (signal_if.has_pending(pid) != 0) {
+            if (rem_ptr != 0) {
+                const rem: [*]i64 = @ptrFromInt(rem_ptr);
+                const left_ns: u128 = (deadline - now) * 1_000_000_000 / frq;
+                rem[0] = @intCast(left_ns / 1_000_000_000);
+                rem[1] = @intCast(left_ns % 1_000_000_000);
+            }
+            return -@as(i64, abi.EINTR);
+        }
+        asm volatile ("yield");
+    }
+}
+
+fn sysNanosleep(a: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
+    _ = ctx;
+    return doSleep(a.arg[0], a.arg[1], false);
+}
+
+fn sysClockNanosleep(a: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
+    _ = ctx;
+    return doSleep(a.arg[2], a.arg[3], (a.arg[1] & 1) != 0); // TIMER_ABSTIME == 1
+}
+
 fn sysZero(a: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
     _ = a;
     _ = ctx;
@@ -1077,6 +1225,33 @@ fn sysGettid(a: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
     _ = a;
     _ = ctx;
     return @intCast(sched_if.current());
+}
+
+fn sysSetpgid(a: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
+    _ = ctx;
+    const pid: u32 = if (a.arg[0] == 0) sched_if.current() else @intCast(a.arg[0]);
+    return process_if.set_pgid(pid, @intCast(a.arg[1]));
+}
+
+fn sysGetpgid(a: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
+    _ = ctx;
+    const pid: u32 = if (a.arg[0] == 0) sched_if.current() else @intCast(a.arg[0]);
+    const g = process_if.get_pgid(pid);
+    return if (g == 0) -@as(i64, abi.ESRCH) else @intCast(g);
+}
+
+fn sysSetsid(a: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
+    _ = a;
+    _ = ctx;
+    const s = process_if.set_sid(sched_if.current());
+    return if (s == 0) -@as(i64, abi.EPERM) else @intCast(s);
+}
+
+fn sysGetsid(a: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
+    _ = ctx;
+    const pid: u32 = if (a.arg[0] == 0) sched_if.current() else @intCast(a.arg[0]);
+    const s = process_if.get_sid(pid);
+    return if (s == 0) -@as(i64, abi.ESRCH) else @intCast(s);
 }
 
 fn zeroBytes(uptr: u64, n: usize) void {
@@ -1246,21 +1421,21 @@ pub fn main(boot_info_ptr: *anyopaque) void {
     _ = sc_if.register(abi.SYS_clock_gettime, &sysClockGettime, null);
     _ = sc_if.register(abi.SYS_gettimeofday, &sysGettimeofday, null);
     _ = sc_if.register(abi.SYS_clock_getres, &sysClockGetres, null);
-    _ = sc_if.register(abi.SYS_nanosleep, &sysZero, null); // TODO real sleep
-    _ = sc_if.register(abi.SYS_clock_nanosleep, &sysZero, null);
+    _ = sc_if.register(abi.SYS_nanosleep, &sysNanosleep, null);
+    _ = sc_if.register(abi.SYS_clock_nanosleep, &sysClockNanosleep, null);
 
     // signals: rt_sig* / kill / delivery hook live in hnsorens.sys.signal
     _ = sc_if.register(abi.SYS_set_robust_list, &sysZero, null);
 
-    // session / pgrp -- accepted (no job control yet)
-    _ = sc_if.register(abi.SYS_setpgid, &sysZero, null);
-    _ = sc_if.register(abi.SYS_getpgid, &sysGettid, null);
-    _ = sc_if.register(abi.SYS_setsid, &sysGettid, null);
-    _ = sc_if.register(abi.SYS_getsid, &sysGettid, null);
+    // session / process groups (real, via the process module)
+    _ = sc_if.register(abi.SYS_setpgid, &sysSetpgid, null);
+    _ = sc_if.register(abi.SYS_getpgid, &sysGetpgid, null);
+    _ = sc_if.register(abi.SYS_setsid, &sysSetsid, null);
+    _ = sc_if.register(abi.SYS_getsid, &sysGetsid, null);
 
     // threads -- single-thread, no real futex
     _ = sc_if.register(abi.SYS_futex, &sysZero, null);
-    _ = sc_if.register(abi.SYS_ppoll, &sysZero, null);
+    // ppoll -> real, registered by the fd module
 
     // Tier C -- accepted / canned; safe because "success, no state" is
     // the correct behaviour for each of these on a single-CPU box.

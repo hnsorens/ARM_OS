@@ -141,10 +141,19 @@ pub fn block() callconv(.c) c_int {
     return 0;
 }
 
+pub fn stop() callconv(.c) c_int {
+    const cur = s_current;
+    if (cur == 0) return abi.EINVAL;
+    const from = ctxPtr(cur) orelse return abi.EINVAL;
+    _ = process_if.set_state(cur, .stopped);
+    switchToNext(from, false);
+    return 0;
+}
+
 pub fn wake(pid: u32) callconv(.c) c_int {
     var st: abi.ProcessState = .dead;
     if (process_if.get_state(pid, &st) != 0) return abi.EINVAL;
-    if (st != .blocked) return abi.EINVAL;
+    if (st != .blocked and st != .stopped) return abi.EINVAL;
     _ = process_if.set_state(pid, .ready);
     if (inQueue(pid) or pid == s_current) return 0;
     return if (enq(pid)) 0 else abi.ENOMEM;
@@ -193,6 +202,7 @@ comptime {
         .yield = yield,
         .block = block,
         .wake = wake,
+        .stop = stop,
         .exit_current = exitCurrent,
         .run = run,
     });

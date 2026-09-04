@@ -36,7 +36,23 @@ pub const MemoryMapPrep = struct {
 
 fn classify(t: uefi.tables.MemoryType) shared.MemoryType {
     return switch (t) {
-        .boot_services_code, .boot_services_data, .conventional_memory, .loader_code, .loader_data => .free,
+        // NOT `.loader_code`/`.loader_data`: unlike a typical UEFI loader
+        // that hands off to a separate kernel image and can let its own
+        // memory be reclaimed, this bootloader *is* the kernel -- it keeps
+        // running (and keeps borrowing pointers into what it allocated)
+        // long after this map is built. `.loader_code` is this binary's own
+        // running .text/.data; `.loader_data` backs the module registry's
+        // whole-boot bump arena (`g_bump`) and every module's leaked-on-
+        // purpose ELF file buffer, which the registry's driver_type/
+        // driver_name/dependency strings are borrowed slices into (see
+        // `module_loader.zig`'s `sectionName`) -- still read by
+        // `initializeAll` long after `ExitBootServices`. Classifying either
+        // as free let the pmm hand those exact pages back out once its
+        // allocator saw real use (heap/slab stress tests), silently
+        // corrupting live registry strings (e.g. a dependency name reading
+        // back empty) and panicking the next module init with
+        // `error.InstanceNotFound`.
+        .boot_services_code, .boot_services_data, .conventional_memory => .free,
         else => .used,
     };
 }
@@ -171,12 +187,15 @@ fn testDescriptor(memory_type: uefi.tables.MemoryType, start: u64, pages: u64) u
     };
 }
 
-test "classify groups usable firmware/loader memory as free, everything else as used" {
+test "classify groups usable firmware memory as free, everything else (including this binary's own loader memory) as used" {
     try testing.expectEqual(shared.MemoryType.free, classify(.conventional_memory));
-    try testing.expectEqual(shared.MemoryType.free, classify(.loader_data));
-    try testing.expectEqual(shared.MemoryType.free, classify(.loader_code));
     try testing.expectEqual(shared.MemoryType.free, classify(.boot_services_code));
     try testing.expectEqual(shared.MemoryType.free, classify(.boot_services_data));
+    // This bootloader is the kernel -- it keeps running out of `.loader_code`
+    // and keeps live references into `.loader_data` well past this map
+    // being built (see `classify`'s doc comment), so both stay reserved.
+    try testing.expectEqual(shared.MemoryType.used, classify(.loader_data));
+    try testing.expectEqual(shared.MemoryType.used, classify(.loader_code));
     try testing.expectEqual(shared.MemoryType.used, classify(.reserved_memory_type));
     try testing.expectEqual(shared.MemoryType.used, classify(.runtime_services_code));
     try testing.expectEqual(shared.MemoryType.used, classify(.memory_mapped_io));

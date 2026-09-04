@@ -265,6 +265,16 @@ fn runUserExpect(comptime path: [:0]const u8, want_code: i32) fn () callconv(.c)
 const testSyscallBatch = runUserExpect("/systest", 55);
 const testPipeCwdDev = runUserExpect("/pipetest", 66);
 const testSignals = runUserExpect("/sigtest", 88);
+const testNanosleep = runUserExpect("/sleeptest", 77);
+const testPgid = runUserExpect("/pgidtest", 55);
+const testJobControl = runUserExpect("/jobtest", 55);
+const testPoll = runUserExpect("/polltest", 55);
+const testRestart = runUserExpect("/restarttest", 55);
+const testMusl = runUserExpect("/musltest", 55);
+const testMusl2 = runUserExpect("/musltest2", 55);
+const testMusl3 = runUserExpect("/musltest3", 55);
+const testShBusybox = runUserExpect("/shtest", 42);
+const testBash = runUserExpect("/bashtest", 42);
 
 comptime {
     abi.kernelTest("waiter_set", &testWaiterSet);
@@ -274,6 +284,16 @@ comptime {
     abi.kernelTest("syscall_batch", &testSyscallBatch);
     abi.kernelTest("pipe_cwd_dev", &testPipeCwdDev);
     abi.kernelTest("signals", &testSignals);
+    abi.kernelTest("nanosleep_waits", &testNanosleep);
+    abi.kernelTest("pgid_sid", &testPgid);
+    abi.kernelTest("job_control_stop_cont", &testJobControl);
+    abi.kernelTest("ppoll_pipe_tty", &testPoll);
+    abi.kernelTest("sa_restart", &testRestart);
+    abi.kernelTest("musl_libc", &testMusl);
+    abi.kernelTest("musl_libc_2", &testMusl2);
+    abi.kernelTest("musl_libc_3", &testMusl3);
+    abi.kernelTest("busybox_ash", &testShBusybox);
+    abi.kernelTest("gnu_bash", &testBash);
     abi.kernelTest("load_run_hello", &testLoadRunHello);
     abi.kernelTest("load_missing_path", &testLoadMissingPath);
     abi.kernelTest("load_non_elf", &testLoadNonElf);

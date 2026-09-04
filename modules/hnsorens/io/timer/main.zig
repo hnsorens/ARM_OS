@@ -70,7 +70,7 @@ fn idxFromId(id: u32) ?usize {
 // the earliest active, unpaused expiry, or disables it if there is none.
 fn reprogramHardwareTimer() void {
     var earliest: ?u64 = null;
-    for (s_timers) |e| {
+    for (&s_timers) |*e| {
         if (e.active and !e.paused) {
             if (earliest == null or e.expire_at < earliest.?) earliest = e.expire_at;
         }

@@ -158,27 +158,6 @@ pub fn linkElfModule(buf: []align(8) u8, delta: u64) !void {
     }
 }
 
-const SegmentMapping = struct {
-    page_aligned_vaddr: u64,
-    offset_in_page: u64,
-    page_count: usize,
-};
-
-/// A PT_LOAD segment's p_vaddr is only guaranteed congruent to p_offset mod
-/// p_align (commonly 64KB) -- it is *not* guaranteed 4KB-page-aligned. The
-/// MMU always applies the low 12 bits of a virtual address as an in-page
-/// offset no matter what physical frame a PTE names, so a segment's bytes
-/// have to start at that same sub-page offset within whatever physical
-/// range backs it, and the mapping has to start at the containing page
-/// boundary rather than at p_vaddr itself.
-fn computeSegmentMapping(phdr: Elf64_Phdr) SegmentMapping {
-    const page_aligned_vaddr = std.mem.alignBackward(u64, phdr.p_vaddr, shared.PAGE_SIZE);
-    const offset_in_page = phdr.p_vaddr - page_aligned_vaddr;
-    const span_bytes = offset_in_page + phdr.p_memsz;
-    const page_count: usize = @intCast((span_bytes + shared.PAGE_SIZE - 1) / shared.PAGE_SIZE);
-    return .{ .page_aligned_vaddr = page_aligned_vaddr, .offset_in_page = offset_in_page, .page_count = page_count };
-}
-
 pub const ModuleLoader = struct {
     load_offset: u64,
 
@@ -245,41 +224,45 @@ pub const ModuleLoader = struct {
         const shdrs = shdrSlice(buf, header);
         const shstrtab = shdrs[header.e_shstrndx];
 
-        // 1. Map every PT_LOAD segment into a freshly allocated physical
-        //    range at its (already relocated) virtual address.
+        // 1. Back the module's whole [target, target + span) virtual range
+        //    with ONE contiguous physical region, mapped in a single shot,
+        //    then copy each PT_LOAD segment's file bytes to its offset
+        //    within that region.
         //
-        //    p_vaddr is only guaranteed congruent to p_offset mod p_align
-        //    (commonly 64KB) -- it is *not* guaranteed 4KB-page-aligned,
-        //    and generally isn't for anything past the first segment (e.g.
-        //    a `.text` segment has been observed at p_vaddr 0x229d0). The
-        //    MMU always applies the low 12 bits of a virtual address as an
-        //    in-page offset no matter what physical frame a PTE names, so
-        //    the segment's bytes have to start at that same sub-page
-        //    offset within the allocated physical range, and the mapping
-        //    has to start at the containing page boundary, not at p_vaddr
-        //    itself.
+        //    The earlier approach allocated + mapped each PT_LOAD segment
+        //    separately, rounding each segment's [p_vaddr, p_vaddr+p_memsz)
+        //    out to page boundaries. lld only guarantees p_vaddr congruent
+        //    to p_offset mod p_align (64 KiB) -- not 4 KiB-page alignment --
+        //    so two segments routinely share a 4 KiB page (a `.text`
+        //    segment has been observed at p_vaddr 0x229d0). When they did,
+        //    the second segment's mapMemory silently repointed the shared
+        //    page's PTE at its own fresh frame, dropping the first
+        //    segment's bytes in that page. Whether two segments collided
+        //    depended on their exact sizes, so an unrelated change to one
+        //    module's contents could corrupt a *different* module. One
+        //    region + one mapping makes shared pages a non-issue; bytes
+        //    past p_filesz (BSS) stay zeroed by the memset below.
+        const total_bytes = span.pages * shared.PAGE_SIZE;
+        const region = bs.allocatePages(.any, .runtime_services_code, span.pages) catch |err| {
+            Serial.failLog("Allocated kernel module region");
+            return err;
+        };
+        const region_phys: [*]u8 = @ptrCast(region.ptr);
+        @memset(region_phys[0..total_bytes], 0);
+
         for (phdrs) |phdr| {
             if (phdr.p_type != std.elf.PT_LOAD) continue;
-
-            const m = computeSegmentMapping(phdr);
-            const pages = bs.allocatePages(.any, .runtime_services_code, m.page_count) catch |err| {
-                Serial.failLog("Allocated kernel load segment");
-                return err;
-            };
-            const seg_phys: [*]u8 = @ptrCast(pages.ptr);
-            @memset(seg_phys[0 .. m.page_count * shared.PAGE_SIZE], 0);
-
-            // p_memsz can exceed p_filesz (the remainder is BSS); only the
-            // first p_filesz bytes actually exist in the file, the rest
-            // stays zeroed from the memset above.
+            // phdr.p_vaddr is already shifted; its offset inside the
+            // region is p_vaddr - target (target == span.start + delta).
+            const rel: usize = @intCast(phdr.p_vaddr - target);
             const src = ptrAt(buf.ptr, phdr.p_offset);
-            @memcpy((seg_phys + m.offset_in_page)[0..phdr.p_filesz], src[0..phdr.p_filesz]);
-
-            page_table.mapMemory(m.page_aligned_vaddr, @intFromPtr(seg_phys), .four_kb, m.page_count) catch |err| {
-                Serial.failLog("Mapped kernel load segment");
-                return err;
-            };
+            @memcpy((region_phys + rel)[0..phdr.p_filesz], src[0..phdr.p_filesz]);
         }
+
+        page_table.mapMemory(target, @intFromPtr(region_phys), .four_kb, span.pages) catch |err| {
+            Serial.failLog("Mapped kernel module region");
+            return err;
+        };
         Serial.okLog("Mapped kernel load segments");
 
         // 2. Find this module's `.kmodule.tests` array, if any.
@@ -540,51 +523,14 @@ pub const ModuleLoader = struct {
 // --- Unit tests -------------------------------------------------------
 //
 // These exercise the pure byte-buffer logic (no UEFI calls), including
-// regression coverage for two real bugs found while first bringing the
-// bootloader up in QEMU: PT_LOAD segments landing at a non-page-aligned
-// p_vaddr (computeSegmentMapping), and modules needing PIE-style
-// R_AARCH64_RELATIVE relocations rather than baked-in absolute addresses
-// (linkElfModule).
+// regression coverage for a real bug found while first bringing the
+// bootloader up in QEMU: modules needing PIE-style R_AARCH64_RELATIVE
+// relocations rather than baked-in absolute addresses (linkElfModule).
+// (PT_LOAD segments at a non-page-aligned p_vaddr used to need their own
+// per-segment mapping arithmetic; loadElf now maps one contiguous region
+// for the whole module span, so that case no longer has dedicated code.)
 
 const testing = std.testing;
-
-test "computeSegmentMapping accounts for a non-page-aligned p_vaddr" {
-    // Observed in practice: a PIE module's .text PT_LOAD segment at
-    // p_vaddr 0x229d0, memsz 0x33c24. Naively mapping starting at p_vaddr
-    // put the segment's bytes at the wrong offset within the mapped page,
-    // corrupting everything (including the module's own entry point).
-    const phdr: Elf64_Phdr = .{
-        .p_type = std.elf.PT_LOAD,
-        .p_flags = 0,
-        .p_offset = 0x129d0,
-        .p_vaddr = 0x229d0,
-        .p_paddr = 0x229d0,
-        .p_filesz = 0x33c24,
-        .p_memsz = 0x33c24,
-        .p_align = 0x10000,
-    };
-    const m = computeSegmentMapping(phdr);
-    try testing.expectEqual(@as(u64, 0x22000), m.page_aligned_vaddr);
-    try testing.expectEqual(@as(u64, 0x9d0), m.offset_in_page);
-    try testing.expectEqual(@as(usize, 0x35), m.page_count); // ceil((0x9d0+0x33c24)/0x1000)
-}
-
-test "computeSegmentMapping is a no-op adjustment for an already page-aligned segment" {
-    const phdr: Elf64_Phdr = .{
-        .p_type = std.elf.PT_LOAD,
-        .p_flags = 0,
-        .p_offset = 0x1000,
-        .p_vaddr = 0x5000,
-        .p_paddr = 0x5000,
-        .p_filesz = 0x1800,
-        .p_memsz = 0x2000,
-        .p_align = 0x1000,
-    };
-    const m = computeSegmentMapping(phdr);
-    try testing.expectEqual(@as(u64, 0x5000), m.page_aligned_vaddr);
-    try testing.expectEqual(@as(u64, 0), m.offset_in_page);
-    try testing.expectEqual(@as(usize, 2), m.page_count);
-}
 
 /// Hand-assembles a minimal PIE-shaped ELF image in `buf`: one PT_LOAD
 /// segment (p_vaddr 0x2000, page-aligned), one `.rela.dyn` section with a

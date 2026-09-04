@@ -3,6 +3,7 @@
 //! here because the tests don't run on a scheduled process, except
 //! `blocking_read_wakes_on_line`, which spawns a kernel thread so the
 //! block/wake path is exercised for real.
+const std = @import("std");
 const abi = @import("abi");
 const kernel_test = @import("kernel_test");
 const main = @import("main.zig");
@@ -24,6 +25,29 @@ fn readAll(t: *kernel_test.Tracker, want: []const u8) void {
         if (buf[i] != want[i]) ok = false;
     }
     t.expectTrue(@src(), ok);
+}
+
+// --- 0. TCSETS c_lflag actually drives the line discipline ----
+
+fn testTermiosDrivesMode() callconv(.c) i32 {
+    var t = kernel_test.Tracker{ .serial = serial_if };
+    main.testReset();
+
+    var tio: [abi.KTERMIOS_SIZE]u8 = undefined;
+    main.tcgets(&tio);
+    var lflag = std.mem.readInt(u32, tio[12..16], .little);
+    t.expectTrue(@src(), (lflag & abi.ICANON) != 0); // default is canonical
+
+    lflag &= ~(abi.ICANON | abi.ECHO); // -> raw, no echo
+    std.mem.writeInt(u32, tio[12..16], lflag, .little);
+    main.tcsets(&tio);
+
+    feed("xy"); // raw: delivered immediately, no Enter needed
+    readAll(&t, "xy");
+
+    main.tcgets(&tio);
+    t.expectTrue(@src(), (std.mem.readInt(u32, tio[12..16], .little) & abi.ICANON) == 0);
+    return t.result();
 }
 
 // --- 1. raw mode passes bytes straight through ------------
@@ -200,6 +224,7 @@ fn testBlockingReadWakesOnLine() callconv(.c) i32 {
 }
 
 comptime {
+    abi.kernelTest("termios_drives_mode", &testTermiosDrivesMode);
     abi.kernelTest("raw_passthrough", &testRawPassthrough);
     abi.kernelTest("canonical_delivers_on_newline", &testCanonicalDeliversOnNewline);
     abi.kernelTest("backspace_edits", &testBackspaceEdits);

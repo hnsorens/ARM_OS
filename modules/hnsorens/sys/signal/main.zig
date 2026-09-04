@@ -32,12 +32,20 @@ const SIGCHLD = 17;
 const SIGCONT = 18;
 const SIGSTOP = 19;
 const SIGTSTP = 20;
+const SIGTTIN = 21;
+const SIGTTOU = 22;
 const SIGURG = 23;
 const SIGWINCH = 28;
+
+const STOP_MASK: u64 = (@as(u64, 1) << (SIGSTOP - 1)) |
+    (@as(u64, 1) << (SIGTSTP - 1)) |
+    (@as(u64, 1) << (SIGTTIN - 1)) |
+    (@as(u64, 1) << (SIGTTOU - 1));
 
 const SIG_DFL: u64 = 0;
 const SIG_IGN: u64 = 1;
 const SA_SIGINFO: u64 = 0x00000004;
+const SA_RESTART: u64 = 0x10000000;
 const SA_NODEFER: u64 = 0x40000000;
 const SA_RESETHAND: u64 = 0x80000000;
 
@@ -67,6 +75,21 @@ const SigState = struct {
     pid: u32 = 0,
     blocked: u64 = 0,
     pending: u64 = 0,
+    // `sigsuspend` in progress: `blocked` currently holds the suspend
+    // mask; `susp_mask` is what to restore once one signal is delivered
+    // (captured into that frame's uc_sigmask so rt_sigreturn does it) or
+    // once delivery drains with nothing caught.
+    susp_active: bool = false,
+    susp_mask: u64 = 0,
+    // job control: set while the task is parked in sched.stop().
+    stopped: bool = false,
+    // set by a blocking syscall returning -ERESTARTSYS; consumed by
+    // deliver() (rewind the svc, or rewrite x0 -> -EINTR).
+    restart_marked: bool = false,
+    restart_x0: u64 = 0,
+    // raw `stack_t` (ss_sp@0, ss_flags@8, ss_size@16); SS_DISABLE by
+    // default. Stored/returned only -- delivery ignores SA_ONSTACK.
+    altstack: [24]u8 = [_]u8{ 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0 } ++ [_]u8{0} ** 12,
     act: [NSIG + 1]SigAction = [_]SigAction{.{}} ** (NSIG + 1),
 };
 
@@ -93,10 +116,21 @@ pub fn raise(pid: u32, sig: u32) callconv(.c) void {
     if (sig == 0 or sig > NSIG) return;
     s_lock.lock();
     if (stateLocked(pid)) |s| {
-        s.pending |= @as(u64, 1) << @as(u6, @intCast(sig - 1));
+        const bit = @as(u64, 1) << @as(u6, @intCast(sig - 1));
+        if (sig == SIGCONT) {
+            // Cancels any queued stop and resumes a stopped task.
+            s.pending &= ~STOP_MASK;
+            s.stopped = false;
+            s.pending |= bit;
+        } else if (bit & STOP_MASK != 0) {
+            s.pending &= ~(@as(u64, 1) << (SIGCONT - 1)); // a stop cancels a queued CONT
+            s.pending |= bit;
+        } else {
+            s.pending |= bit;
+        }
     }
     s_lock.unlock();
-    _ = sched_if.wake(pid); // harmless if not blocked
+    _ = sched_if.wake(pid); // resumes .blocked or .stopped; harmless otherwise
 }
 
 pub fn forget(pid: u32) callconv(.c) void {
@@ -104,6 +138,44 @@ pub fn forget(pid: u32) callconv(.c) void {
     defer s_lock.unlock();
     for (&s_sig) |*s| {
         if (s.in_use and s.pid == pid) s.* = .{};
+    }
+}
+
+pub fn raiseGroup(pgid: u32, sig: u32) callconv(.c) void {
+    if (pgid == 0 or sig == 0 or sig > NSIG) return;
+    var pids: [64]u32 = undefined;
+    var n: u32 = 0;
+    _ = process_if.list(&pids, pids.len, &n);
+    for (pids[0..n]) |p| {
+        var info: abi.ProcessInfo = .{};
+        if (process_if.get_info(p, &info) == 0 and info.pgid == pgid) raise(p, sig);
+    }
+}
+
+pub fn hasPending(pid: u32) callconv(.c) u8 {
+    s_lock.lock();
+    defer s_lock.unlock();
+    for (&s_sig) |*s| {
+        if (s.in_use and s.pid == pid) return @intFromBool((s.pending & ~s.blocked) != 0);
+    }
+    return 0;
+}
+
+pub fn isStopped(pid: u32) callconv(.c) u8 {
+    s_lock.lock();
+    defer s_lock.unlock();
+    for (&s_sig) |*s| {
+        if (s.in_use and s.pid == pid) return @intFromBool(s.stopped);
+    }
+    return 0;
+}
+
+pub fn markRestart(pid: u32, saved_x0: u64) callconv(.c) void {
+    s_lock.lock();
+    defer s_lock.unlock();
+    if (stateLocked(pid)) |s| {
+        s.restart_marked = true;
+        s.restart_x0 = saved_x0;
     }
 }
 
@@ -122,7 +194,11 @@ pub fn forkInherit(parent: u32, child: u32) callconv(.c) void {
 // --- default-action classification ------------------------------
 
 fn defaultIsIgnore(sig: u6) bool {
-    return sig == SIGCHLD or sig == SIGCONT or sig == SIGWINCH or sig == SIGURG or sig == SIGSTOP or sig == SIGTSTP;
+    return sig == SIGCHLD or sig == SIGCONT or sig == SIGWINCH or sig == SIGURG;
+}
+
+fn defaultIsStop(sig: u32) bool {
+    return sig == SIGSTOP or sig == SIGTSTP or sig == SIGTTIN or sig == SIGTTOU;
 }
 
 // --- live FP save/restore for the sigframe ---------------------
@@ -195,6 +271,20 @@ fn restoreFp(src: [*]const u8) void {
 
 // --- delivery (the return-to-EL0 hook) -----------------------
 
+/// Rewind ELR to the `svc` and restore its x0 so it re-executes after
+/// the handler returns (SA_RESTART, or a spurious wake of a blocking
+/// syscall). Called while holding s_lock, before the sigframe is built.
+fn rewindSvc(frame: *abi.TrapFrame, s: *SigState) void {
+    frame.x[0] = s.restart_x0;
+    frame.elr -%= 4;
+    s.restart_marked = false;
+}
+
+fn restartToEintr(frame: *abi.TrapFrame, s: *SigState) void {
+    frame.x[0] = @bitCast(-@as(i64, abi.EINTR));
+    s.restart_marked = false;
+}
+
 fn deliver(frame: *abi.TrapFrame) callconv(.c) void {
     const me = sched_if.current();
     if (me == 0) return;
@@ -209,6 +299,14 @@ fn deliver(frame: *abi.TrapFrame) callconv(.c) void {
         };
         const ready = s.pending & ~s.blocked;
         if (ready == 0) {
+            if (s.susp_active) {
+                s.blocked = s.susp_mask;
+                s.susp_active = false;
+            }
+            // Nothing to deliver: a blocking syscall that returned
+            // -ERESTARTSYS on a spurious wake (or after only ignored
+            // signals) just re-runs.
+            if (s.restart_marked) rewindSvc(frame, s);
             s_lock.unlock();
             return;
         }
@@ -216,12 +314,28 @@ fn deliver(frame: *abi.TrapFrame) callconv(.c) void {
         const sig1: u32 = @as(u32, sig) + 1;
         s.pending &= ~(@as(u64, 1) << sig);
         const act = s.act[sig1];
-        const old_blocked = s.blocked;
+
+        // Job-control stop: SIGSTOP always, the other stop signals only
+        // when their disposition is default. Park in sched.stop() until
+        // SIGCONT (raise() clears `stopped` + wakes us).
+        if (sig1 == SIGSTOP or (defaultIsStop(sig1) and act.handler == SIG_DFL)) {
+            s.stopped = true;
+            s_lock.unlock();
+            var pinfo: abi.ProcessInfo = .{};
+            if (process_if.get_info(me, &pinfo) == 0 and pinfo.parent != 0) {
+                raise(pinfo.parent, SIGCHLD);
+            }
+            _ = sched_if.stop();
+            s_lock.lock();
+            s.stopped = false;
+            s_lock.unlock();
+            continue;
+        }
 
         if (act.handler == SIG_DFL) {
             if (defaultIsIgnore(@intCast(sig1))) {
                 s_lock.unlock();
-                continue;
+                continue; // leave susp_active; the ready==0 exit restores
             }
             s_lock.unlock();
             _ = sc_if.invoke(abi.SYS_exit, sig1, 0, 0, 0, 0, 0); // never returns
@@ -231,6 +345,19 @@ fn deliver(frame: *abi.TrapFrame) callconv(.c) void {
             s_lock.unlock();
             continue;
         }
+
+        // A caught signal: honour SA_RESTART for a syscall that returned
+        // -ERESTARTSYS (rewind the svc), else turn it into -EINTR. Done
+        // before the sigframe is built so it captures the settled state.
+        if (s.restart_marked) {
+            if (act.flags & SA_RESTART != 0) rewindSvc(frame, s) else restartToEintr(frame, s);
+        }
+
+        // A caught signal ends any in-progress sigsuspend: the frame's
+        // uc_sigmask must be the pre-suspend mask so rt_sigreturn restores
+        // it once the handler returns.
+        const old_blocked = if (s.susp_active) s.susp_mask else s.blocked;
+        s.susp_active = false;
 
         var newly_blocked = act.mask;
         if (act.flags & SA_NODEFER == 0) newly_blocked |= @as(u64, 1) << sig;
@@ -341,6 +468,61 @@ fn sysRtSigprocmask(a: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i6
     return 0;
 }
 
+/// `sigsuspend`: swap in `*mask` as the blocked set, spin until a signal
+/// is deliverable under it, restore the old mask, always return `EINTR`.
+/// The handler then runs from `deliver()` on the return to EL0. Small
+/// gap vs POSIX: the handler runs under the *restored* mask, not the
+/// suspend mask (only matters if the woken signal is blocked normally).
+fn sysRtSigsuspend(a: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
+    _ = ctx;
+    if (a.arg[0] == 0) return -@as(i64, abi.EFAULT);
+    const cant_block = (@as(u64, 1) << (SIGKILL - 1)) | (@as(u64, 1) << (SIGSTOP - 1));
+    const newmask = @as(*const u64, @ptrFromInt(a.arg[0])).* & ~cant_block;
+
+    s_lock.lock();
+    const s = stateLocked(sched_if.current()) orelse {
+        s_lock.unlock();
+        return -@as(i64, abi.ENOMEM);
+    };
+    s.susp_mask = s.blocked;
+    s.blocked = newmask;
+    s.susp_active = true;
+    s_lock.unlock();
+
+    // Wait for a signal deliverable under the suspend mask. `deliver()`
+    // (on the return to EL0) runs the handler, and either the handler's
+    // rt_sigreturn or the ready==0 path restores `susp_mask`.
+    while (true) {
+        asm volatile ("msr daifclr, #3" ::: .{ .memory = true }); // a signal can arrive via an IRQ (^C)
+        s_lock.lock();
+        const ready = (s.pending & ~s.blocked) != 0;
+        s_lock.unlock();
+        if (ready) return -@as(i64, abi.EINTR);
+        asm volatile ("yield");
+    }
+}
+
+/// Stored and returned but never consulted -- delivery never switches to
+/// an alternate stack (SA_ONSTACK is ignored). Enough that a libc's
+/// `sigaltstack(NULL, &old)` / setup round-trips coherently.
+fn sysSigaltstack(a: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
+    _ = ctx;
+    s_lock.lock();
+    defer s_lock.unlock();
+    const s = stateLocked(sched_if.current()) orelse return -@as(i64, abi.ENOMEM);
+    if (a.arg[1] != 0) {
+        const old: [*]u8 = @ptrFromInt(a.arg[1]);
+        @memcpy(old[0..24], &s.altstack);
+    }
+    if (a.arg[0] != 0) {
+        const new: [*]const u8 = @ptrFromInt(a.arg[0]);
+        const flags = std.mem.readInt(u32, new[8..12], .little);
+        if (flags != 0 and flags != 2) return -@as(i64, abi.EINVAL); // only 0 / SS_DISABLE
+        @memcpy(&s.altstack, new[0..24]);
+    }
+    return 0;
+}
+
 fn sysRtSigpending(a: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
     _ = ctx;
     if (a.arg[0] == 0) return 0;
@@ -357,12 +539,19 @@ fn sysKill(a: *const abi.SyscallArgs, ctx: ?*anyopaque) callconv(.c) i64 {
     const sig: u64 = a.arg[1];
     if (sig > NSIG) return -@as(i64, abi.EINVAL);
     if (sig == 0) return 0;
-    if (target <= 0) {
-        raise(sched_if.current(), @intCast(sig));
+    const me = sched_if.current();
+    if (target > 0) {
+        if (!process_if.exists(@intCast(target))) return -@as(i64, abi.ESRCH);
+        raise(@intCast(target), @intCast(sig));
         return 0;
     }
-    if (!process_if.exists(@intCast(target))) return -@as(i64, abi.ESRCH);
-    raise(@intCast(target), @intCast(sig));
+    // pid == 0 -> caller's group; pid == -1 -> broadcast (caller's group
+    // here); pid < -1 -> the group `-pid`.
+    var info: abi.ProcessInfo = .{};
+    const pgid: u32 = if (target < -1)
+        @intCast(-target)
+    else if (process_if.get_info(me, &info) == 0) info.pgid else me;
+    raiseGroup(pgid, @intCast(sig));
     return 0;
 }
 
@@ -399,6 +588,8 @@ pub fn main(boot_info_ptr: *anyopaque) void {
     _ = exc_if.set_user_return_hook(&deliver);
     _ = exc_if.register_handler(.sync_data_abort, &faultCb, null);
     _ = exc_if.register_handler(.sync_instruction_abort, &faultCb, null);
+    _ = sc_if.register(abi.SYS_sigaltstack, &sysSigaltstack, null);
+    _ = sc_if.register(abi.SYS_rt_sigsuspend, &sysRtSigsuspend, null);
     _ = sc_if.register(abi.SYS_rt_sigaction, &sysRtSigaction, null);
     _ = sc_if.register(abi.SYS_rt_sigprocmask, &sysRtSigprocmask, null);
     _ = sc_if.register(abi.SYS_rt_sigpending, &sysRtSigpending, null);
@@ -414,6 +605,10 @@ comptime {
         .raise = raise,
         .forget = forget,
         .fork_inherit = forkInherit,
+        .has_pending = hasPending,
+        .raise_group = raiseGroup,
+        .is_stopped = isStopped,
+        .mark_restart = markRestart,
     });
 }
 

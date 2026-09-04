@@ -40,6 +40,8 @@ const Tcb = struct {
     kstack_size: u64 = 0,
     context: abi.TaskContext = .{},
     name: [32]u8 = [_]u8{0} ** 32,
+    pgid: u32 = 0,
+    sid: u32 = 0,
 };
 
 var s_table: [MAX_PROCESSES]Tcb = [_]Tcb{.{}} ** MAX_PROCESSES;
@@ -86,6 +88,8 @@ pub fn createKernelThread(name: [*:0]const u8, entry: usize, arg: usize, kstack_
     slot.* = .{
         .in_use = true,
         .pid = s_next_pid,
+        .pgid = s_next_pid,
+        .sid = s_next_pid,
         .state = .ready,
         .priority = priority,
         .kstack_phys = phys,
@@ -130,6 +134,8 @@ pub fn createUserProcess(name: [*:0]const u8, ttbr0: u64, user_entry: u64, user_
         .in_use = true,
         .is_user = true,
         .pid = s_next_pid,
+        .pgid = s_next_pid,
+        .sid = s_next_pid,
         .state = .ready,
         .priority = priority,
         .address_space = ttbr0,
@@ -171,11 +177,14 @@ pub fn createForkedProcess(name: [*:0]const u8, ttbr0: u64, parent: u32, frame: 
     const base = phys + abi.HHDM_OFFSET;
     const top = base + size;
 
+    const inherit = slotOf(parent);
     slot.* = .{
         .in_use = true,
         .is_user = true,
         .pid = s_next_pid,
         .parent = parent,
+        .pgid = if (inherit) |p| p.pgid else s_next_pid,
+        .sid = if (inherit) |p| p.sid else s_next_pid,
         .state = .ready,
         .priority = priority,
         .address_space = ttbr0,
@@ -260,9 +269,40 @@ pub fn getInfo(pid: u32, out: *abi.ProcessInfo) callconv(.c) c_int {
         .kstack_base = slot.kstack_base,
         .kstack_size = slot.kstack_size,
         .is_user = slot.is_user,
+        .pgid = slot.pgid,
+        .sid = slot.sid,
     };
     @memcpy(&out.name, &slot.name);
     return 0;
+}
+
+pub fn setPgid(pid: u32, pgid: u32) callconv(.c) c_int {
+    s_lock.lock();
+    defer s_lock.unlock();
+    const slot = slotOf(pid) orelse return abi.EINVAL;
+    slot.pgid = if (pgid == 0) slot.pid else pgid;
+    return 0;
+}
+
+pub fn getPgid(pid: u32) callconv(.c) u32 {
+    s_lock.lock();
+    defer s_lock.unlock();
+    return if (slotOf(pid)) |s| s.pgid else 0;
+}
+
+pub fn setSid(pid: u32) callconv(.c) u32 {
+    s_lock.lock();
+    defer s_lock.unlock();
+    const slot = slotOf(pid) orelse return 0;
+    slot.sid = slot.pid;
+    slot.pgid = slot.pid;
+    return slot.pid;
+}
+
+pub fn getSid(pid: u32) callconv(.c) u32 {
+    s_lock.lock();
+    defer s_lock.unlock();
+    return if (slotOf(pid)) |s| s.sid else 0;
 }
 
 pub fn getState(pid: u32, out: *abi.ProcessState) callconv(.c) c_int {
@@ -275,7 +315,7 @@ pub fn getState(pid: u32, out: *abi.ProcessState) callconv(.c) c_int {
 
 pub fn setState(pid: u32, state: abi.ProcessState) callconv(.c) c_int {
     const v = @intFromEnum(state);
-    if (v == @intFromEnum(abi.ProcessState.dead) or v > @intFromEnum(abi.ProcessState.zombie)) return abi.EINVAL;
+    if (v == @intFromEnum(abi.ProcessState.dead) or v > @intFromEnum(abi.ProcessState.stopped)) return abi.EINVAL;
 
     s_lock.lock();
     defer s_lock.unlock();
@@ -312,7 +352,7 @@ pub fn count() callconv(.c) u32 {
     s_lock.lock();
     defer s_lock.unlock();
     var n: u32 = 0;
-    for (s_table) |t| {
+    for (&s_table) |*t| {
         if (t.in_use) n += 1;
     }
     return n;
@@ -323,7 +363,7 @@ pub fn list(out_pids: [*]u32, max: u32, n_out: *u32) callconv(.c) c_int {
     defer s_lock.unlock();
     var n: u32 = 0;
     var overflow = false;
-    for (s_table) |t| {
+    for (&s_table) |*t| {
         if (!t.in_use) continue;
         if (n < max) {
             out_pids[n] = t.pid;
@@ -359,6 +399,10 @@ comptime {
         .set_exit_code = setExitCode,
         .count = count,
         .list = list,
+        .set_pgid = setPgid,
+        .get_pgid = getPgid,
+        .set_sid = setSid,
+        .get_sid = getSid,
     });
 }
 
